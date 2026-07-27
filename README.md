@@ -24,7 +24,7 @@ significant margin → commit — and reports one honest number. It optimizes wh
 *reads*, not its weights.
 
 <p align="center">
-  <img src="docs/assets/dashboard.png" alt="cap-evolve dashboard — a real tau2-bench airline run" width="900"/>
+  <img src="site/assets/dash-overview.png" alt="cap-evolve dashboard — a real tau2-bench airline run" width="900"/>
   <br/>
   <sub>A real τ²-bench airline run in the live dashboard — baseline → best, accepted vs rejected candidates, cost, and the fitness stair.</sub>
 </p>
