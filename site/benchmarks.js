@@ -160,9 +160,14 @@ function render() {
     const ui = r.has_ui
       ? `<a href="./benchmark-ui/runs/${encodeURIComponent(r.run_id)}__${esc(r.tier || "smoke")}-${encodeURIComponent(r.bench)}/ui/index.html#/runs/run_suite" target="_blank" rel="noopener">Open UI</a>`
       : `<span class="muted">—</span>`;
+    // Source column: link to the PR when set, else to `summary_url` when set
+    // (per-run detail page for local/manual runs). Backward compatible: records
+    // without `pr` or `summary_url` render as plain text.
     const src = r.pr
       ? `<a href="https://github.com/skillberry-ai/cap-evolve/pull/${encodeURIComponent(r.pr)}">${esc(r.source)}</a>`
-      : esc(r.source || "—");
+      : r.summary_url
+        ? `<a href="${esc(r.summary_url)}" target="_blank" rel="noopener">${esc(r.source || "—")}</a>`
+        : esc(r.source || "—");
     const badge = `<span class="badge ${esc(r.conclusion)}">${esc(r.conclusion)}</span>`;
     const date = esc((r.date || "").replace("T", " ").replace("Z", ""));
     const tier = esc(r.tier || "smoke");
