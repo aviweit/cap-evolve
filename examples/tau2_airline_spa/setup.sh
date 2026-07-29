@@ -166,6 +166,20 @@ done
 echo "  ✓ imported $TOOL_COUNT primitive tools"
 [ "$TOOL_COUNT" -gt 0 ] || die "no primitive tools imported"
 
+# Import primitive_skill as a skill package so SPA can serve it
+PRIM_SKILL_DIR="$EX_DIR/seed_capability/primitive_skill"
+echo "  importing primitive_skill..."
+SKILL_RESP=$(curl -s -X POST "http://localhost:$STORE_PORT/skills/import-anthropic" \
+  -F "source_type=folder" \
+  -F "folder_path=$(cd "$PRIM_SKILL_DIR" && pwd)" \
+  -F "snippet_mode=file" 2>&1)
+if echo "$SKILL_RESP" | grep -qE '"success"|"skill_name"'; then
+  echo "  ✓ primitive_skill imported to store"
+else
+  echo "  ⚠ primitive_skill import response: $SKILL_RESP"
+  die "failed to import primitive_skill"
+fi
+
 # ---------------------------------------------------------------------------
 say "6/7  Clone + start Skillberry Proxy-Agent (port $SPA_PORT)"
 if [ ! -d "$AGENT_DIR/.git" ]; then
