@@ -184,8 +184,8 @@ fi
 say "6/7  Clone + start Skillberry Proxy-Agent (port $SPA_PORT)"
 if [ ! -d "$AGENT_DIR/.git" ]; then
   echo "  cloning skillberry-agent -> $AGENT_DIR"
-  git clone --branch fix/pin-langchain-mcp-adapters \
-    https://github.com/aviweit/skillberry-agent.git "$AGENT_DIR" \
+  git clone --branch main \
+    https://github.com/skillberry-ai/skillberry-agent.git "$AGENT_DIR" \
     || die "git clone skillberry-agent failed"
 fi
 cd "$AGENT_DIR"
