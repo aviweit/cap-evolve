@@ -127,6 +127,7 @@ class Adapter(CapabilityAdapter):
         model string). User simulator calls go directly to the upstream LLM.
         """
         from tau2.run import run_tasks
+        from tau2.utils.utils import DATA_DIR, get_now
 
         by_id = self._tau2_tasks_by_id()
         tau2_tasks = [by_id[t.id] for t in tasks if t.id in by_id]
@@ -143,6 +144,7 @@ class Adapter(CapabilityAdapter):
         agent_m = spa_env.agent_model()
         user_m = spa_env.user_model()
         max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "100"))
+        save_to = DATA_DIR / "simulations" / f"{get_now()}_{DOMAIN}_llm_agent_skillberry-local_user_simulator.json"
 
         with _tee_to_log("batch"):
             sim_results = run_tasks(
@@ -159,7 +161,7 @@ class Adapter(CapabilityAdapter):
                 max_errors=10,
                 max_concurrency=max_concurrency,
                 seed=int(seed),
-                save_to=None,
+                save_to=save_to,
                 console_display=False,
             )
 
@@ -229,6 +231,7 @@ class Adapter(CapabilityAdapter):
     ) -> dict[str, list[Rollout]]:
         """Run ALL trials in ONE tau2 run_tasks call."""
         from tau2.run import run_tasks
+        from tau2.utils.utils import DATA_DIR, get_now
 
         n_trials = int(n_trials)
         by_id = self._tau2_tasks_by_id()
@@ -248,6 +251,7 @@ class Adapter(CapabilityAdapter):
         agent_m = spa_env.agent_model()
         user_m = spa_env.user_model()
         max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "125"))
+        save_to = DATA_DIR / "simulations" / f"{get_now()}_{DOMAIN}_llm_agent_skillberry-local_user_simulator.json"
 
         with _tee_to_log("trials"):
             sim_results = run_tasks(
@@ -264,7 +268,7 @@ class Adapter(CapabilityAdapter):
                 max_errors=10,
                 max_concurrency=max_concurrency,
                 seed=int(base_seed),
-                save_to=None,
+                save_to=save_to,
                 console_display=False,
             )
 
