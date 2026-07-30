@@ -29,7 +29,7 @@ on:
         description: "Which benchmark to run"
         type: choice
         default: all
-        options: [all, tau2, swebench, skillsbench]
+        options: [all, tau2, swebench, skillsbench, spreadsheetbench]
       tier:
         description: "Which tier (default smoke; full is the whole/representative benchmark and is expensive)"
         type: choice
@@ -137,6 +137,10 @@ jobs:
   bench:
     name: ${{ matrix.tier }} / ${{ matrix.bench }}
     runs-on: [self-hosted, ibm-vpc]
+    # GitHub's default 360min job timeout is too tight for full/spreadsheetbench (912
+    # tasks x trials x iterations, one Docker container per task); self-hosted runners
+    # aren't GH-minute-billed, so a generous ceiling just prevents a silent mid-run kill.
+    timeout-minutes: 1440
     # Repo default token is read-only; the "Comment results on the PR" step needs write.
     permissions:
       contents: write
@@ -159,7 +163,7 @@ jobs:
         # tier is a first-class dimension. full runs the whole/representative benchmark
         # (frozen baselines under <bench>/full/); it no-ops until that tier is populated.
         tier: [smoke, full]
-        bench: [tau2, swebench, skillsbench]
+        bench: [tau2, swebench, skillsbench, spreadsheetbench]
     concurrency:
       group: benchmarks-${{ matrix.tier }}-${{ matrix.bench }}-${{ github.ref }}
       cancel-in-progress: true

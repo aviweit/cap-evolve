@@ -14,7 +14,7 @@
 set -uo pipefail
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$LIB_DIR/../../.." && pwd)"
-BENCH="${1:?bench (tau2|swebench|skillsbench)}"
+BENCH="${1:?bench (tau2|swebench|skillsbench|spreadsheetbench)}"
 PY="${CAPEVOLVE_PY:-$REPO/.venv-e2e/bin/python}"; [ -x "$PY" ] || PY="python3"
 TIER="${TIER:-smoke}"
 ITER="${ITERATIONS:-3}"
@@ -118,6 +118,38 @@ ENV
     export SKILLSBENCH_MODEL="$AGENT_MODEL"
     export SKILLSBENCH_TASKS_DIR="$SB_SRC/tasks"
     export SKILLSBENCH_CONCURRENCY=10
+    ;;
+  spreadsheetbench)
+    cp "$TPL/spreadsheetbench/adapter.py" "$PROJ/adapters/"
+    cp -R "$TPL/spreadsheetbench/seed_capability" "$PROJ/seed_capability"
+    SB_CACHE="${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}/spreadsheetbench-data"
+    SB_DEFAULT="$SB_CACHE/sample_data_200"
+    if [ "$TIER" = "full" ]; then SB_DEFAULT="$SB_CACHE/all_data_912_v0.1"; fi
+    # SPREADSHEETBENCH_DATA_DIR is expected to be set (and exported to GITHUB_ENV) by
+    # ci_setup.sh, which calls fetch_data.sh and echoes the resolved path. When running
+    # locally without ci_setup.sh, the SB_DEFAULT fallback is used instead.
+    SB_DATA="${SPREADSHEETBENCH_DATA_DIR:-$SB_DEFAULT}"
+    [ -f "$SB_DATA/dataset.json" ] || { echo "::error:: spreadsheetbench dataset not found at $SB_DATA (run ci/benchmarks/spreadsheetbench/fetch_data.sh or set SPREADSHEETBENCH_DATA_DIR)"; exit 1; }
+    # full runs 912 tasks in one go — bump container concurrency over smoke's default
+    # (still bounded; each container is ~8GB RAM / 2 CPU, see adapter.py's NOTE ON SCORING)
+    # unless the caller already pinned SPREADSHEETBENCH_CONCURRENCY explicitly.
+    SB_CONCURRENCY_DEFAULT=4
+    if [ "$TIER" = "full" ]; then SB_CONCURRENCY_DEFAULT=8; fi
+    CAPS="[system-prompt]"
+    cat > "$WORK/.env" <<ENV
+MODEL=litellm_proxy/$AGENT_MODEL
+LITELLM_PROXY_API_BASE=$ANTHROPIC_BASE_URL
+LITELLM_PROXY_API_KEY=$ANTHROPIC_AUTH_TOKEN
+MAX_TOKENS=8000
+TEMPERATURE=0.0
+SPREADSHEETBENCH_HARNESS_DIR=$REPO/third_party/spreadsheetbench
+SPREADSHEETBENCH_DATA_DIR=$SB_DATA
+SPREADSHEETBENCH_TASK_IDS=$IDS_CSV
+SPREADSHEETBENCH_CONCURRENCY=${SPREADSHEETBENCH_CONCURRENCY:-$SB_CONCURRENCY_DEFAULT}
+ENV
+    export SPREADSHEETBENCH_HARNESS_DIR="$REPO/third_party/spreadsheetbench"
+    export SPREADSHEETBENCH_DATA_DIR="$SB_DATA"
+    export SPREADSHEETBENCH_CONCURRENCY="${SPREADSHEETBENCH_CONCURRENCY:-$SB_CONCURRENCY_DEFAULT}"
     ;;
   *) echo "unknown bench: $BENCH" >&2; exit 2;;
 esac

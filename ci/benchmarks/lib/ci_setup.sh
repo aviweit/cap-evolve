@@ -30,6 +30,16 @@ case "$BENCH" in
   skillsbench)
     uv tool install $IDX benchflow >/dev/null 2>&1 || true
     [ -d "$CACHE/skillsbench-src/.git" ] || GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/benchflow-ai/skillsbench "$CACHE/skillsbench-src" ;;
+  spreadsheetbench)
+    uv pip install -p "$CAPEVOLVE_PY" -q $IDX pandas openpyxl docker tornado requests
+    command -v docker >/dev/null && docker info >/dev/null 2>&1 || {
+      echo "::error:: docker daemon not reachable — spreadsheetbench runs each task in its own container"; exit 1; }
+    if ! command -v libreoffice >/dev/null 2>&1 && ! command -v soffice >/dev/null 2>&1; then
+      echo "::warning:: LibreOffice not found — formula-only cells won't be recalculated before scoring"
+    fi
+    SB_VARIANT="sample_200"
+    if [ "${TIER:-smoke}" = "full" ]; then SB_VARIANT="full_912"; fi
+    SPREADSHEETBENCH_DATA_DIR="$(SPREADSHEETBENCH_VARIANT="$SB_VARIANT" "$REPO/ci/benchmarks/spreadsheetbench/fetch_data.sh" "$CACHE/spreadsheetbench-data")" ;;
 esac
 
 "$CAPEVOLVE_PY" -c "import cap_evolve; print('cap_evolve OK')"
@@ -78,6 +88,7 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   {
     echo "CAPEVOLVE_PY=$CAPEVOLVE_PY"
     echo "SKILLSBENCH_SRC=$CACHE/skillsbench-src"
+    if [ -n "${SPREADSHEETBENCH_DATA_DIR:-}" ]; then echo "SPREADSHEETBENCH_DATA_DIR=$SPREADSHEETBENCH_DATA_DIR"; fi
     echo "PATH=$HOME/.local/bin:$PATH"
   } >> "$GITHUB_ENV"
 fi
