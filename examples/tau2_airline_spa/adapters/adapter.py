@@ -38,9 +38,17 @@ DOMAIN = "airline_skillberry"
 TAU2_LOG_DIR = Path(os.environ.get("TAU2_LOG_DIR", "/tmp"))
 
 
+# Open /dev/tty once at module load — this is the controlling terminal and is
+# immune to capture_output=True, pipes, and any fd redirection by cap-evolve.
+try:
+    _tty = open("/dev/tty", "w")  # noqa: SIM115
+except OSError:
+    _tty = None
+
+
 @contextlib.contextmanager
 def _tee_to_log(label: str = "run"):
-    """Capture stdout and write it to both stderr (visible in terminal) and a log file."""
+    """Capture stdout, mirror it to /dev/tty (bypasses capture) and save to a log file."""
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     log_path = TAU2_LOG_DIR / f"tau2_{DOMAIN}_{label}_{timestamp}.log"
     buf = io.StringIO()
@@ -48,11 +56,12 @@ def _tee_to_log(label: str = "run"):
     class Tee:
         def write(self, data):
             buf.write(data)
-            sys.__stderr__.write(data)
+            if data and _tty:
+                _tty.write(data)
+                _tty.flush()
 
         def flush(self):
             buf.flush()
-            sys.__stderr__.flush()
 
     old_stdout = sys.stdout
     sys.stdout = Tee()
@@ -61,7 +70,9 @@ def _tee_to_log(label: str = "run"):
     finally:
         sys.stdout = old_stdout
         log_path.write_text(buf.getvalue(), encoding="utf-8")
-        print(f"  tau2 log: {log_path}", file=sys.__stderr__)
+        if _tty:
+            _tty.write(f"  tau2 log: {log_path}\n")
+            _tty.flush()
 
 
 def _shown_metrics(reward: float, reward_info: dict, rollout) -> list:
