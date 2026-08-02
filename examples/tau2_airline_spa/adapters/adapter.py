@@ -95,6 +95,7 @@ def _shown_metrics(reward: float, reward_info: dict, rollout) -> list:
 class Adapter(CapabilityAdapter):
 
     _current_skill_name: str | None = None
+    _last_sim_path: "Path | None" = None   # set by run_batch/run_trials; read by trajectories()
 
     # ---- tasks -----------------------------------------------------------
 
@@ -143,8 +144,9 @@ class Adapter(CapabilityAdapter):
 
         agent_m = spa_env.agent_model()
         user_m = spa_env.user_model()
-        max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "100"))
+        max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "3"))
         save_to = DATA_DIR / "simulations" / f"{get_now()}_{DOMAIN}_llm_agent_skillberry-local_user_simulator.json"
+        Adapter._last_sim_path = save_to
 
         with _tee_to_log("batch"):
             sim_results = run_tasks(
@@ -180,7 +182,13 @@ class Adapter(CapabilityAdapter):
 
     @staticmethod
     def _sim_to_rollout(sim) -> Rollout:
-        """Map one tau2 SimulationRun to a cap-evolve Rollout."""
+        """Map one tau2 SimulationRun to a cap-evolve Rollout.
+
+        SimulationRun exposes the full conversation via .messages (list[Message]).
+        We serialise each Message with model_dump() so the optimizer can read the
+        complete user<->agent exchange — including tool calls and tool responses —
+        directly from the cap-evolve rollout JSON that lands in trajectories/.
+        """
         from tau2.data_model.simulation import TerminationReason
 
         infra_reasons = {
@@ -202,10 +210,18 @@ class Adapter(CapabilityAdapter):
         if term in infra_reasons:
             error = f"tau2 terminated for infrastructure reason: {term}"
 
+        # sim.messages is the authoritative list[Message] on SimulationRun.
+        # Do NOT call sim.get_messages() — that method does not exist on this tau2 version.
+        messages = None
         try:
-            messages = [m.model_dump() for m in sim.get_messages()]
-        except Exception:
-            messages = None
+            raw = sim.messages  # list[Message]
+            if raw:
+                messages = [
+                    m.model_dump(mode="json") if hasattr(m, "model_dump") else dict(m)
+                    for m in raw
+                ]
+        except Exception as _e:
+            messages = [{"_trace_error": str(_e)}]
 
         reward_info_dump = (
             reward_info.model_dump(mode="json") if reward_info is not None else None
@@ -250,8 +266,9 @@ class Adapter(CapabilityAdapter):
 
         agent_m = spa_env.agent_model()
         user_m = spa_env.user_model()
-        max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "125"))
+        max_concurrency = int(os.environ.get("TAU2_MAX_CONCURRENCY", "3"))
         save_to = DATA_DIR / "simulations" / f"{get_now()}_{DOMAIN}_llm_agent_skillberry-local_user_simulator.json"
+        Adapter._last_sim_path = save_to
 
         with _tee_to_log("trials"):
             sim_results = run_tasks(
@@ -287,6 +304,28 @@ class Adapter(CapabilityAdapter):
         """Run a single task by delegating to run_batch."""
         batch = self.run_batch([task], ctx, seed=seed)
         return batch.get(task.id, Rollout(task_id=task.id, error="no rollout produced"))
+
+    def trajectories(self, split: str, ctx=None):
+        """Return the tau2 native simulation dir so the optimizer reads full agent traces.
+
+        tau2 writes the complete user<->agent conversation (all messages, tool calls,
+        user turns, reward_info) to data/simulations/<timestamp>_*.json via save_to.
+        We return that file's parent directory so cap-evolve copies the simulation
+        file into workdir/trajectories/ for the optimizer to read.
+        Fallback: return the simulations dir directly so the optimizer reads
+        the most-recent file (sorted by timestamp prefix).
+        """
+        p = Adapter._last_sim_path
+        if p is not None and Path(p).exists():
+            return Path(p).parent
+        try:
+            from tau2.utils.utils import DATA_DIR
+            sim_dir = DATA_DIR / "simulations"
+            if sim_dir.is_dir():
+                return sim_dir
+        except Exception:
+            pass
+        return None
 
     # ---- scoring ---------------------------------------------------------
 

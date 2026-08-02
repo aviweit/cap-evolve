@@ -32,7 +32,7 @@ split_test: 1.0
 split_ids_file: split_ids.json
 
 # --- scoring ----------------------------------------------------------------
-num_trials: 1
+num_trials: 10
 
 # --- acceptance gate --------------------------------------------------------
 gate_mode: paired
