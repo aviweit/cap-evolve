@@ -4,6 +4,9 @@ All notable changes to cap-evolve are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to
 [Semantic Versioning](https://semver.org/) (currently `0.x` — anything may change).
 
+[Unreleased]: https://github.com/skillberry-ai/cap-evolve/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/skillberry-ai/cap-evolve/releases/tag/v0.1.0
+
 ## [Unreleased]
 ### Fixed
 - **The TYPE diagnostic's advice was unconditionally backwards half the time.** PR #289 appended
@@ -438,6 +441,14 @@ All notable changes to cap-evolve are documented here. The format follows
   longer looks like a capability regression.
 
 ### Added
+- **`evograph` — evo-graph weakness-graph algorithm and dashboard view.** New agent-mode
+  algorithm skill (`skills/algorithms/evograph/`, the 20th skill) that clusters failing
+  tasks into a weakness graph to steer edits, plus its own mounted dashboard view
+  (`scripts/view.py` + a self-contained frontend bundle) surfaced inside the cap-evolve
+  dashboard.
+- **Per-algorithm custom dashboard views.** The dashboard backend gains
+  `custom_view.py`; an algorithm skill may ship its own view, iframe-mounted into the
+  run deep-dive alongside the default template.
 - **SWE-bench oracle mode + calibrated smoke selection.** The SWE-bench adapter gains
   `SWEBENCH_ORACLE=1`, which attaches the "Oracle" retrieval context (the file[s] the
   gold patch touches, from `princeton-nlp/SWE-bench_Lite_oracle`'s `text` field) to the
@@ -471,6 +482,69 @@ All notable changes to cap-evolve are documented here. The format follows
   previously every trial ran one Docker-harness subprocess per instance with nothing for
   `--max_workers` to parallelize over, so `SWEBENCH_MAX_WORKERS=10` (already set in CI)
   was a no-op. Adapters that don't implement `score_batch` are unaffected.
+
+### Fixed
+- **tau2 adapter no longer races tau2's global RNG seed** across concurrent trials
+  (`templates/adapters/tau2_bench/adapter.py`), so per-trial `seed` is honest under
+  parallelism.
+- **Optimizer cost is recovered on a non-zero optimizer exit** (`core/cap_evolve/harness.py`)
+  instead of being dropped, so a crashed optimizer iteration still reports its spend.
+
+## [0.1.0] - 2026-07-27
+
+Initial release. Tag [`v0.1.0`](https://github.com/skillberry-ai/cap-evolve/releases/tag/v0.1.0)
+at commit `1a24604`; `core/pyproject.toml` version `0.1.0`. The date is the GitHub
+release's `publishedAt` (`2026-07-27`), not the tag-commit date (`2026-07-26`), because
+Keep a Changelog dates the *release*.
+
+### Added
+- Honest-eval core (`cap_evolve`): seeded splits with a sealed test set,
+  significance gate, multi-trial variance, pass^k + pass@k, bootstrap CIs.
+- **19 Agent Skills**: phases (intake, implement-and-check, baseline, evaluate,
+  diagnose, gate, finalize, report), capabilities (system-prompt, tools, mcp-tool,
+  skill-package), algorithms (**hill-climb** with `--focus all|cyclic|hardest-first`,
+  **gepa**, **skillopt**, **agent-optimize**), one **run-optimizer** skill backed by
+  `optimizers/registry.yaml` (claude-code, codex, gemini-cli, opencode, openclaw,
+  ibm-bob, generic, mock), and orchestrate + a `using-cap-evolve` session-start router.
+- **`gepa`** (flagship): real GEPA — two-stage minibatch-then-full-val economy,
+  per-instance Pareto frontier with frequency-weighted parent sampling, trace-based
+  reflective dataset, round-robin component focus, system-aware merge across lineages,
+  rollout/metric-call budget, eval cache (arXiv:2507.19457).
+- **`skillopt`** (flagship): epochs × mini-batches with a textual learning rate
+  (integer edit budget on a constant|linear|cosine schedule), within-epoch
+  rejected-edit buffer, and a gated epoch-boundary slow/meta update (arXiv:2605.23904).
+- Git-backed iteration store (default) + optimizer memory (MEMORY.md/STATE.md/rejected.jsonl).
+- **Self-contained** `dashboard.html` (no CDN): KPI strip, cumulative-best stair,
+  tasks×iterations pass/fail heatmap, per-iteration diff, lineage tree (merges as
+  multi-parent), optimizer-vs-runner cost/tokens/latency, annotations — plus the
+  `report` phase's `--terminal` ANSI report for in-chat progress.
+- **Claude Code plugin** (`plugins/cap-evolve/`, install `claude --plugin-dir
+  ./plugins/cap-evolve`): every skill as `/cap-evolve:<skill>` (dual-mode: standalone
+  slash command + orchestrator-callable + headless JSON), honesty **hooks** (PreToolUse
+  denies edits to the sealed test/gold; Stop/SubagentStop block until `cap-evolve check`/
+  the gate is green) in **core-owned scripts**, read-only diagnoser + writer proposer
+  subagents, and the `using-cap-evolve` router.
+- Host-agnostic installer.
+- Examples: toy_calc, skillsbench, tau2_airline — the last a
+  real 50-task × 10-trial run, val **0.536 → 0.712** (best candidate `cand_0007`,
+  +0.176 / +32.8% relative; *fit metric*, `train == val == test`, so the test number
+  0.694 pass@1 is not held out). Baseline val, best val and the delta come from
+  [`examples/tau2_airline/run_full/ui/data/runs_run_full.json`](examples/tau2_airline/run_full/ui/data/runs_run_full.json)
+  (`summary.baseline_val = 0.536`, `summary.best_val = 0.712`, `best_id = cand_0007`,
+  `delta_abs = 0.176`, `delta_pct = 32.8`); the sealed-test `0.694` comes from
+  [`examples/tau2_airline/run_full/final.json`](examples/tau2_airline/run_full/final.json)
+  (`test.reward` / `test.pass_at_k.1`). Canonical prose:
+  [`docs/RESULTS.md`](docs/RESULTS.md).
+- **`cap-evolve run --resume`** — continue an interrupted run (pod eviction, crash,
+  timeout) from its last completed state instead of starting over. Reopens the run dir
+  (`--run-ts`, else the latest under the base) via `RunDir.create(exist_ok=True)` so it
+  no longer fails with `FileExistsError`; skips the baseline when it already ran; picks
+  the loop up at iteration N+1 from the current best (spend, journal, git history, and
+  the test seal are all preserved); and skips a re-finalize when the test seal is already
+  burned. Explicit budget flags (`--max-iterations`, …) **extend** a resumed run. Works
+  across every algorithm — `hill-climb`/`skillopt` already resumed from rollouts, and
+  **`gepa` now reconstructs its full pool/lineage/frontier** from the run dir (a tiny
+  `gepa_state.json` checkpoint + rollouts) so its Pareto search continues where it stopped.
 - **Consuming-LLM profiles.** Declare the runtime/consuming model via `target_model`
   (a concrete model id or a capability tier: `frontier|strong|mid|weak`) in
   `capevolve.yaml`. The optimizer prompt (new `{{TARGET_READER}}` block) and the
@@ -483,16 +557,6 @@ All notable changes to cap-evolve are documented here. The format follows
   surface the consuming model alongside the optimizer model. Blank `target_model`
   preserves prior behavior exactly; optional `target_profile_file` overrides a tier's
   built-in brief. The tau2-airline example opts in (`gpt-oss-120b`, tier `mid`).
-- **`cap-evolve run --resume`** — continue an interrupted run (pod eviction, crash,
-  timeout) from its last completed state instead of starting over. Reopens the run dir
-  (`--run-ts`, else the latest under the base) via `RunDir.create(exist_ok=True)` so it
-  no longer fails with `FileExistsError`; skips the baseline when it already ran; picks
-  the loop up at iteration N+1 from the current best (spend, journal, git history, and
-  the test seal are all preserved); and skips a re-finalize when the test seal is already
-  burned. Explicit budget flags (`--max-iterations`, …) **extend** a resumed run. Works
-  across every algorithm — `hill-climb`/`skillopt` already resumed from rollouts, and
-  **`gepa` now reconstructs its full pool/lineage/frontier** from the run dir (a tiny
-  `gepa_state.json` checkpoint + rollouts) so its Pareto search continues where it stopped.
 - **Six more coding agents as optimizers** — `cursor` (Cursor `cursor-agent`),
   `droid` (Factory Droid), `copilot` (GitHub Copilot CLI), `kimi` (Moonshot Kimi),
   `pi` (earendil-works Pi), and `antigravity` (Google `agy`, a configurable wrapper).
@@ -511,43 +575,6 @@ All notable changes to cap-evolve are documented here. The format follows
 - intake `INPUTS.md` now covers the **runner model + credentials + custom
   OpenAI-compatible/RITS endpoint** and **obtaining/installing a benchmark repo** (with
   the resolved commit recorded), aligning the interview contract with the README.
-### Fixed
-- Scaffolded project adapter template (`templates/project/adapters/adapter.py`) matched
-  the real `CapabilityAdapter` contract: abstract `tasks` / `run_target(task, ctx, *, seed)`
-  / `score`, with `materialize`/`live`/`apply`/`run_batch` documented as optional
-  overrides. The old stub used a stale `run_target(task, candidate_dir, split)` signature
-  and presented `apply` as a 4th abstract method, which a filled-in body could make the
-  stub-probe silently pass.
-- Honest-eval core (`cap_evolve`): seeded splits with a sealed test set,
-  significance gate, multi-trial variance, pass^k + pass@k, bootstrap CIs.
-- **19 Agent Skills**: phases (intake, implement-and-check, baseline, evaluate,
-  diagnose, gate, finalize, report), capabilities (system-prompt, tools, mcp-tool,
-  skill-package), algorithms (**hill-climb** with `--focus all|cyclic|hardest-first`,
-  **gepa**, **skillopt**), one **run-optimizer** skill backed by
-  `optimizers/registry.yaml` (claude-code, codex, gemini-cli, opencode, openclaw,
-  ibm-bob, generic, mock), and orchestrate + a `using-cap-evolve` session-start router.
-- **`gepa`** (flagship): real GEPA — two-stage minibatch-then-full-val economy,
-  per-instance Pareto frontier with frequency-weighted parent sampling, trace-based
-  reflective dataset, round-robin component focus, system-aware merge across lineages,
-  rollout/metric-call budget, eval cache (arXiv:2507.19457).
-- **`skillopt`** (flagship): epochs × mini-batches with a textual learning rate
-  (integer edit budget on a constant|linear|cosine schedule), within-epoch
-  rejected-edit buffer, and a gated epoch-boundary slow/meta update (arXiv:2605.23904).
-- Git-backed iteration store (default) + optimizer memory (MEMORY.md/STATE.md/rejected.jsonl).
-- **Self-contained** `dashboard.html` (no CDN): KPI strip, cumulative-best stair,
-  tasks×iterations pass/fail heatmap, per-iteration diff, lineage tree (merges as
-  multi-parent), optimizer-vs-runner cost/tokens/latency, annotations — plus a
-  `cap-evolve report --terminal` ANSI report for in-chat progress.
-- **Claude Code plugin** (`plugins/cap-evolve/`, install `claude --plugin-dir
-  ./plugins/cap-evolve`): every skill as `/cap-evolve:<skill>` (dual-mode: standalone
-  slash command + orchestrator-callable + headless JSON), honesty **hooks** (PreToolUse
-  denies edits to the sealed test/gold; Stop/SubagentStop block until `cap-evolve check`/
-  the gate is green) in **core-owned scripts**, read-only diagnoser + writer proposer
-  subagents, and the `using-cap-evolve` router.
-- Host-agnostic installer.
-- Examples: toy_calc, json_extract, date_tool, skills_bench, tau2_airline
-  (real run: 0.46 → 0.80 on 50 tasks).
-- `--resume` to continue a run from its current best.
 
 ### Changed
 - **Skill library collapsed (26 → 19).** The 8 per-CLI optimizer skills became one
@@ -563,5 +590,24 @@ All notable changes to cap-evolve are documented here. The format follows
   **seal-on-success** (a finalize crash no longer burns the headline); infra-vs-capability
   failures use a structured `Rollout.error` signal instead of substring-matching feedback.
 
-### Notes
+### Fixed
+- **Benchmark CI robustness (skillberry-1 self-hosted runner).** Three fixes so a broken
+  runner or gateway is *loud*, not a silent all-0.000 "success": (1) `ci_setup.sh` now
+  installs + hard-verifies the `claude-code` optimizer CLI — when it was missing the
+  optimizer failed every iteration (`cli_present:false`) and every task reported
+  `best=seed`/0.000; (2) `ci_setup.sh` adds a **model-gateway budget preflight** — one
+  tiny gpt-oss call that aborts with a clear error on `429 budget_exceeded` (the shared
+  LiteLLM gateway hitting its spend cap 429s both the agent and the optimizer, killing
+  every rollout with `INFRASTRUCTURE_ERROR`); (3) `run_suite.sh` iterates the task list on
+  FD 3 (+ `run_task </dev/null`) so the optimizer subprocess reading stdin can no longer
+  DRAIN the here-string and cut the suite off after one task. `metrics.py` now detects an
+  infra-dominated eval (majority trials errored + reward≈0) and renders it as
+  `⚠️ infra-error`, excluding it from the suite mean/flip counts so a gateway outage no
+  longer looks like a capability regression.
+- Scaffolded project adapter template (`templates/project/adapters/adapter.py`) matched
+  the real `CapabilityAdapter` contract: abstract `tasks` / `run_target(task, ctx, *, seed)`
+  / `score`, with `materialize`/`live`/`apply`/`run_batch` documented as optional
+  overrides. The old stub used a stale `run_target(task, candidate_dir, split)` signature
+  and presented `apply` as a 4th abstract method, which a filled-in body could make the
+  stub-probe silently pass.
 - Skill names are hyphenated to comply with the Agent Skills `[a-z0-9-]` rule.
