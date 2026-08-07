@@ -23,8 +23,53 @@ uv pip install -p "$CAPEVOLVE_PY" -q $IDX "$REPO/core" litellm
 
 case "$BENCH" in
   swebench)
-    uv pip install -p "$CAPEVOLVE_PY" -q $IDX swebench datasets
-    command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true ;;
+    # PINNED. These were unpinned, so the grading harness could change under us between
+    # runs with nothing in the log to say so. Verified working together against
+    # princeton-nlp/SWE-bench_Lite (and its SWE-bench/* redirect) on 2026-08-07.
+    uv pip install -p "$CAPEVOLVE_PY" -q $IDX "swebench==4.1.0" "datasets==5.0.1"
+    command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true
+
+    # Dataset preflight. `run_evaluation` resolves the dataset over the HF Hub on every
+    # call — `princeton-nlp/*` is a 307 redirect to `SWE-bench/*`, so this needs live
+    # Hub access, and HF rate-limits unauthenticated IPs hard. When that resolution
+    # degrades, the harness raises
+    #
+    #     ValueError: Some instance IDs not found in dataset!
+    #
+    # AFTER the agent has already generated every patch. Run 31161200250 lost 11 minutes
+    # and $3.44 of optimizer budget to exactly that, then published `reward 0.000` as a
+    # real result. Check the tier's ids are resolvable BEFORE spending anything, and
+    # print what the runner actually sees so the next failure is self-diagnosing.
+    if [ -n "${HF_TOKEN:-}" ]; then
+      echo "HF Hub: authenticated (HF_TOKEN present)"
+    else
+      echo "::warning:: HF_TOKEN is not set — HF Hub requests are unauthenticated and"
+      echo "::warning:: rate-limited per source IP. This is the most likely cause of"
+      echo "::warning:: 'Some instance IDs not found in dataset!' during scoring."
+    fi
+    SWE_TASKS="$REPO/ci/benchmarks/swebench/${TIER:-smoke}/tasks.json"
+    if [ -f "$SWE_TASKS" ]; then
+      SWEBENCH_TASKS_JSON="$SWE_TASKS" "$CAPEVOLVE_PY" - <<'PY' || exit 1
+import json, os, sys
+ids = [t["id"] for t in json.load(open(os.environ["SWEBENCH_TASKS_JSON"]))]
+name = os.environ.get("SWEBENCH_DATASET", "princeton-nlp/SWE-bench_Lite")
+split = os.environ.get("SWEBENCH_SPLIT", "test")
+import datasets, swebench
+print(f"swebench {getattr(swebench,'__version__','?')} / datasets {datasets.__version__}"
+      f" -> {name}/{split}, checking {len(ids)} task id(s)")
+try:
+    from swebench.harness.utils import load_swebench_dataset
+    got = load_swebench_dataset(name, split, ids)
+except Exception as exc:
+    print(f"::error:: swebench cannot resolve this tier's instance ids: "
+          f"{type(exc).__name__}: {str(exc)[:400]}")
+    print("::error:: scoring would fail for EVERY task after the agent had already run.")
+    print("::error:: Most likely HF Hub throttling (set the HF_TOKEN secret) or a stale "
+          "dataset cache on the runner (clear ~/.cache/huggingface/datasets).")
+    sys.exit(1)
+print(f"swebench dataset preflight OK: {len(got)}/{len(ids)} instances resolvable")
+PY
+    fi ;;
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"
     uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$CACHE/tau2-bench" ;;
