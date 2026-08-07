@@ -24,9 +24,12 @@ uv pip install -p "$CAPEVOLVE_PY" -q $IDX "$REPO/core" litellm
 case "$BENCH" in
   swebench)
     # PINNED. These were unpinned, so the grading harness could change under us between
-    # runs with nothing in the log to say so. Verified working together against
-    # princeton-nlp/SWE-bench_Lite (and its SWE-bench/* redirect) on 2026-08-07.
-    uv pip install -p "$CAPEVOLVE_PY" -q $IDX "swebench==4.1.0" "datasets==5.0.1"
+    # runs with nothing in the log to say it had. Pinned to what skillberry-1 was actually
+    # running on 2026-08-07, verified ON the runner to resolve all 5 smoke ids from
+    # princeton-nlp/SWE-bench_Lite (300-row test split, 0 missing). datasets 5.0.1 was
+    # verified equivalent off-runner; 5.0.0 is pinned because it is the observed-good state
+    # here and the point of a pin is reproducibility, not an untested upgrade.
+    uv pip install -p "$CAPEVOLVE_PY" -q $IDX "swebench==4.1.0" "datasets==5.0.0"
     command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true
 
     # Dataset preflight. `run_evaluation` resolves the dataset over the HF Hub on every
