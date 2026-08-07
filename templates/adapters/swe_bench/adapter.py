@@ -373,20 +373,7 @@ Do not include any explanation before or after the patch.
                         "model_name_or_path": model_config.MODEL,
                     }) + "\n")
 
-            instance_ids_csv = ",".join(iid for iid, _ in pairs)
-            cmd = [
-                sys.executable,
-                "-m",
-                "swebench.harness.run_evaluation",
-                "--dataset_name", DATASET,
-                "--split", SPLIT,
-                "--instance_ids", instance_ids_csv,
-                "--predictions_path", str(predictions_path),
-                "--max_workers", str(MAX_WORKERS),
-                "--timeout", str(TIMEOUT),
-                "--namespace", NAMESPACE,   # "none" → build locally (arm64-safe)
-                "--run_id", run_id,
-            ]
+            cmd = _build_eval_cmd([iid for iid, _ in pairs], predictions_path, run_id)
 
             try:
                 # Run inside tmpdir so the report JSON + ./logs land there.
@@ -423,6 +410,47 @@ Do not include any explanation before or after the patch.
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _build_eval_cmd(instance_ids: list[str], predictions_path, run_id: str) -> list[str]:
+    """Build the ``swebench.harness.run_evaluation`` argv.
+
+    ``--instance_ids`` is argparse ``nargs="+"`` — SPACE separated, one argv entry per id:
+
+        parser.add_argument("--instance_ids", nargs="+", type=str,
+                            help="Instance IDs to run (space separated)")
+
+    This used to pass `",".join(ids)` as a SINGLE argv entry, so argparse received one
+    id literally named ``"django__django-11179,django__django-15851,..."``. That is of
+    course absent from the dataset, so `load_swebench_dataset` raised
+
+        ValueError: Some instance IDs not found in dataset!
+        Missing IDs:
+        django__django-11179,django__django-15851,psf__requests-2317,...
+
+    The tell is the separator: swebench builds that list with `' '.join(...)`, so a
+    COMMA-joined "Missing IDs" line means the set held one comma-glued string, not N ids.
+    It reads like a dataset/environment fault and is neither.
+
+    Deterministic, and it only bites with 2+ instances: a single-instance call joins to a
+    plain id and works, which is why `score()` was fine while `score_batch()` — the path CI
+    always takes — never graded anything. No CI swebench leg had ever produced a non-zero
+    reward; the only real numbers in benchmark-history come from a different adapter.
+    """
+    return [
+        sys.executable,
+        "-m",
+        "swebench.harness.run_evaluation",
+        "--dataset_name", DATASET,
+        "--split", SPLIT,
+        # Splatted, NOT comma-joined. See above.
+        "--instance_ids", *instance_ids,
+        "--predictions_path", str(predictions_path),
+        "--max_workers", str(MAX_WORKERS),
+        "--timeout", str(TIMEOUT),
+        "--namespace", NAMESPACE,   # "none" → build locally (arm64-safe)
+        "--run_id", run_id,
+    ]
 
 
 def _ungradeable_score(instance_id: str, feedback: str) -> Score:
@@ -626,4 +654,19 @@ if __name__ == "__main__":
     s = _ungradeable_score("repo__c-3", "No evaluation report produced.")
     assert s.reward == 0.0 and s.raw.get("errored") is True
     assert "do not optimize against it" in s.feedback
+    # --instance_ids is argparse nargs="+" (space separated). Passing a comma-joined
+    # string as ONE argv entry made every multi-instance eval fail with
+    # "Some instance IDs not found in dataset!" — deterministically, and only for 2+
+    # instances, which is every CI run. Pin the shape.
+    cmd = _build_eval_cmd(["repo__a-1", "repo__b-2", "repo__c-3"], "/tmp/preds.jsonl", "rid")
+    i = cmd.index("--instance_ids")
+    assert cmd[i + 1:i + 4] == ["repo__a-1", "repo__b-2", "repo__c-3"], cmd[i:i + 5]
+    assert not any("," in a for a in cmd), f"comma-glued argv: {[a for a in cmd if ',' in a]}"
+    # the next flag must follow immediately after the 3 ids (no swallowed positional)
+    assert cmd[i + 4].startswith("--"), cmd[i:i + 6]
+    # a single instance must still be a bare id, not a 1-element oddity
+    one = _build_eval_cmd(["only__one-1"], "/tmp/p.jsonl", "rid")
+    j = one.index("--instance_ids")
+    assert one[j + 1] == "only__one-1" and one[j + 2].startswith("--")
+    print("swe_bench eval-argv self-check: OK")
     print("swe_bench batch-scoring self-check: OK")
