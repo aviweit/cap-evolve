@@ -40,7 +40,7 @@ on:
         type: string
         default: "10"
       trials:
-        description: "Trials per task per eval (default 10). Applies to whichever tier(s) run in this dispatch."
+        description: "Trials per task per eval (default 10). Applies to whichever tier(s) run in this dispatch. Smoke always runs 5, regardless of this input — fewer cannot separate signal from noise on a 5-task binary tier."
         type: string
         default: "10"
       agent_model:
@@ -301,7 +301,17 @@ jobs:
       # from the `iterations` input, which only controls the (expensive) full tier
       # (default 10 there — see the `iterations` input above).
       ITERATIONS: ${{ matrix.tier == 'smoke' && '3' || github.event.inputs.iterations || '10' }}
-      NUM_TRIALS: ${{ github.event.inputs.trials || '10' }}
+      # Smoke pins 5 trials, same as it pins iterations, and for a measurable reason.
+      # Run 31183768756 was dispatched with trials=1 and re-scored the SAME seed capability at
+      # 0.400 (baseline) then 0.200 (finalize) — pytest-dev__pytest-7432 flipped 1.000 -> 0.000
+      # because gpt-5-mini samples a different diff each time. On a 5-task binary tier one task
+      # flipping IS ±0.2, so SE ≈ 0.22 and the acceptance gate (Δ > 1.0·SE) can never fire:
+      # cand_0002 genuinely scored 0.600 vs a 0.400 baseline and was correctly rejected as
+      # indistinguishable from noise. trials=1 therefore cannot produce an optimization signal
+      # at this tier, only an infrastructure check. 5 trials shrinks SE enough for a real
+      # one-task improvement to clear the gate; eval is ~3.4 min/pass here, so this costs
+      # minutes while the optimizer (~$5/run) still dominates spend.
+      NUM_TRIALS: ${{ matrix.tier == 'smoke' && '5' || github.event.inputs.trials || '10' }}
       AGENT_MODEL: ${{ github.event.inputs.agent_model || 'aws/gpt-oss-120b' }}
       OPTIMIZER_MODEL: ${{ github.event.inputs.optimizer_model || 'claude-opus-4-8' }}
       # Smoke defaults to a $50/iteration cap (fast regression, generous headroom);
