@@ -123,18 +123,33 @@ PY
       swe_ids=$("$CAPEVOLVE_PY" -c "
 import json,sys
 print(' '.join(t['id'] for t in json.load(open(sys.argv[1]))))" "$SWE_TASKS")
-      swe_missing=""; swe_total=0; swe_failed=0
+      # Build the to-pull list first, skipping images already on the runner, then pull the
+      # remainder with BOUNDED CONCURRENCY. swebench pulls in parallel during grading
+      # (--max_workers, 10 here), so a sequential pre-pull would be slower than the behaviour
+      # it replaces — fine for smoke's 5 instances, actively harmful for full's 250. Six is
+      # chosen to stay well under Docker Hub's unauthenticated rate limiting while still
+      # overlapping the (large, ~1GB+) layer downloads.
+      swe_todo="$(mktemp)"; swe_fails="$(mktemp)"
+      swe_total=0
       for iid in $swe_ids; do
         swe_total=$((swe_total+1))
         img="swebench/sweb.eval.x86_64.$(printf '%s' "$iid" | sed 's/__/_1776_/g'):latest"
-        if docker image inspect "$img" >/dev/null 2>&1; then continue; fi
-        if docker pull -q "$img" >/dev/null 2>&1; then
-          echo "  pulled $img"
-        else
-          swe_failed=$((swe_failed+1)); swe_missing="$swe_missing $iid"
-          echo "::warning:: could not pull $img — $iid will infra-error during scoring"
-        fi
+        docker image inspect "$img" >/dev/null 2>&1 || printf '%s %s\n' "$iid" "$img" >> "$swe_todo"
       done
+      swe_need=$(wc -l < "$swe_todo" | tr -d ' ')
+      if [ "$swe_need" -gt 0 ]; then
+        echo "pre-pulling $swe_need of $swe_total eval image(s), 6 at a time"
+        # instance ids contain no spaces, so a space-separated pair is safe for xargs -n 2.
+        # Each worker echoes the instance id on failure; the parent counts those.
+        xargs -P 6 -n 2 sh -c 'docker pull -q "$2" >/dev/null 2>&1 || echo "$1"' _ \
+          < "$swe_todo" > "$swe_fails" 2>/dev/null || true
+      fi
+      swe_failed=$(wc -l < "$swe_fails" | tr -d ' ')
+      swe_missing=$(tr '\n' ' ' < "$swe_fails")
+      for iid in $swe_missing; do
+        echo "::warning:: could not pull the eval image for $iid — it will infra-error during scoring"
+      done
+      rm -f "$swe_todo" "$swe_fails"
       if [ "$swe_failed" -gt 0 ] && [ "$swe_failed" -eq "$swe_total" ]; then
         echo "::error:: NONE of the $swe_total eval images could be pulled — Docker Hub is"
         echo "::error:: unreachable or rate-limited. Every task would infra-error; aborting"
