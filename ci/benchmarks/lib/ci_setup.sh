@@ -120,6 +120,21 @@ PY
       else
         echo "Docker Hub: unauthenticated (no DOCKERHUB_USER/DOCKERHUB_TOKEN) — 100 pulls/hour per IP"
       fi
+      # Reap orphaned eval containers before starting. Cancelling a benchmarks run kills the
+      # workflow process but NOT the Docker containers swebench started, so each cancellation
+      # leaves `sweb.eval.*` containers running indefinitely — one was observed Up 3 hours,
+      # competing for Docker throughput with the run that replaced it. The bench job is
+      # serialized on this runner (single self-hosted runner, one leg at a time), so any
+      # sweb.eval container alive at setup time can only be a leftover.
+      # Scoped to sweb.eval.* on purpose: harbor's `*__env-main` containers belong to a
+      # different adapter and are not ours to kill.
+      swe_orphans=$(docker ps -aq --filter "name=sweb.eval" 2>/dev/null | tr '\n' ' ')
+      if [ -n "$(printf '%s' "$swe_orphans" | tr -d ' ')" ]; then
+        # shellcheck disable=SC2086 -- intentional word splitting over container ids
+        docker rm -f $swe_orphans >/dev/null 2>&1 || true
+        echo "reaped $(printf '%s' "$swe_orphans" | wc -w | tr -d ' ') orphaned sweb.eval container(s)"
+      fi
+
       swe_ids=$("$CAPEVOLVE_PY" -c "
 import json,sys
 print(' '.join(t['id'] for t in json.load(open(sys.argv[1]))))" "$SWE_TASKS")
