@@ -409,11 +409,30 @@ Do not include any explanation before or after the patch.
                     # Capture the harness's own per-instance log BEFORE the tempdir is
                     # deleted. Without this the reason an instance failed to grade is lost
                     # forever and all you get is "it never produced a verdict".
-                    tail = _instance_log_tail(tmp, iid)
-                    feedback += (
-                        f" run_instance.log tail: {tail}" if tail
-                        else " (no run_instance.log — the harness never started this instance)"
-                    )
+                    log = _read_instance_log(tmp, iid)
+                    if APPLY_PATCH_FAIL in log:
+                        # NOT infrastructure. swebench logs this and raises EvaluationError
+                        # when the model's diff will not apply to the repo, so the instance
+                        # lands in `error_ids` — but a patch that does not apply is the
+                        # model's fault, and it is the single most actionable signal the
+                        # optimizer can get. Marking it ungradeable hides it from the
+                        # optimizer AND from the >50%-infra gate, so a run where every patch
+                        # was malformed would look like broken infrastructure instead of a
+                        # capability that needs fixing.
+                        reward, ungradeable = 0.0, False
+                        feedback = (
+                            "Patch did NOT APPLY to the repository — the diff was rejected "
+                            "before any test ran. Usually wrong context lines, a wrong file "
+                            "path, or bad hunk offsets. The prompt must make the model emit a "
+                            "diff whose context matches the file exactly. Harness detail: "
+                            + _log_excerpt(log)
+                        )
+                    else:
+                        tail = _log_excerpt(log) if log else ""
+                        feedback += (
+                            f" run_instance.log excerpt: {tail}" if tail
+                            else " (no run_instance.log — the harness never started this instance)"
+                        )
                 out[iid] = (reward, feedback, ungradeable)
             return out
 
@@ -580,14 +599,47 @@ def _instance_log_tail(tmp: Path, instance_id: str, limit: int = 700) -> str:
     Best-effort by design: a missing log is normal (the harness may never have reached the
     instance) and must never turn into a scoring exception.
     """
+    text = _read_instance_log(tmp, instance_id)
+    return _log_excerpt(text, limit) if text else ""
+
+
+# swebench's own marker, logged just before it raises EvaluationError for a patch that
+# would not apply (swebench/harness/constants/__init__.py, run_evaluation.py).
+APPLY_PATCH_FAIL = ">>>>> Patch Apply Failed"
+
+
+def _read_instance_log(tmp: Path, instance_id: str) -> str:
+    """Full text of swebench's per-instance ``run_instance.log``, or "" if absent."""
     try:
         hits = sorted(tmp.glob(f"logs/**/{instance_id}/run_instance.log"))
         if not hits:
             return ""
-        text = hits[-1].read_text(encoding="utf-8", errors="replace").strip()
-        return text[-limit:] if text else ""
+        return hits[-1].read_text(encoding="utf-8", errors="replace").strip()
     except Exception:  # noqa: BLE001 — diagnostics must not break scoring
         return ""
+
+
+def _log_excerpt(text: str, limit: int = 700) -> str:
+    """The INFORMATIVE part of a run_instance.log, not just its last bytes.
+
+    A blind tail is mostly long container/log paths — the first attempt at this returned
+    ``"apevolve_cc279f0d5565/litellm_proxy__Azure__gpt-5-mini-2025-08-07/django__"`` and said
+    nothing. Anchor on the failure marker when there is one, so the excerpt carries the
+    reason rather than the filesystem layout.
+    """
+    if not text:
+        return ""
+    idx = text.find(APPLY_PATCH_FAIL)
+    if idx == -1:
+        for marker in ("Error", "error:", "Traceback", "Failed"):
+            idx = text.find(marker)
+            if idx != -1:
+                break
+    if idx == -1:
+        return text[-limit:]
+    # A little context before the marker, then forward — that is where the cause sits.
+    start = max(0, idx - 120)
+    return text[start:start + limit]
 
 
 def _score_from_report(
@@ -785,6 +837,27 @@ if __name__ == "__main__":
     # a nonexistent tmpdir must also be safe
     assert _instance_log_tail(Path("/nonexistent-xyz"), "repo__d-4") == ""
     print("swe_bench log-capture self-check: OK")
+    # A patch that will not apply is a CAPABILITY failure, not infrastructure. swebench
+    # logs APPLY_PATCH_FAIL then raises, so the instance lands in error_ids; classifying
+    # that as ungradeable hides the most actionable signal the optimizer can receive.
+    real_log = (
+        "2026-08-07 12:50:01,123 - INFO - Container for django__django-15851 started\n"
+        "/some/very/long/path/capevolve_cc279f0d5565/litellm_proxy__Azure__gpt-5-mini/x\n"
+        ">>>>> Patch Apply Failed:\n"
+        "patching file django/db/models/sql/query.py\n"
+        "Hunk #1 FAILED at 2451.\n"
+    )
+    ex = _log_excerpt(real_log)
+    assert ">>>>> Patch Apply Failed" in ex, ex
+    assert "Hunk #1 FAILED" in ex, ex
+    assert APPLY_PATCH_FAIL in real_log
+    # the excerpt must carry the REASON, not just the trailing path noise
+    assert "litellm_proxy__Azure" not in ex.split(">>>>>")[-1]
+    # no marker at all -> fall back to a plain tail, never raise
+    assert _log_excerpt("just some boring output " * 60).endswith("output ")
+    assert _log_excerpt("") == ""
+    print("swe_bench apply-fail-excerpt self-check: OK")
+
     # run_id must be unique per invocation: swebench derives GLOBAL Docker container names
     # (sweb.eval.<instance>.<run_id>) from it, so a deterministic id collides with the
     # containers left by an earlier iteration and that instance cannot be evaluated.
