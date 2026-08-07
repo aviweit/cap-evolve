@@ -290,14 +290,14 @@ Do not include any explanation before or after the patch.
             return pre
 
         try:
-            reward, feedback = self._evaluate_patch(task.id, rollout.output or "")
+            reward, feedback, ungradeable = self._evaluate_patch(task.id, rollout.output or "")
         except Exception as e:  # noqa: BLE001
-            return Score(
-                task_id=task.id,
-                reward=0.0,
-                feedback=f"Evaluation harness error: {e}. Check Docker is running.",
+            return _ungradeable_score(
+                task.id, f"Evaluation harness error: {e}. Check Docker is running."
             )
 
+        if ungradeable:
+            return _ungradeable_score(task.id, feedback)
         return Score(task_id=task.id, reward=reward, feedback=feedback)
 
     def score_batch(self, tasks: list[Task], rollouts: dict) -> dict:
@@ -325,19 +325,24 @@ Do not include any explanation before or after the patch.
                 results = self._evaluate_patches_batch(batchable)
             except Exception as e:  # noqa: BLE001
                 results = {
-                    iid: (0.0, f"Evaluation harness error: {e}. Check Docker is running.")
+                    iid: (0.0, f"Evaluation harness error: {e}. Check Docker is running.", True)
                     for iid, _ in batchable
                 }
-            for iid, (reward, feedback) in results.items():
-                out[iid] = Score(task_id=iid, reward=reward, feedback=feedback)
+            for iid, (reward, feedback, ungradeable) in results.items():
+                out[iid] = (
+                    _ungradeable_score(iid, feedback)
+                    if ungradeable
+                    else Score(task_id=iid, reward=reward, feedback=feedback)
+                )
 
         return out
 
-    def _evaluate_patch(self, instance_id: str, patch: str) -> tuple[float, str]:
+    def _evaluate_patch(self, instance_id: str, patch: str) -> tuple[float, str, bool]:
         """Run the swebench Docker harness for one instance + patch.
 
         Thin wrapper over ``_evaluate_patches_batch`` with a single pair, so the
         harness-invocation/report-parsing logic exists in exactly one place.
+        Returns ``(reward, feedback, ungradeable)``.
         """
         return self._evaluate_patches_batch([(instance_id, patch)])[instance_id]
 
@@ -394,7 +399,8 @@ Do not include any explanation before or after the patch.
                     f"Evaluation timed out. Docker image builds can be slow on the "
                     f"first run; raise SWEBENCH_TIMEOUT (currently {TIMEOUT}s)."
                 )
-                return {iid: (0.0, msg) for iid, _ in pairs}
+                # Nothing was graded — infrastructure, not a capability result.
+                return {iid: (0.0, msg, True) for iid, _ in pairs}
 
             report = _parse_swebench_report(tmp, run_id)
             if report is None:
@@ -403,7 +409,10 @@ Do not include any explanation before or after the patch.
                     f"No evaluation report produced (harness exit {proc.returncode}). "
                     f"Check Docker is running and the image built. stderr: {stderr_tail}"
                 )
-                return {iid: (0.0, msg) for iid, _ in pairs}
+                # The harness never graded anything (a crashed run_evaluation, an
+                # unloadable dataset, a Docker failure). Marking these ungradeable is
+                # what stops the suite reporting a confident 0.000 it never measured.
+                return {iid: (0.0, msg, True) for iid, _ in pairs}
 
             return {
                 iid: _score_from_report(iid, report, proc.returncode)
@@ -414,6 +423,30 @@ Do not include any explanation before or after the patch.
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _ungradeable_score(instance_id: str, feedback: str) -> Score:
+    """A Score for a patch the harness never managed to grade.
+
+    ``raw["errored"]`` is the contract the evaluation harness reads to keep this trial
+    OUT of the mean (``core/cap_evolve/harness.py``). Without it the 0.0 below is
+    averaged in as a real measurement, and a broken grader publishes a confident
+    ``reward 0.000`` for a capability that was never actually tested — which is exactly
+    what benchmarks run 31161200250 did across all 5 swebench smoke tasks.
+
+    The rollout itself SUCCEEDED here (real tokens, real spend, a diff-shaped patch);
+    only scoring failed. That is why ``rollout.error`` is empty and this explicit flag
+    is the only signal available.
+    """
+    return Score(
+        task_id=instance_id,
+        reward=0.0,
+        feedback=(
+            f"{feedback} Infrastructure error, not a prompt defect; "
+            "do not optimize against it."
+        ),
+        raw={"errored": True},
+    )
 
 
 def _looks_like_diff(text: str) -> bool:
@@ -474,11 +507,17 @@ def _parse_swebench_report(tmp: Path, run_id: str) -> dict | None:
     return None
 
 
-def _score_from_report(instance_id: str, report: dict, harness_exit: int) -> tuple[float, str]:
-    """Read ``instance_id``'s outcome out of a (possibly multi-instance) report."""
+def _score_from_report(
+    instance_id: str, report: dict, harness_exit: int
+) -> tuple[float, str, bool]:
+    """Read ``instance_id``'s outcome out of a (possibly multi-instance) report.
+
+    Third element is ``ungradeable``: True when this instance produced no verdict at
+    all, so its 0.0 is missing data rather than a measurement.
+    """
     resolved_ids = report.get("resolved_ids", [])
     if instance_id in resolved_ids:
-        return 1.0, "Instance resolved — the patch makes the tests pass."
+        return 1.0, "Instance resolved — the patch makes the tests pass.", False
 
     ran_ids = set(report.get("completed_ids") or []) | set(report.get("submitted_instances") or [])
     if instance_id in ran_ids:
@@ -486,12 +525,14 @@ def _score_from_report(instance_id: str, report: dict, harness_exit: int) -> tup
             "Instance NOT resolved: the patch applied/ran but did not make "
             "the failing tests pass. Guide the model toward a correct, "
             "minimal fix for the described issue."
-        )
+        ), False
 
+    # Present in neither list: the harness produced a report but never reached this
+    # instance. It was not graded, so it must not be averaged in as a 0.0.
     return 0.0, (
-        f"No evaluation report produced (harness exit {harness_exit}). "
-        f"Check Docker is running and the image built."
-    )
+        f"Instance missing from the evaluation report (harness exit {harness_exit}). "
+        f"It was never graded — check Docker is running and the image built."
+    ), True
 
 
 def _extract_patch(text: str) -> str:
@@ -570,9 +611,19 @@ if __name__ == "__main__":
         "completed_ids": ["repo__a-1", "repo__b-2"],
     }
     assert _score_from_report("repo__a-1", fake_report, 0) == (
-        1.0, "Instance resolved — the patch makes the tests pass.")
-    reward, feedback = _score_from_report("repo__b-2", fake_report, 0)
+        1.0, "Instance resolved — the patch makes the tests pass.", False)
+    reward, feedback, ungradeable = _score_from_report("repo__b-2", fake_report, 0)
     assert reward == 0.0 and "NOT resolved" in feedback
-    reward, feedback = _score_from_report("repo__c-3", fake_report, 1)
-    assert reward == 0.0 and "No evaluation report" in feedback
+    # Ran and genuinely failed: a REAL 0.0 that must stay in the mean.
+    assert ungradeable is False
+    reward, feedback, ungradeable = _score_from_report("repo__c-3", fake_report, 1)
+    assert reward == 0.0 and "missing from the evaluation report" in feedback
+    # Never graded: must be flagged so the harness leaves it OUT of the mean.
+    assert ungradeable is True
+
+    # The flag has to survive into the Score, because raw["errored"] is the only
+    # channel the harness reads for a scoring-side failure (rollout.error is empty).
+    s = _ungradeable_score("repo__c-3", "No evaluation report produced.")
+    assert s.reward == 0.0 and s.raw.get("errored") is True
+    assert "do not optimize against it" in s.feedback
     print("swe_bench batch-scoring self-check: OK")

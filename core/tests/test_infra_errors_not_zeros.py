@@ -413,3 +413,106 @@ def test_healthy_tasks_do_not_trip_the_ci_assertion(tmp_path):
     res = harness.evaluate_candidate(_Clean(), rd.candidate_dir("seed"),
                                      run_dir=rd, split="val", tag="seed")
     assert [pt for pt in res.per_task if ar._infra_task(pt)] == []
+
+
+# ---- the SCORING-side hole: rollout succeeded, grading did not ---------------
+#
+# From benchmarks run 31161200250 (`smoke / swebench`). The agent really ran — $0.075
+# of eval spend, 43,368 tokens, five diff-shaped patches — and then
+# `swebench.harness.run_evaluation` died for every instance with
+#
+#     ValueError: Some instance IDs not found in dataset!
+#
+# so nothing was graded. Because `rollout.error` was empty, the flag the tests above
+# key off was never set: `raw` came back `{"errored": false, "valid_trials": 1}`, the
+# scorer's 0.0 was averaged in as a measurement, `assert_run.py`'s `measured` check
+# saw nothing wrong, the leg went GREEN, and `mean reward 0.000 → 0.000` was published
+# to benchmark-history as a real swebench result while the optimizer burned $3.44
+# against feedback that contained no signal.
+#
+# The rollout-side hole (above) was closed by #307. This is its scoring-side twin: an
+# adapter that cannot grade must be able to say so, and the harness must believe it.
+
+
+class _UngradeableScorerAdapter:
+    """Every rollout SUCCEEDS; the scorer can only grade half of them.
+
+    C and D mirror a crashed grading harness: real output, no verdict. The adapter
+    signals that with ``raw={"errored": True}`` — the only channel available, since
+    ``rollout.error`` is empty on a successful rollout.
+    """
+
+    UNGRADEABLE = ("C", "D")
+
+    def tasks(self, split):
+        from cap_evolve import Task
+        return [Task(id=t) for t in ("A", "B", "C", "D")]
+
+    def run_target(self, task, ctx, *, seed=0):
+        from cap_evolve import Rollout
+        # NB: no `error` on any of these. The target ran fine for all four.
+        return Rollout(task_id=task.id, output="pass" if task.id == "A" else "fail",
+                       cost_usd=0.01, tokens=1234)
+
+    def score(self, task, rollout):
+        from cap_evolve import Score
+        if task.id in self.UNGRADEABLE:
+            return Score(task_id=task.id, reward=0.0,
+                         feedback="No evaluation report produced (harness exit 1).",
+                         raw={"errored": True})
+        return Score(task_id=task.id, reward=1.0 if rollout.output == "pass" else 0.0)
+
+    def apply(self, candidate_dir, edits=None):
+        return None
+
+
+def test_ungradeable_scores_leave_the_mean(tmp_path):
+    """A scoring failure must not be averaged in as a real 0.0."""
+    from cap_evolve import harness
+    rd = _run_dir(tmp_path, "ungrade")
+    res = harness.evaluate_candidate(_UngradeableScorerAdapter(), rd.candidate_dir("seed"),
+                                     run_dir=rd, split="val", tag="seed")
+    # A=1.0 and B=0.0 were graded; C and D were not. 0.5, not 0.25.
+    assert res.reward == 0.5, "ungradeable trials were averaged in as real zeros"
+    assert res.n_scored == 2
+    assert res.n_tasks == 4
+    assert res.coverage == 0.5
+
+
+def test_ungradeable_tasks_are_marked_as_errored(tmp_path):
+    """The per-task record must carry the flag every downstream guard reads."""
+    from cap_evolve import harness
+    rd = _run_dir(tmp_path, "ungrade-mark")
+    res = harness.evaluate_candidate(_UngradeableScorerAdapter(), rd.candidate_dir("seed"),
+                                     run_dir=rd, split="val", tag="seed")
+    by_id = {pt["task_id"]: pt for pt in res.per_task}
+    for tid in ("C", "D"):
+        assert by_id[tid]["raw"]["errored"] is True, f"{tid} not flagged"
+        assert by_id[tid]["raw"]["valid_trials"] == 0
+    # ...and the genuinely-failing task stays a real measurement.
+    assert not by_id["B"]["raw"].get("errored")
+    assert by_id["B"]["raw"]["valid_trials"] == 1
+
+
+def test_assert_run_measured_check_now_fires(tmp_path):
+    """assert_run.py's `measured` gate must see a fully-ungradeable run as infra.
+
+    This is the check that went green on run 31161200250. It reads `raw.errored`, so it
+    only works once the harness records the scoring-side failure.
+    """
+    import importlib.util
+    from cap_evolve import harness
+
+    class _AllUngradeable(_UngradeableScorerAdapter):
+        UNGRADEABLE = ("A", "B", "C", "D")
+
+    rd = _run_dir(tmp_path, "ungrade-all")
+    res = harness.evaluate_candidate(_AllUngradeable(), rd.candidate_dir("seed"),
+                                     run_dir=rd, split="val", tag="seed")
+    spec = importlib.util.spec_from_file_location(
+        "assert_run", REPO / "ci" / "benchmarks" / "lib" / "assert_run.py")
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    infra = [pt for pt in res.per_task if mod._infra_task(pt)]
+    assert len(infra) == 4, "assert_run would still treat an ungraded run as measured"

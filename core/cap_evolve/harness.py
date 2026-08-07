@@ -247,6 +247,22 @@ def evaluate_candidate(
             sc = scores_by_id.get(tid)
             if sc is None:  # not in has_score_batch mode, or the batch omitted this id
                 sc = adapter.score(task, rollout)
+            # A rollout can SUCCEED and still be unmeasurable. The target ran, spent
+            # tokens and produced an artifact — and then SCORING failed: a grading
+            # harness that crashed, a dataset it could not load, no report file. There
+            # is no ``rollout.error`` in that case, so the check above sees nothing,
+            # and the scorer's 0.0 gets averaged in as if the capability had been
+            # measured and failed. Adapters flag it by setting ``raw["errored"]`` on the
+            # Score; honour that here, exactly as ``_rescore_from_rollouts`` already
+            # does on resume. Without this, benchmarks run 31161200250 published
+            # `mean reward 0.000 → 0.000` with `conclusion: success` over 5 swebench
+            # tasks whose patches were never graded at all — the run_evaluation harness
+            # died with `Some instance IDs not found in dataset!` while $3.44 of
+            # optimizer budget chased feedback that contained no signal.
+            if not errored and (getattr(sc, "raw", None) or {}).get("errored"):
+                errored = True
+                per_task_errored[tid] = True
+                per_task_errored_trials[tid] += 1
             # An errored trial never ran the target, so its reward is not a
             # measurement — it is missing data. Averaging its 0.0 in would state
             # that the capability failed a task it was never given, which is how a
