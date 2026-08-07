@@ -93,6 +93,57 @@ print("swebench dataset preflight OK — pinning the run to the warm cache (offl
 PY
       # Only after a successful warm: no later Hub call, so no mid-run throttling.
       SWEBENCH_OFFLINE=1
+    fi
+
+    # Pre-pull the tier's eval images. swebench pulls
+    # swebench/sweb.eval.x86_64.<instance> lazily, DURING grading, once per instance
+    # (SWEBENCH_NAMESPACE=swebench). When a pull fails the instance never gets a container,
+    # swebench files it under `error_ids`, and the harness still exits 0 — so a Docker Hub
+    # hiccup or rate-limit becomes a silent per-instance hole in the measurement rather than
+    # a visible failure. Observed across runs 31173670507 and 31179047624: the two instances
+    # with no local image (django__django-11179, pytest-dev__pytest-7432) were the ones that
+    # kept failing, while their manifests are present on Docker Hub (HTTP 200) — i.e. they
+    # are pullable, just not reliably at eval time.
+    #
+    # Pull them up front instead: the images are then warm for every iteration, and a Hub
+    # problem surfaces here, in seconds, naming the instances it will cost us.
+    #
+    # Instance -> image name: swebench replaces "__" with "_1776_"
+    # (django__django-11179 -> sweb.eval.x86_64.django_1776_django-11179).
+    if [ -f "$SWE_TASKS" ] && command -v docker >/dev/null 2>&1; then
+      # Optional Docker Hub auth. Unauthenticated pulls are capped at 100 manifests/hour per
+      # source IP, which this shared runner can exhaust; with creds the cap is far higher.
+      if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+        printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin >/dev/null 2>&1 \
+          && echo "Docker Hub: authenticated as $DOCKERHUB_USER" \
+          || echo "::warning:: Docker Hub login failed — continuing unauthenticated"
+      else
+        echo "Docker Hub: unauthenticated (no DOCKERHUB_USER/DOCKERHUB_TOKEN) — 100 pulls/hour per IP"
+      fi
+      swe_ids=$("$CAPEVOLVE_PY" -c "
+import json,sys
+print(' '.join(t['id'] for t in json.load(open(sys.argv[1]))))" "$SWE_TASKS")
+      swe_missing=""; swe_total=0; swe_failed=0
+      for iid in $swe_ids; do
+        swe_total=$((swe_total+1))
+        img="swebench/sweb.eval.x86_64.$(printf '%s' "$iid" | sed 's/__/_1776_/g'):latest"
+        if docker image inspect "$img" >/dev/null 2>&1; then continue; fi
+        if docker pull -q "$img" >/dev/null 2>&1; then
+          echo "  pulled $img"
+        else
+          swe_failed=$((swe_failed+1)); swe_missing="$swe_missing $iid"
+          echo "::warning:: could not pull $img — $iid will infra-error during scoring"
+        fi
+      done
+      if [ "$swe_failed" -gt 0 ] && [ "$swe_failed" -eq "$swe_total" ]; then
+        echo "::error:: NONE of the $swe_total eval images could be pulled — Docker Hub is"
+        echo "::error:: unreachable or rate-limited. Every task would infra-error; aborting"
+        echo "::error:: rather than spending the optimizer budget on an unmeasurable run."
+        exit 1
+      fi
+      [ "$swe_failed" -gt 0 ] \
+        && echo "::warning:: $swe_failed/$swe_total eval images unavailable:$swe_missing" \
+        || echo "swebench eval images ready: $swe_total/$swe_total"
     fi ;;
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"
