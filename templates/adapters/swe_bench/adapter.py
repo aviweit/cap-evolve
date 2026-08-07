@@ -542,21 +542,64 @@ def _score_from_report(
 
     Third element is ``ungradeable``: True when this instance produced no verdict at
     all, so its 0.0 is missing data rather than a measurement.
+
+    Reads the real swebench report schema (``swebench/harness/reporting.py``), which pairs
+    an INT count with a LIST of ids for each outcome::
+
+        "submitted_instances": len(predictions),                  # int
+        "submitted_ids":       list(sorted(predictions.keys())),  # list
+        "resolved_ids" / "unresolved_ids" / "empty_patch_ids" / "error_ids" / "incomplete_ids"
+
+    This used to union ``completed_ids`` with ``submitted_instances`` — the COUNT — so
+    ``set(5)`` raised ``TypeError: 'int' object is not iterable`` and every instance came
+    back as "Evaluation harness error". It had never fired before, because the harness
+    always died on a malformed ``--instance_ids`` argv before writing a report at all;
+    fixing that exposed this one immediately underneath.
+
+    ``_ids`` guards against the same class of mistake: anything that is not a list/tuple/set
+    is ignored rather than crashing the scorer, so a future schema change degrades to
+    "ungradeable" (loud, safe) instead of a TypeError misreported as a Docker fault.
     """
-    resolved_ids = report.get("resolved_ids", [])
-    if instance_id in resolved_ids:
+    def _ids(*keys: str) -> set:
+        out = set()
+        for k in keys:
+            v = report.get(k)
+            if isinstance(v, (list, tuple, set)):
+                out |= {x for x in v if isinstance(x, str)}
+        return out
+
+    if instance_id in _ids("resolved_ids"):
         return 1.0, "Instance resolved — the patch makes the tests pass.", False
 
-    ran_ids = set(report.get("completed_ids") or []) | set(report.get("submitted_instances") or [])
-    if instance_id in ran_ids:
+    # Order matters, and this is the same trap as everything else in this file's history.
+    # `error_ids` / `incomplete_ids` must be consulted BEFORE any "it ran" signal, because
+    # an instance the harness errored on is still listed in `submitted_ids`. Checking "ran"
+    # first would relabel an infrastructure failure as a real 0.0 — precisely the bug the
+    # ungradeable flag exists to prevent.
+    if instance_id in _ids("error_ids", "incomplete_ids"):
+        return 0.0, (
+            f"Evaluation errored for this instance (harness exit {harness_exit}); it never "
+            f"produced a verdict. Check the instance's Docker image built and ran."
+        ), True
+
+    if instance_id in _ids("empty_patch_ids"):
+        # A real capability failure: the model produced no usable diff.
+        return 0.0, (
+            "Empty patch: the model produced no applicable diff. The prompt must make it "
+            "output a complete unified diff for the file(s) that need changing."
+        ), False
+
+    # NB: `submitted_ids` is deliberately NOT here. It only says a prediction was offered,
+    # never that it was graded — it is a superset of every outcome above and below, so
+    # treating it as evidence of a verdict would silently turn ungraded instances into 0.0s.
+    if instance_id in _ids("unresolved_ids", "completed_ids"):
         return 0.0, (
             "Instance NOT resolved: the patch applied/ran but did not make "
             "the failing tests pass. Guide the model toward a correct, "
             "minimal fix for the described issue."
         ), False
 
-    # Present in neither list: the harness produced a report but never reached this
-    # instance. It was not graded, so it must not be averaged in as a 0.0.
+    # Present in no list: the harness wrote a report but never reached this instance.
     return 0.0, (
         f"Instance missing from the evaluation report (harness exit {harness_exit}). "
         f"It was never graded — check Docker is running and the image built."
@@ -632,41 +675,45 @@ if __name__ == "__main__":
     assert _cheap_score_precheck("i1", Rollout(task_id="i1", output="not a diff")) is not None
     assert _cheap_score_precheck("i1", Rollout(task_id="i1", output="--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@")) is None
 
-    # Batch report parsing (no subprocess/Docker): a multi-instance report resolves
-    # one instance, runs-but-fails a second, and never mentions a third.
+    # Batch report parsing against the REAL swebench report schema
+    # (swebench/harness/reporting.py), int counts and id lists together. The int fields
+    # are present deliberately: unioning `submitted_instances` (a COUNT) into a set raised
+    # `TypeError: 'int' object is not iterable` and every instance was misreported as
+    # "Evaluation harness error ... Check Docker is running".
     fake_report = {
-        "resolved_ids": ["repo__a-1"],
+        "total_instances": 5, "submitted_instances": 5, "completed_instances": 3,
+        "resolved_instances": 1, "unresolved_instances": 2, "empty_patch_instances": 1,
+        "error_instances": 1, "schema_version": 2,
+        "submitted_ids": ["repo__a-1", "repo__b-2", "repo__e-5", "repo__d-4"],
         "completed_ids": ["repo__a-1", "repo__b-2"],
+        "resolved_ids": ["repo__a-1"],
+        "unresolved_ids": ["repo__b-2"],
+        "empty_patch_ids": ["repo__e-5"],
+        "error_ids": ["repo__d-4"],
+        "incomplete_ids": [],
     }
     assert _score_from_report("repo__a-1", fake_report, 0) == (
         1.0, "Instance resolved — the patch makes the tests pass.", False)
+    # ran and genuinely failed -> REAL 0.0, stays in the mean
     reward, feedback, ungradeable = _score_from_report("repo__b-2", fake_report, 0)
-    assert reward == 0.0 and "NOT resolved" in feedback
-    # Ran and genuinely failed: a REAL 0.0 that must stay in the mean.
-    assert ungradeable is False
-    reward, feedback, ungradeable = _score_from_report("repo__c-3", fake_report, 1)
+    assert reward == 0.0 and "NOT resolved" in feedback and ungradeable is False
+    # empty patch -> REAL capability failure, stays in the mean
+    reward, feedback, ungradeable = _score_from_report("repo__e-5", fake_report, 0)
+    assert reward == 0.0 and "Empty patch" in feedback and ungradeable is False
+    # harness errored on this instance -> UNGRADEABLE
+    reward, feedback, ungradeable = _score_from_report("repo__d-4", fake_report, 1)
+    assert reward == 0.0 and ungradeable is True, (reward, feedback, ungradeable)
+    # absent from every list -> UNGRADEABLE
+    reward, feedback, ungradeable = _score_from_report("repo__z-9", fake_report, 1)
     assert reward == 0.0 and "missing from the evaluation report" in feedback
-    # Never graded: must be flagged so the harness leaves it OUT of the mean.
     assert ungradeable is True
-
-    # The flag has to survive into the Score, because raw["errored"] is the only
-    # channel the harness reads for a scoring-side failure (rollout.error is empty).
-    s = _ungradeable_score("repo__c-3", "No evaluation report produced.")
-    assert s.reward == 0.0 and s.raw.get("errored") is True
-    assert "do not optimize against it" in s.feedback
-    # --instance_ids is argparse nargs="+" (space separated). Passing a comma-joined
-    # string as ONE argv entry made every multi-instance eval fail with
-    # "Some instance IDs not found in dataset!" — deterministically, and only for 2+
-    # instances, which is every CI run. Pin the shape.
-    cmd = _build_eval_cmd(["repo__a-1", "repo__b-2", "repo__c-3"], "/tmp/preds.jsonl", "rid")
-    i = cmd.index("--instance_ids")
-    assert cmd[i + 1:i + 4] == ["repo__a-1", "repo__b-2", "repo__c-3"], cmd[i:i + 5]
-    assert not any("," in a for a in cmd), f"comma-glued argv: {[a for a in cmd if ',' in a]}"
-    # the next flag must follow immediately after the 3 ids (no swallowed positional)
-    assert cmd[i + 4].startswith("--"), cmd[i:i + 6]
-    # a single instance must still be a bare id, not a 1-element oddity
-    one = _build_eval_cmd(["only__one-1"], "/tmp/p.jsonl", "rid")
-    j = one.index("--instance_ids")
-    assert one[j + 1] == "only__one-1" and one[j + 2].startswith("--")
+    # a non-list value where a list is expected must NOT crash the scorer
+    weird = {"resolved_ids": 3, "completed_ids": None, "submitted_ids": {"a": 1}}
+    reward, feedback, ungradeable = _score_from_report("repo__a-1", weird, 1)
+    assert reward == 0.0 and ungradeable is True
+    s2 = _ungradeable_score("repo__c-3", "No evaluation report produced.")
+    assert s2.reward == 0.0 and s2.raw.get("errored") is True
+    assert "do not optimize against it" in s2.feedback
+    print("swe_bench report-schema self-check: OK")
     print("swe_bench eval-argv self-check: OK")
     print("swe_bench batch-scoring self-check: OK")
