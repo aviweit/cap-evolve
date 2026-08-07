@@ -60,6 +60,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -361,7 +362,7 @@ Do not include any explanation before or after the patch.
         if not pairs:
             return {}
 
-        run_id = f"capevolve_batch_{pairs[0][0]}_{len(pairs)}"
+        run_id = _new_run_id()
         with tempfile.TemporaryDirectory(prefix="swebench_eval_") as tmpdir:
             tmp = Path(tmpdir)
             predictions_path = tmp / "predictions.jsonl"
@@ -543,6 +544,26 @@ def _parse_swebench_report(tmp: Path, run_id: str) -> dict | None:
         except Exception:  # not the report file — skip
             continue
     return None
+
+
+def _new_run_id() -> str:
+    """A run_id unique to THIS harness invocation.
+
+    swebench derives global Docker object names from it — containers are
+    ``sweb.eval.<instance_id>.<run_id>`` — and Docker names are unique per daemon, not per
+    working directory. This used to be ``f"capevolve_batch_{pairs[0][0]}_{len(pairs)}"``,
+    which is fully deterministic: the same tier produces the same first instance id and the
+    same count, so EVERY iteration, every trial and every past run reused one run_id.
+
+    Any container left behind by an earlier invocation therefore collides with the new one,
+    and swebench cannot evaluate that instance — it lands in ``error_ids`` while the overall
+    harness still exits 0. That is what left run 31173670507 grading only 2 of 5 tasks, with
+    a container from a prior iteration still `Up` under the shared name, and it explains why
+    the failing subset looked arbitrary and did not track local image availability.
+
+    A fresh id per invocation is what run_id is for: it namespaces one evaluation.
+    """
+    return f"capevolve_{uuid.uuid4().hex[:12]}"
 
 
 def _instance_log_tail(tmp: Path, instance_id: str, limit: int = 700) -> str:
@@ -764,6 +785,17 @@ if __name__ == "__main__":
     # a nonexistent tmpdir must also be safe
     assert _instance_log_tail(Path("/nonexistent-xyz"), "repo__d-4") == ""
     print("swe_bench log-capture self-check: OK")
+    # run_id must be unique per invocation: swebench derives GLOBAL Docker container names
+    # (sweb.eval.<instance>.<run_id>) from it, so a deterministic id collides with the
+    # containers left by an earlier iteration and that instance cannot be evaluated.
+    ids = {_new_run_id() for _ in range(200)}
+    assert len(ids) == 200, f"run_id collided: {200 - len(ids)} duplicates"
+    assert all(r.startswith("capevolve_") for r in ids)
+    # must be safe in a docker object name: no path/whitespace/uppercase surprises
+    import re as _re
+    assert all(_re.fullmatch(r"capevolve_[0-9a-f]{12}", r) for r in ids), sorted(ids)[:2]
+    print("swe_bench run-id self-check: OK")
+
 
     print("swe_bench eval-argv self-check: OK")
     print("swe_bench batch-scoring self-check: OK")
