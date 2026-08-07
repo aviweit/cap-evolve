@@ -24,8 +24,76 @@ uv pip install -p "$CAPEVOLVE_PY" -q $IDX "$REPO/core" litellm
 
 case "$BENCH" in
   swebench)
-    uv pip install -p "$CAPEVOLVE_PY" -q $IDX swebench datasets
-    command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true ;;
+    # PINNED. These were unpinned, so the grading harness could change under us between
+    # runs with nothing in the log to say it had. Pinned to what skillberry-1 was actually
+    # running on 2026-08-07, verified ON the runner to resolve all 5 smoke ids from
+    # princeton-nlp/SWE-bench_Lite (300-row test split, 0 missing). datasets 5.0.1 was
+    # verified equivalent off-runner; 5.0.0 is pinned because it is the observed-good state
+    # here and the point of a pin is reproducibility, not an untested upgrade.
+    uv pip install -p "$CAPEVOLVE_PY" -q $IDX "swebench==4.1.0" "datasets==5.0.0"
+    command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true
+
+    # Dataset preflight — WARM ONCE, THEN GO OFFLINE.
+    #
+    # `run_evaluation` re-resolves the dataset over the HF Hub on EVERY call, and
+    # `princeton-nlp/*` is a 307 redirect to `SWE-bench/*`, so each resolution is live Hub
+    # traffic. HF rate-limits unauthenticated requests per source IP and this runner has no
+    # HF_TOKEN (confirmed on skillberry-1). When resolution degrades mid-run the harness
+    # raises
+    #
+    #     ValueError: Some instance IDs not found in dataset!
+    #
+    # AFTER every patch has already been generated. Run 31161200250 lost 11 minutes and
+    # $3.44 of optimizer budget that way, then published `reward 0.000` as a real result.
+    # Its timings show the shape: iteration 1's eval took 10m22s, then 29s, then 6s —
+    # slow-and-retrying, then fast-failing.
+    #
+    # A warning is not enough, because the failure is transient: re-checked later on the
+    # runner, all 5 ids resolve fine, so a preflight that merely verifies would have passed
+    # and the run would still have died. So: resolve every dataset the run needs ONCE here
+    # (warming datasets' cache), fail loudly and cheaply if that can't be done, and then pin
+    # the rest of the job to HF_HUB_OFFLINE so no later call can touch the Hub at all.
+    # Verified on skillberry-1 that both datasets load from the warm cache with offline mode
+    # enabled. This also makes the dataset immutable for the run, which is what a benchmark
+    # wants anyway, and is consistent with pinning the harness above.
+    if [ -n "${HF_TOKEN:-}" ]; then
+      echo "HF Hub: authenticated (HF_TOKEN present)"
+    else
+      echo "HF Hub: unauthenticated (no HF_TOKEN) — warming the cache now and running offline"
+    fi
+    SWE_TASKS="$REPO/ci/benchmarks/swebench/${TIER:-smoke}/tasks.json"
+    if [ -f "$SWE_TASKS" ]; then
+      SWEBENCH_TASKS_JSON="$SWE_TASKS" "$CAPEVOLVE_PY" - <<'PY' || exit 1
+import json, os, sys
+ids = [t["id"] for t in json.load(open(os.environ["SWEBENCH_TASKS_JSON"]))]
+split = os.environ.get("SWEBENCH_SPLIT", "test")
+base = os.environ.get("SWEBENCH_DATASET", "princeton-nlp/SWE-bench_Lite")
+# Oracle context is on by default in run_suite.sh, and it is a SECOND dataset that the
+# adapter resolves over the Hub. Warm it too, or offline mode below breaks tasks().
+wanted = [(base, ids)]
+if os.environ.get("SWEBENCH_ORACLE", "1").strip().lower() in ("1", "true", "yes", "on"):
+    wanted.append((os.environ.get("SWEBENCH_ORACLE_DATASET",
+                                  "princeton-nlp/SWE-bench_Lite_oracle"), None))
+import datasets, swebench
+print(f"swebench {getattr(swebench,'__version__','?')} / datasets {datasets.__version__}"
+      f" -> {split} split, checking {len(ids)} task id(s)")
+from swebench.harness.utils import load_swebench_dataset
+for name, want in wanted:
+    try:
+        got = load_swebench_dataset(name, split, want)
+    except Exception as exc:
+        print(f"::error:: cannot resolve {name}/{split}: {type(exc).__name__}: {str(exc)[:400]}")
+        print("::error:: scoring would fail for EVERY task AFTER the agent had already run,")
+        print("::error:: and the suite would report a 0.000 it never measured.")
+        print("::error:: Check: HF Hub reachability/throttling (set the HF_TOKEN secret), or")
+        print("::error:: a corrupt dataset cache on the runner (~/.cache/huggingface/datasets).")
+        sys.exit(1)
+    print(f"  warmed {name}: {len(got)} row(s)")
+print("swebench dataset preflight OK — pinning the run to the warm cache (offline)")
+PY
+      # Only after a successful warm: no later Hub call, so no mid-run throttling.
+      SWEBENCH_OFFLINE=1
+    fi ;;
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"
     uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$CACHE/tau2-bench" ;;
@@ -135,6 +203,13 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   {
     echo "CAPEVOLVE_PY=$CAPEVOLVE_PY"
     echo "SKILLSBENCH_SRC=$CACHE/skillsbench-src"
+    # Set only when the swebench dataset preflight above warmed the cache successfully.
+    # Both names are exported because `datasets` moved the flag between versions and the
+    # older one is still honoured; setting both is version-proof.
+    if [ -n "${SWEBENCH_OFFLINE:-}" ]; then
+      echo "HF_HUB_OFFLINE=1"
+      echo "HF_DATASETS_OFFLINE=1"
+    fi
     if [ -n "${SPREADSHEETBENCH_DATA_DIR:-}" ]; then echo "SPREADSHEETBENCH_DATA_DIR=$SPREADSHEETBENCH_DATA_DIR"; fi
     echo "PATH=$HOME/.local/bin:$PATH"
   } >> "$GITHUB_ENV"

@@ -285,6 +285,12 @@ jobs:
     env:
       ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      # swebench resolves its dataset over the HF Hub on every `run_evaluation` call.
+      # Unauthenticated requests are rate-limited per source IP, and when that resolution
+      # degrades the harness fails with "Some instance IDs not found in dataset!" only
+      # AFTER every patch has been generated. Optional: if the secret is unset, ci_setup.sh
+      # warns and continues rather than blocking the run.
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       # Smoke always runs a fixed 3 iterations (cheap, fast regression) — decoupled
       # from the `iterations` input, which only controls the (expensive) full tier
       # (default 10 there — see the `iterations` input above).
