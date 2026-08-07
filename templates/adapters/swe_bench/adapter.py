@@ -401,10 +401,20 @@ Do not include any explanation before or after the patch.
                 # what stops the suite reporting a confident 0.000 it never measured.
                 return {iid: (0.0, msg, True) for iid, _ in pairs}
 
-            return {
-                iid: _score_from_report(iid, report, proc.returncode)
-                for iid, _ in pairs
-            }
+            out: dict[str, tuple[float, str, bool]] = {}
+            for iid, _ in pairs:
+                reward, feedback, ungradeable = _score_from_report(iid, report, proc.returncode)
+                if ungradeable:
+                    # Capture the harness's own per-instance log BEFORE the tempdir is
+                    # deleted. Without this the reason an instance failed to grade is lost
+                    # forever and all you get is "it never produced a verdict".
+                    tail = _instance_log_tail(tmp, iid)
+                    feedback += (
+                        f" run_instance.log tail: {tail}" if tail
+                        else " (no run_instance.log — the harness never started this instance)"
+                    )
+                out[iid] = (reward, feedback, ungradeable)
+            return out
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +543,30 @@ def _parse_swebench_report(tmp: Path, run_id: str) -> dict | None:
         except Exception:  # not the report file — skip
             continue
     return None
+
+
+def _instance_log_tail(tmp: Path, instance_id: str, limit: int = 700) -> str:
+    """Return the tail of swebench's per-instance ``run_instance.log``, if it exists.
+
+    The harness writes ``logs/run_evaluation/<run_id>/<model>/<instance_id>/run_instance.log``
+    relative to its cwd (our tempdir), which is then DELETED when the ``TemporaryDirectory``
+    context exits. That log is the only record of why a single instance failed to grade, so
+    without capturing it here an ungradeable instance is undiagnosable after the fact —
+    which is exactly the state run 31173670507 left three of its five tasks in: `error_ids`,
+    harness exit 0, and no way to tell whether it was an image pull, a container failure or
+    a setup error.
+
+    Best-effort by design: a missing log is normal (the harness may never have reached the
+    instance) and must never turn into a scoring exception.
+    """
+    try:
+        hits = sorted(tmp.glob(f"logs/**/{instance_id}/run_instance.log"))
+        if not hits:
+            return ""
+        text = hits[-1].read_text(encoding="utf-8", errors="replace").strip()
+        return text[-limit:] if text else ""
+    except Exception:  # noqa: BLE001 — diagnostics must not break scoring
+        return ""
 
 
 def _score_from_report(
@@ -715,5 +749,21 @@ if __name__ == "__main__":
     assert s2.reward == 0.0 and s2.raw.get("errored") is True
     assert "do not optimize against it" in s2.feedback
     print("swe_bench report-schema self-check: OK")
+    # Per-instance log capture: the tempdir is deleted after parsing, so an ungradeable
+    # instance is undiagnosable unless the harness's own log is pulled out first.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _d:
+        _t = Path(_d)
+        _lg = _t / "logs" / "run_evaluation" / "rid" / "model" / "repo__d-4"
+        _lg.mkdir(parents=True)
+        (_lg / "run_instance.log").write_text("line1\nToo Many Requests - Server message: toomanyrequests\n")
+        tail = _instance_log_tail(_t, "repo__d-4")
+        assert "toomanyrequests" in tail, tail
+        # absent log must be empty, never an exception
+        assert _instance_log_tail(_t, "repo__nope-0") == ""
+    # a nonexistent tmpdir must also be safe
+    assert _instance_log_tail(Path("/nonexistent-xyz"), "repo__d-4") == ""
+    print("swe_bench log-capture self-check: OK")
+
     print("swe_bench eval-argv self-check: OK")
     print("swe_bench batch-scoring self-check: OK")
