@@ -6,7 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "capevolve-harbor"
 version = "0.1.0"
 description = "Harbor integration utilities for cap-evolve — task packaging, job runner, result parser."
-readme = "../README.md"
+# NB: no `readme` key. It used to be `readme = "../README.md"`, which makes the package
+# UNINSTALLABLE: the build backend only sees this directory, so a parent-relative path fails
+# with `DistutilsOptionError: Cannot access '.../capevolve_harbor/../README.md'`. That is why
+# the harbor CI path died at `uv pip install ./capevolve_harbor` before running a single task.
+# There is no README inside this directory to point at, and the project URLs below already
+# lead to the docs, so the key is simply dropped.
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = []
