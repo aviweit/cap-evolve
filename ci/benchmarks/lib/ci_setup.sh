@@ -24,6 +24,33 @@ uv pip install -p "$CAPEVOLVE_PY" -q $IDX "$REPO/core" litellm
 
 case "$BENCH" in
   swebench)
+    # Harbor is the DEFAULT swebench adapter. It runs a real coding agent (claude-code)
+    # inside its own sandboxed containers and manages its own dataset, so NONE of the
+    # litellm path's machinery applies: no HuggingFace dataset, no oracle context, no
+    # swebench/sweb.eval.* images, no per-instance patch application. The litellm branch
+    # below is kept only until the harbor path is confirmed green, then removed.
+    #
+    # Why the switch: the full tier's 250 task ids come from SWE-bench_Verified, but oracle
+    # context only exists for Lite (46 of the 250), and single-shot blind patching is not a
+    # meaningful target for a mid-tier model. Harbor needs no oracle because the agent
+    # explores the repo itself.
+    SWE_ADAPTER="${SWEBENCH_ADAPTER:-harbor}"
+    echo "swebench adapter: $SWE_ADAPTER"
+    if [ "$SWE_ADAPTER" = "harbor" ]; then
+      # The adapter does `from capevolve_harbor import ...`; that package lives in this repo
+      # and was never installed into the CI venv, so the harbor path would have died on
+      # import. Install it explicitly.
+      uv pip install -p "$CAPEVOLVE_PY" -q $IDX "$REPO/capevolve_harbor"
+      "$CAPEVOLVE_PY" -c "import capevolve_harbor; print('capevolve_harbor OK')"
+      command -v harbor >/dev/null 2>&1 || uv tool install $IDX harbor >/dev/null 2>&1 || true
+      command -v harbor >/dev/null || {
+        echo "::error:: harbor CLI unavailable — the harbor adapter cannot run a single task."
+        exit 1; }
+      echo "harbor: $(command -v harbor)"
+      command -v docker >/dev/null && docker info >/dev/null 2>&1 || {
+        echo "::error:: docker daemon not reachable — harbor runs every task in a container"
+        exit 1; }
+    else
     # PINNED. These were unpinned, so the grading harness could change under us between
     # runs with nothing in the log to say it had. Pinned to what skillberry-1 was actually
     # running on 2026-08-07, verified ON the runner to resolve all 5 smoke ids from
@@ -174,6 +201,7 @@ print(' '.join(t['id'] for t in json.load(open(sys.argv[1]))))" "$SWE_TASKS")
       [ "$swe_failed" -gt 0 ] \
         && echo "::warning:: $swe_failed/$swe_total eval images unavailable:$swe_missing" \
         || echo "swebench eval images ready: $swe_total/$swe_total"
+      fi
     fi ;;
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"

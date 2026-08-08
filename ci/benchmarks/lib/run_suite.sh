@@ -90,7 +90,11 @@ ENV
     export TAU2_MAX_CONCURRENCY=10
     ;;
   swebench)
-    if [ "${SWEBENCH_ADAPTER:-}" = "harbor" ]; then
+    # Harbor is now the DEFAULT (was: opt-in via SWEBENCH_ADAPTER=harbor). The litellm
+    # single-shot path needs oracle code context to be viable, and oracle context only exists
+    # for SWE-bench_Lite — while the full tier's 250 ids are Verified-only, so just 46 of 250
+    # would have had it. Harbor's agent explores the repo itself and needs no oracle.
+    if [ "${SWEBENCH_ADAPTER:-harbor}" = "harbor" ]; then
       # Harbor-based SWE-bench: full coding agent in sandboxed containers.
       # Harbor adapter reads os.environ (not .env/dotenv), so we export directly.
       cp "$TPL/harbor/adapter.py" "$PROJ/adapters/"
@@ -102,6 +106,14 @@ ENV
       export HARBOR_PARALLEL="${HARBOR_PARALLEL:-4}"
       export HARBOR_TIMEOUT="${HARBOR_TIMEOUT:-1800}"
       export HARBOR_TASK_IDS="$IDS_CSV"
+      # Point the in-container claude-code agent at the VPC gateway.
+      # Without HARBOR_AGENT_BASE_URL the adapter's _build_agent_env() falls through to bare
+      # ANTHROPIC_API_KEY mode, which sends the agent to api.anthropic.com — unreachable from
+      # this runner and wrong for a LiteLLM key. Setting it makes the adapter export
+      # ANTHROPIC_BASE_URL plus the SONNET/HAIKU/OPUS model aliases into the container, so
+      # every agent call goes through the same gateway the optimizer uses.
+      export HARBOR_AGENT_BASE_URL="${HARBOR_AGENT_BASE_URL:-$ANTHROPIC_BASE_URL}"
+      export HARBOR_AGENT_API_KEY="${HARBOR_AGENT_API_KEY:-$ANTHROPIC_AUTH_TOKEN}"
       export ANTHROPIC_API_KEY="$ANTHROPIC_AUTH_TOKEN"
       : > "$WORK/.env"
     else
