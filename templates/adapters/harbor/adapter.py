@@ -65,6 +65,10 @@ HARBOR_TASK_PREFIX = os.environ.get("HARBOR_TASK_PREFIX", "")
 
 # Agent env vars for model endpoint (on-cluster vLLM or API gateway)
 HARBOR_AGENT_BASE_URL = os.environ.get("HARBOR_AGENT_BASE_URL", "")
+# Host directory holding a pre-warmed npm cache (see ci_setup.sh). Empty disables the whole
+# mechanism and the agent bootstraps from the network exactly as before.
+HARBOR_NPM_CACHE = os.environ.get("HARBOR_NPM_CACHE", "")
+_NPM_CACHE_TARGET = "/opt/npm-cache"
 HARBOR_AGENT_API_KEY = os.environ.get("HARBOR_AGENT_API_KEY", "")
 
 
@@ -103,21 +107,55 @@ def _build_agent_env() -> dict[str, str]:
         if api_key:
             ae["ANTHROPIC_API_KEY"] = api_key
 
+    ae.update(_npm_cache_agent_env())
     return ae
 
 
+def _npm_cache_agent_env() -> dict[str, str]:
+    """Point the container's npm at a pre-warmed, host-mounted cache.
+
+    Harbor's claude-code agent bootstraps with `npm install -g @anthropic-ai/claude-code`
+    INSIDE every task container. At scale that is one network install per task, and it was
+    the single largest failure source in pilot run 31274531220: of 34 infra-errored tasks,
+    8 exits 126/128 and NetworkConnectionErrors came straight from that npm line, plus
+    CancelledErrors from rollouts that ran out of time waiting on it.
+
+    With HARBOR_NPM_CACHE pointing at a cache ci_setup.sh has already populated on the host,
+    npm resolves the tarball locally instead of hitting the registry 50-250 times.
+    `prefer-offline` (not `offline`) is deliberate: cache miss falls back to the network
+    rather than hard-failing, so a stale cache degrades to today's behaviour instead of
+    breaking the run.
+    """
+    if not HARBOR_NPM_CACHE:
+        return {}
+    return {
+        "npm_config_cache": _NPM_CACHE_TARGET,
+        "npm_config_prefer_offline": "true",
+        # Silence per-container audit/funding network calls too — same rationale.
+        "npm_config_audit": "false",
+        "npm_config_fund": "false",
+    }
+
+
 def _build_harbor_mounts() -> list[dict] | None:
-    """Build mount specs for Harbor containers (e.g., GCP credentials)."""
-    if os.environ.get("CLAUDE_CODE_USE_VERTEX", "").strip() != "1":
-        return None
-    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    if not creds:
-        home = os.path.expanduser("~")
-        creds = f"{home}/.config/gcloud/application_default_credentials.json"
-    if os.path.exists(creds):
-        return [{"type": "bind", "source": creds,
-                 "target": "/app/.config/gcloud/application_default_credentials.json"}]
-    return None
+    """Build mount specs for Harbor containers (npm cache, GCP credentials)."""
+    mounts: list[dict] = []
+
+    # Pre-warmed npm cache, so the agent bootstrap does not hit the registry once per task.
+    if HARBOR_NPM_CACHE and os.path.isdir(HARBOR_NPM_CACHE):
+        mounts.append({"type": "bind", "source": HARBOR_NPM_CACHE,
+                       "target": _NPM_CACHE_TARGET})
+
+    if os.environ.get("CLAUDE_CODE_USE_VERTEX", "").strip() == "1":
+        creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if not creds:
+            home = os.path.expanduser("~")
+            creds = f"{home}/.config/gcloud/application_default_credentials.json"
+        if os.path.exists(creds):
+            mounts.append({"type": "bind", "source": creds,
+                           "target": "/app/.config/gcloud/application_default_credentials.json"})
+
+    return mounts or None
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,42 @@ case "$BENCH" in
     command -v docker >/dev/null && docker info >/dev/null 2>&1 || {
       echo "::error:: docker daemon not reachable — harbor runs every task in a container"
       exit 1; }
+    # Pre-warm an npm cache for the in-container agent bootstrap.
+    #
+    # Harbor's claude-code agent starts every task container with
+    #   npm install -g @anthropic-ai/claude-code
+    # so a 50-task pass is 50 registry installs and a 250-task pass is 250. That was the
+    # dominant failure mode in pilot run 31274531220: of 34 infra-errored tasks, the npm line
+    # produced exit 126, exit 128 and NetworkConnectionError, and 8 more rollouts died as
+    # CancelledError while waiting on it.
+    #
+    # Populate the cache ONCE here on the host; the adapter bind-mounts this directory into
+    # every container and sets npm_config_cache + npm_config_prefer_offline. prefer-offline
+    # (not offline) means a cache miss still falls back to the network, so a stale or empty
+    # cache degrades to the old behaviour instead of breaking the run.
+    #
+    # Lives under $CACHE, which is outside the checkout and survives between jobs, so a
+    # freshly provisioned runner warms it on its first benchmark and reuses it thereafter.
+    if command -v npm >/dev/null 2>&1; then
+      NPM_CACHE_DIR="$CACHE/npm-cache"
+      mkdir -p "$NPM_CACHE_DIR"
+      if npm cache add @anthropic-ai/claude-code --cache "$NPM_CACHE_DIR" >/dev/null 2>&1; then
+        # World-readable: the container's npm may run as a different uid than the host user
+        # that warmed the cache, and a bind mount preserves host ownership. Verified locally
+        # that `npm install -g @anthropic-ai/claude-code --offline --cache <dir>` resolves
+        # entirely from this cache (420ms, no network), so readability is the only barrier.
+        chmod -R a+rX "$NPM_CACHE_DIR" 2>/dev/null || true
+        echo "npm cache warmed for @anthropic-ai/claude-code: $NPM_CACHE_DIR ($(du -sh "$NPM_CACHE_DIR" 2>/dev/null | cut -f1))"
+        export HARBOR_NPM_CACHE="$NPM_CACHE_DIR"
+      else
+        # Non-fatal: without the cache the agent bootstraps from the network as before.
+        echo "::warning:: could not warm the npm cache — containers will install"
+        echo "::warning:: @anthropic-ai/claude-code from the registry individually."
+      fi
+    else
+      echo "::warning:: npm not found — cannot pre-warm the agent bootstrap cache"
+    fi
+
     # Reap orphaned harbor task containers before starting. Harbor does NOT tear its
     # containers down when a workflow run is cancelled — 6 were found stranded 27-47 hours
     # after their runs ended, competing for CPU and memory with whatever ran next. The bench
@@ -167,6 +203,9 @@ if [ -n "${GITHUB_ENV:-}" ]; then
   {
     echo "CAPEVOLVE_PY=$CAPEVOLVE_PY"
     echo "SKILLSBENCH_SRC=$CACHE/skillsbench-src"
+    # The warmed npm cache must reach the NEXT step — `export` above dies with this shell,
+    # and the adapter (which does the bind-mount) runs in the "Run suite" step.
+    if [ -n "${HARBOR_NPM_CACHE:-}" ]; then echo "HARBOR_NPM_CACHE=$HARBOR_NPM_CACHE"; fi
     if [ -n "${SPREADSHEETBENCH_DATA_DIR:-}" ]; then echo "SPREADSHEETBENCH_DATA_DIR=$SPREADSHEETBENCH_DATA_DIR"; fi
     echo "PATH=$HOME/.local/bin:$PATH"
   } >> "$GITHUB_ENV"

@@ -101,20 +101,23 @@ ENV
     export HARBOR_DATASET=swe-bench/swe-bench-verified
     export HARBOR_AGENT=claude-code
     export HARBOR_MODEL="$AGENT_MODEL"
-    # Concurrency is the only lever on wall clock, and 4 badly under-uses this runner:
-    # measured during the harbor smoke, 32 cores and 115G free at load 0.10-0.81 with 4
-    # containers. Each trial is ~18 min regardless, so throughput is purely parallel width —
-    # at 4, a 250-task pass takes ~19h; at 16 it is ~5h.
-    # Smoke stays at 4 (only 5 tasks, nothing to gain) and the bigger tiers get 16.
+    # Concurrency. 16 was WRONG and pilot run 31274531220 proved it: 34 of 50 tasks
+    # infra-errored, the box sat at load 30 of 32 cores, and the failures were agent-bootstrap
+    # (npm exit 126/128, NetworkConnectionError) plus CancelledError from rollouts starved of
+    # time. The 16 came from idle-state headroom, which was the wrong measurement — a harbor
+    # task is a container running a real test suite, not a spare core.
+    # 6 is the retry value: comfortably under 32 cores with room for image builds alongside.
     # Explicit HARBOR_PARALLEL in the environment still wins, so this is a default, not a
     # policy. NB: it cannot be a workflow_dispatch input — that list is at its cap of 10.
     case "${TIER:-smoke}" in
       smoke) _hp_default=4 ;;
-      *)     _hp_default=16 ;;
+      *)     _hp_default=6 ;;
     esac
     export HARBOR_PARALLEL="${HARBOR_PARALLEL:-$_hp_default}"
     echo "harbor parallelism: $HARBOR_PARALLEL (tier=${TIER:-smoke})"
-    export HARBOR_TIMEOUT="${HARBOR_TIMEOUT:-1800}"
+    # 1800s was too tight once containers contend: 8 of the pilot's 34 failures were
+    # CancelledError, i.e. the rollout was still waiting when the clock ran out. 3600s.
+    export HARBOR_TIMEOUT="${HARBOR_TIMEOUT:-3600}"
     export HARBOR_TASK_IDS="$IDS_CSV"
     # Point the in-container claude-code agent at the VPC gateway.
     # Without HARBOR_AGENT_BASE_URL the adapter's _build_agent_env() falls through to bare
