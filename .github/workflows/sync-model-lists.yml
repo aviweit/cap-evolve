@@ -77,11 +77,26 @@ jobs:
         run: |
           set -euo pipefail
           : "${ANTHROPIC_BASE_URL:?}" ; : "${ANTHROPIC_AUTH_TOKEN:?}"
-          code=$(curl -sS -m 60 -o /tmp/served_models.json -w '%{http_code}' \
-            "$ANTHROPIC_BASE_URL/models" -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN")
+          # Retry, and capture curl's own failure instead of letting `set -e` abort here.
+          # Run 31307599376 died with a bare "exit code 28" (curl timeout) precisely because an
+          # unguarded curl under `set -e` skips straight past the HTTP-code handling below, so
+          # the useful diagnostics never printed. The gateway is also slow on a cold DNS/TLS
+          # path — measured 12s for the first call from this runner, then sub-second.
+          code=000
+          for attempt in 1 2 3; do
+            code=$(curl -sS -m 90 -o /tmp/served_models.json -w '%{http_code}' \
+              "$ANTHROPIC_BASE_URL/models" \
+              -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" 2>/tmp/curl.err) || code="curl-exit-$?"
+            [ "$code" = "200" ] && break
+            echo "attempt $attempt: $code $(head -c 120 /tmp/curl.err 2>/dev/null)"
+            sleep $((attempt * 10))
+          done
           if [ "$code" != "200" ]; then
-            echo "::error:: gateway /models returned HTTP $code — cannot sync"
-            head -c 300 /tmp/served_models.json || true
+            echo "::error:: gateway /models unreachable after 3 attempts (last: $code)"
+            echo "::error:: nothing was changed. This is transient far more often than not —"
+            echo "::error:: re-run the workflow. The scheduled pass will also retry on its own."
+            head -c 300 /tmp/served_models.json 2>/dev/null || true
+            head -c 200 /tmp/curl.err 2>/dev/null || true
             exit 1
           fi
           n=$(python3 -c "import json;print(len(json.load(open('/tmp/served_models.json'))['data']))")
