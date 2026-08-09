@@ -81,6 +81,45 @@ case "$BENCH" in
       echo "::warning:: npm not found — cannot pre-warm the agent bootstrap cache"
     fi
 
+    # Reap stale harbor job directories. Harbor writes one per run (agent sessions,
+    # trajectories, per-task artifacts, tens of MB each) and never removes them: 43 had piled
+    # up for 622M on the ROOT filesystem, which is what tipped / to 100% full and made every
+    # task in pilot run 31297290155 die at "importing to docker: failed to ingest". Anything
+    # older than 6h cannot belong to a live run — the bench leg is serialized here.
+    for _d in /tmp/harbor_jobs_* "$CACHE/harbor-jobs"/*; do
+      [ -d "$_d" ] || continue
+      if [ -z "$(find "$_d" -maxdepth 0 -mmin -360 2>/dev/null)" ]; then
+        rm -rf "$_d" 2>/dev/null || true
+      fi
+    done
+    echo "harbor job dirs after reap: $(ls -d /tmp/harbor_jobs_* "$CACHE/harbor-jobs"/* 2>/dev/null | wc -l | tr -d ' ')"
+
+    # Disk preflight. A harbor task builds and imports a multi-GB image; with no room on the
+    # filesystem docker stages through, the build succeeds and the IMPORT fails, so every task
+    # infra-errors ~20 minutes in. Check up front instead.
+    _root_avail_m=$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')
+    _root_avail_m=$(( ${_root_avail_m:-0} / 1024 ))
+    echo "disk: / has ${_root_avail_m}MB available; docker data-root $(docker info --format '{{.DockerRootDir}}' 2>/dev/null) has $(df -h "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /)" 2>/dev/null | tail -1 | awk '{print $4}')"
+    # Two thresholds, because the exact staging requirement is not something I could measure:
+    # docker's data-root is on a big volume, yet the observed 'failed to ingest' happened with
+    # 169MB free on /, so SOMETHING in the build->import path needs room there. Hard-fail only
+    # where it is unambiguous, warn in the band where it is a judgement call, so this guard
+    # cannot block a run that would have worked.
+    if [ "$_root_avail_m" -lt 1024 ]; then
+      echo "::error:: only ${_root_avail_m}MB free on / — harbor image imports fail with"
+      echo "::error:: 'failed to ingest' partway through, after burning agent budget."
+      echo "::error:: NB on this runner /var/lib/docker is a STRANDED legacy docker data-root"
+      echo "::error:: (~239GB, root-owned, invisible to unprivileged du) while the live"
+      echo "::error:: data-root is elsewhere. Reclaiming it needs root and is the real fix:"
+      echo "::error::   sudo du -sh /var/lib/docker && sudo rm -rf /var/lib/docker"
+      echo "::error:: (verify the live data-root differs first: docker info | grep 'Root Dir')"
+      exit 1
+    elif [ "$_root_avail_m" -lt 4096 ]; then
+      echo "::warning:: only ${_root_avail_m}MB free on / — harbor image imports may fail with"
+      echo "::warning:: 'failed to ingest'. See /var/lib/docker on this runner (stranded legacy"
+      echo "::warning:: data-root, needs root to reclaim)."
+    fi
+
     # Reap orphaned harbor task containers before starting. Harbor does NOT tear its
     # containers down when a workflow run is cancelled — 6 were found stranded 27-47 hours
     # after their runs ended, competing for CPU and memory with whatever ran next. The bench

@@ -119,6 +119,25 @@ ENV
     # CancelledError, i.e. the rollout was still waiting when the clock ran out. 3600s.
     export HARBOR_TIMEOUT="${HARBOR_TIMEOUT:-3600}"
     export HARBOR_TASK_IDS="$IDS_CSV"
+    # Keep harbor OFF the root filesystem. Pilot run 31297290155 failed 50/50 with
+    #   #10 importing to docker
+    #   #10 ERROR: failed to ingest "blobs/sha256/..."
+    # because / was 100% full (250G, 169M free). Harbor writes a job directory per run under
+    # /tmp — agent sessions, trajectories, per-task artifacts — and 43 of them had accumulated
+    # for 622M, which on a full disk is the difference between building and not. Docker's
+    # data-root is already on /vol; these were not.
+    # $CAPEVOLVE_CI_CACHE is on /vol on this runner; fall back to /tmp if it is unset so a
+    # laptop run behaves as before.
+    _hb_jobs_base="${CAPEVOLVE_CI_CACHE:-${HOME}/.cache/capevolve-ci}"
+    if mkdir -p "$_hb_jobs_base/harbor-jobs" 2>/dev/null; then
+      export HARBOR_JOBS_DIR="${HARBOR_JOBS_DIR:-$_hb_jobs_base/harbor-jobs}"
+      # Harbor and docker compose also scratch-write via TMPDIR (the compose override JSONs
+      # land in /tmp/tmp*). Point those at the same volume.
+      export TMPDIR="${TMPDIR:-$_hb_jobs_base/tmp}"; mkdir -p "$TMPDIR" 2>/dev/null || true
+      echo "harbor job dir: $HARBOR_JOBS_DIR   TMPDIR: $TMPDIR"
+    else
+      echo "::warning:: could not create $_hb_jobs_base/harbor-jobs — harbor will use /tmp"
+    fi
     # Point the in-container claude-code agent at the VPC gateway.
     # Without HARBOR_AGENT_BASE_URL the adapter's _build_agent_env() falls through to bare
     # ANTHROPIC_API_KEY mode, which sends the agent to api.anthropic.com — unreachable from
