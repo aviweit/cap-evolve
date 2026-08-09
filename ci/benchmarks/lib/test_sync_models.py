@@ -122,21 +122,33 @@ def test_idempotent(tmp_path):
     assert any("already in sync" in l for l in rep)
 
 
-def test_unserved_default_blocks_the_whole_write(tmp_path):
-    """A default outside its own options is an INVALID workflow.
+def test_unserved_default_is_retained_so_the_workflow_stays_valid(tmp_path):
+    """Policy: keep the unserved default rather than substituting a served one.
 
-    So when the default is no longer served we must not write the options either: a
-    stale-but-valid workflow beats a fresh-but-broken one. actionlint rejects the latter.
+    A `default:` absent from its own `options:` is an INVALID workflow, so the retained value
+    must appear in both places. Keeping it also means an unset dispatch fails LOUDLY at
+    ci_setup.sh's entitlement preflight instead of silently running whatever GitHub would pick
+    as the fallback — a changed measurement disguised as list maintenance.
     """
     r = _repo(tmp_path)
-    before = (r / sm.WORKFLOW).read_text()
     code, rep = sm.sync(r, ["claude-opus-4-8"], write=True)   # gpt-oss-120b dropped
-    assert code == sm.EXIT_DECISION
-    assert (r / sm.WORKFLOW).read_text() == before, "must not write a workflow with an invalid default"
-    blob = "\n".join(rep)
-    assert "agent_model default 'aws/gpt-oss-120b' is NOT served" in blob
-    assert "--agent-default" in blob, "must tell the operator how to resolve it"
-    assert "candidate served defaults" in blob
+    assert code == sm.EXIT_OK, "\n".join(rep)
+    text = (r / sm.WORKFLOW).read_text()
+    assert sm.current_default(text, "agent_model") == "aws/gpt-oss-120b", "default must be kept"
+    assert "aws/gpt-oss-120b" in sm.current_options(text, "agent_model"), "…and stay in options"
+    assert any("is NOT served by this key. Kept anyway" in l for l in rep)
+    # validate() — the invariant actionlint enforces — must still pass
+    assert sm.validate(r)[0] == sm.EXIT_OK
+
+
+def test_retention_does_not_leak_into_the_other_picker(tmp_path):
+    """gpt-oss-120b is retained because it is the AGENT default; the optimizer must not offer it."""
+    r = _repo(tmp_path)
+    code, _ = sm.sync(r, ["claude-opus-4-8"], write=True)
+    assert code == sm.EXIT_OK
+    text = (r / sm.WORKFLOW).read_text()
+    assert sm.current_options(text, "agent_model") == ["aws/gpt-oss-120b", "claude-opus-4-8"]
+    assert sm.current_options(text, "optimizer_model") == ["claude-opus-4-8"]
 
 
 def test_supplying_a_served_default_unblocks_and_moves_run_suite_too(tmp_path):

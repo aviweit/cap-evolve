@@ -27,16 +27,24 @@ WHAT IT TOUCHES
    advisory (run_suite.sh warns on mismatch; the env value is authoritative), so a stale pin
    is noise, not breakage.
 
-WHY DEFAULTS ARE NOT AUTO-GUESSED
----------------------------------
-Which model a benchmark defaults to IS the measurement. Silently swapping it would change what
-the numbers mean while looking like routine list maintenance, so this tool never picks one.
+HOW AN UNSERVED DEFAULT IS HANDLED
+----------------------------------
+Which model a benchmark defaults to IS the measurement, so this tool never picks one for you.
 
-But a `default:` that is absent from its own `options:` is an INVALID workflow — actionlint
-rejects it and the dispatch dialog cannot honour it. So when a default becomes unserved the tool
-writes NOTHING at all and exits 2: a stale-but-valid workflow beats a fresh-but-broken one.
-Supply the replacement explicitly with --agent-default / --optimizer-default and the write
-proceeds, updating the picker default and run_suite.sh's matching fallback together.
+When a default is no longer served, the default is KEPT and carried into the options list even
+though the gateway cannot serve it. Two reasons:
+
+  * a `default:` absent from its own `options:` is an INVALID workflow — actionlint rejects it
+    and the dispatch dialog cannot honour it — so the value has to appear in both places;
+  * keeping it makes an unset dispatch FAIL LOUDLY instead of silently running something else.
+    ci_setup.sh's entitlement preflight rejects the run in seconds, before any spend, naming the
+    models the key can serve. Dropping the default and letting GitHub fall back to the first
+    option would silently substitute a different model — a changed measurement disguised as
+    list maintenance, which is far worse than a clear failure.
+
+That is a deliberate policy choice: the model stays visible and broken until it is re-entitled
+on the key. Pass --agent-default / --optimizer-default to move to a served model instead; that
+updates the picker default and run_suite.sh's matching fallback together.
 """
 from __future__ import annotations
 
@@ -172,6 +180,7 @@ def sync(repo: Path, models: list[str], write: bool,
     wanted = {"agent_model": agent_default, "optimizer_model": optimizer_default}
     rs_var = {"agent_model": "AGENT_MODEL", "optimizer_model": "OPTIMIZER_MODEL"}
     blockers: list[str] = []
+    keep: dict[str, str] = {}   # picker -> unserved default retained to keep the workflow valid
     for picker, override in wanted.items():
         cur = current_default(text, picker)
         if override:
@@ -183,31 +192,39 @@ def sync(repo: Path, models: list[str], write: bool,
                 rs_text = rewrite_run_suite_default(rs_text, rs_var[picker], override)
                 rep.append(f"  {picker}: default {cur!r} -> {override!r} (and {rs_var[picker]} fallback)")
         elif cur and cur not in models:
-            served_rs = run_suite_defaults(rs_text).get(rs_var[picker])
-            blockers.append(
-                f"::error:: {picker} default {cur!r} is NOT served by this key. Nothing was written —"
-                f" a default outside its own options is an invalid workflow. Re-run with"
-                f" --{picker.replace('_model','')}-default <served-model> to choose a replacement."
-                + (f" ({RUN_SUITE} {rs_var[picker]} fallback is {served_rs!r} and would move with it.)"
-                   if served_rs else ""))
+            # Retained on purpose — see "HOW AN UNSERVED DEFAULT IS HANDLED" above. It must stay
+            # in `options` too or the workflow is invalid.
+            keep[picker] = cur
+            rep.append(
+                f"  ::warning:: {picker} default {cur!r} is NOT served by this key. Kept anyway, so an"
+                f" unset dispatch fails LOUDLY at the entitlement preflight (seconds, no spend)"
+                f" rather than silently running a different model. Choose a served model in the"
+                f" dispatch dialog, or pass --{picker.replace('_model','')}-default to change it.")
     if blockers:
         rep.extend(blockers)
         rep.append("  candidate served defaults: " + ", ".join(models[:8]) + (" …" if len(models) > 8 else ""))
         return EXIT_DECISION, rep
 
+    # Options are per-picker: the served set, plus THAT picker's own retained default if it is
+    # unserved. Retaining it globally would offer an unusable model in the other picker too.
+    def opts_for(picker: str) -> list[str]:
+        extra = keep.get(picker)
+        return sorted(set(models) | ({extra} if extra else set()), key=lambda s: (s.lower(), s))
+
     changed = rs_text != (rs_path.read_text(encoding="utf-8") if rs_path.exists() else "")
     for picker in PICKERS:
+        want = opts_for(picker)
         cur = current_options(text, picker)
-        if cur == models:
+        if cur == want:
             rep.append(f"  {picker}: {len(cur)} option(s), already in sync")
             continue
-        added, removed = sorted(set(models) - set(cur)), sorted(set(cur) - set(models))
-        rep.append(f"  {picker}: {len(cur)} -> {len(models)} option(s)")
+        added, removed = sorted(set(want) - set(cur)), sorted(set(cur) - set(want))
+        rep.append(f"  {picker}: {len(cur)} -> {len(want)} option(s)")
         for m in removed:
             rep.append(f"    - {m}   (no longer served)")
         for m in added:
             rep.append(f"    + {m}   (newly served)")
-        text = rewrite_options(text, picker, models)
+        text = rewrite_options(text, picker, want)
         changed = True
 
     # Advisory: task pins only produce a warning at run time.
