@@ -107,17 +107,27 @@ case "$BENCH" in
     # cannot block a run that would have worked.
     if [ "$_root_avail_m" -lt 1024 ]; then
       echo "::error:: only ${_root_avail_m}MB free on / — harbor image imports fail with"
-      echo "::error:: 'failed to ingest' partway through, after burning agent budget."
-      echo "::error:: NB on this runner /var/lib/docker is a STRANDED legacy docker data-root"
-      echo "::error:: (~239GB, root-owned, invisible to unprivileged du) while the live"
-      echo "::error:: data-root is elsewhere. Reclaiming it needs root and is the real fix:"
-      echo "::error::   sudo du -sh /var/lib/docker && sudo rm -rf /var/lib/docker"
-      echo "::error:: (verify the live data-root differs first: docker info | grep 'Root Dir')"
+      echo "::error::   #10 importing to docker"
+      echo "::error::   #10 ERROR: failed to ingest \"blobs/sha256/...\""
+      echo "::error:: partway through, after burning the agent budget for every task."
+      echo "::error::"
+      echo "::error:: Cause on skillberry-1 (measured 2026-08-09): this docker uses the"
+      echo "::error:: CONTAINERD IMAGE STORE, so images live in /var/lib/containerd on / no"
+      echo "::error:: matter what data-root says — 235GB there (162GB overlayfs snapshots +"
+      echo "::error:: 73GB content blobs) while docker info reported data-root=/vol/docker."
+      echo "::error:: /var/lib/docker was EMPTY; do not go looking there."
+      echo "::error::"
+      echo "::error:: Fix — ordinary docker maintenance, no rm -rf required:"
+      echo "::error::   docker system df                                  # confirm reclaimable"
+      echo "::error::   docker image prune -a -f --filter until=72h       # reclaimed 145.8GB"
+      echo "::error:: The until= filter keeps recently built task env images so the next run"
+      echo "::error:: does not have to rebuild all of them."
       exit 1
     elif [ "$_root_avail_m" -lt 4096 ]; then
       echo "::warning:: only ${_root_avail_m}MB free on / — harbor image imports may fail with"
-      echo "::warning:: 'failed to ingest'. See /var/lib/docker on this runner (stranded legacy"
-      echo "::warning:: data-root, needs root to reclaim)."
+      echo "::warning:: 'failed to ingest'. Images live in /var/lib/containerd on this runner"
+      echo "::warning:: (containerd image store, ignores data-root). Reclaim with:"
+      echo "::warning::   docker image prune -a -f --filter until=72h"
     fi
 
     # Reap orphaned harbor task containers before starting. Harbor does NOT tear its
