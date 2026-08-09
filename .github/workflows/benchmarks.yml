@@ -40,9 +40,9 @@ on:
         type: string
         default: "10"
       trials:
-        description: "Trials per task per eval (default 10). Applies to whichever tier(s) run in this dispatch. Smoke always runs 3, regardless of this input — fewer cannot separate signal from noise on a 5-task binary tier."
+        description: "Trials per task per eval. LEAVE BLANK for the tier default (smoke 3, everything else 10). Set a value only to override deliberately — on a 5-task binary tier, 1 trial cannot separate signal from noise, which is why blank does not mean 1."
         type: string
-        default: "10"
+        default: ""
       agent_model:
         description: "Evaluation model — the agent under test (litellm_proxy alias on the ete-litellm gateway)"
         type: choice
@@ -286,7 +286,11 @@ jobs:
       # at this tier, only an infrastructure check. 5 trials shrinks SE enough for a real
       # one-task improvement to clear the gate; eval is ~3.4 min/pass here, so this costs
       # minutes while the optimizer (~$5/run) still dominates spend.
-      NUM_TRIALS: ${{ matrix.tier == 'smoke' && '3' || github.event.inputs.trials || '10' }}
+      # An EXPLICIT dispatch value wins; blank falls back to the tier default. The input's own
+      # default is "" rather than "10" precisely so the two cases are distinguishable — with a
+      # non-empty default there is no way to tell "user asked for 10" from "user asked for
+      # nothing", and smoke would silently get 10 instead of its intended 3.
+      NUM_TRIALS: ${{ github.event.inputs.trials || (matrix.tier == 'smoke' && '3') || '10' }}
       AGENT_MODEL: ${{ github.event.inputs.agent_model || 'aws/gpt-oss-120b' }}
       OPTIMIZER_MODEL: ${{ github.event.inputs.optimizer_model || 'claude-opus-4-8' }}
       # Smoke defaults to a $50/iteration cap (fast regression, generous headroom);
