@@ -89,16 +89,16 @@
       <input id="f-to" type="datetime-local">
     </label>
     <label>Benchmark
-      <select id="f-bench"><option value="">all</option><option>tau2</option><option>swebench</option><option>skillsbench</option></select>
+      <select id="f-bench"><option value="">all</option></select>
     </label>
     <label>Type
-      <select id="f-tier"><option value="">all</option><option>smoke</option><option>pilot</option><option>full</option></select>
+      <select id="f-tier"><option value="">all</option></select>
     </label>
     <label>Source
       <select id="f-source"><option value="">all</option><option value="pr">PR</option><option value="manual">manual</option></select>
     </label>
     <label>Result
-      <select id="f-conc"><option value="">all</option><option>success</option><option>failure</option><option>cancelled</option></select>
+      <select id="f-conc"><option value="">all</option><option selected>success</option><option>failure</option><option>cancelled</option></select>
     </label>
     <label>Search
       <input id="f-q" type="search" placeholder="branch or task…">
@@ -107,7 +107,7 @@
 
   <table id="runs">
     <thead><tr>
-      <th data-k="date">Date</th>
+      <th data-k="date">Date<span id="date-zone" class="muted"></span></th>
       <th data-k="source">Source</th>
       <th data-k="bench">Bench</th>
       <th data-k="tier">Type</th>

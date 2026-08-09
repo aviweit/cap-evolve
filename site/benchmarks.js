@@ -9,6 +9,39 @@ let RECORDS = [], sortKey = "date", sortDir = -1;
 
 const $ = (s) => document.querySelector(s);
 const fmt = (v, d = 3) => (typeof v === "number" ? v.toFixed(d) : "—");
+// Records carry ISO-8601 UTC timestamps ("2026-08-09T14:11:02Z"). The old renderer just
+// stripped the "T" and the "Z", which DISPLAYED UTC while looking like local time — the worst
+// of both, since a reader in UTC+3 saw a run they started at 17:11 labelled 14:11 with nothing
+// to signal the offset. Parse and format in the browser's own zone instead.
+const fmtLocal = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);          // unparseable: show it raw rather than "Invalid Date"
+  return d.toLocaleString(undefined, {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+};
+// The viewer's zone, shown once in the table header so the timestamps are unambiguous.
+const localZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "local"; }
+  catch { return "local"; }
+};
+
+// Populate a <select> from the values actually present in the data, preserving the current
+// selection. Hardcoded option lists silently hide whole benchmarks: `spreadsheetbench` and
+// `rh-swebench` records existed in benchmark-history but were unreachable in the UI because the
+// markup only listed tau2/swebench/skillsbench.
+function hydrateFilter(sel, values, fallbackLabel) {
+  const el = $(sel);
+  if (!el) return;
+  const prev = el.value;
+  const opts = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  el.innerHTML = `<option value="">${fallbackLabel}</option>` +
+    opts.map((v) => `<option${v === prev ? " selected" : ""}>${esc(v)}</option>`).join("");
+  el.value = opts.includes(prev) ? prev : "";
+}
+
 // Wall-time seconds as minutes+seconds (e.g. 14m48s), matching metrics.py's _fmt_duration.
 const fmtDuration = (v) => {
   if (typeof v !== "number") return "—";
@@ -102,6 +135,12 @@ async function load() {
       fetch(`${RAW}/meta.json?t=${Date.now()}`).then((r) => r.json()).catch(() => null),
     ]);
     RECORDS = Array.isArray(recs) ? recs : [];
+    // Derive the Benchmark and Tier choices from the records themselves, so a new benchmark or
+    // tier appears the moment it publishes a run — no markup change required.
+    hydrateFilter("#f-bench", RECORDS.map((r) => r.bench), "all");
+    hydrateFilter("#f-tier", RECORDS.map((r) => r.tier || "smoke"), "all");
+    const zh = $("#date-zone");
+    if (zh) zh.textContent = ` (${localZone()})`;
     if (meta && meta.updated) {
       $("#updated").textContent = `· last updated ${new Date(meta.updated).toLocaleString()}`;
     }
@@ -190,7 +229,7 @@ function render() {
         ? `<a href="${esc(r.summary_url)}" target="_blank" rel="noopener">${esc(r.source || "—")}</a>`
         : esc(r.source || "—");
     const badge = `<span class="badge ${esc(r.conclusion)}">${esc(r.conclusion)}</span>`;
-    const date = esc((r.date || "").replace("T", " ").replace("Z", ""));
+    const date = esc(fmtLocal(r.date));
     const tier = esc(r.tier || "smoke");
     tr.innerHTML = `<td><a href="${esc(r.run_url)}">${date}</a></td>
       <td>${src}</td><td>${esc(r.bench)}</td><td>${tier}</td><td>${r.iterations ?? "—"}</td>
