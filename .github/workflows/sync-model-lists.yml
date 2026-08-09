@@ -1,0 +1,159 @@
+# ============================================================================
+# Sync the benchmark model pickers to whatever the gateway key can actually serve.
+# ============================================================================
+#
+# The `agent_model` / `optimizer_model` pickers in benchmarks.yml are a STATIC list; the
+# gateway's per-key entitlements are not. When they drift, every LLM call dies with
+# `team not allowed to access model` and the suite publishes a clean-looking 0.000 — that was
+# run 31124146014 (11 minutes and $2.56 before anything noticed, 15 of 30 agent options dead
+# including the workflow's own default). Rotating the key changes the served set wholesale, so
+# the lists get regenerated rather than hand-patched.
+#
+# WHY THERE IS NO "SECRET CHANGED" TRIGGER
+# ----------------------------------------
+# GitHub emits no event when a repository secret is updated — there is nothing to subscribe to.
+# The closest achievable behaviour is what this workflow does: a cheap poll (one /models call
+# plus a file compare, well under a minute) that notices the change shortly after a rotation,
+# plus a manual dispatch for when you want it applied immediately. Run it by hand right after
+# switching a key and you get the effect of an instant trigger.
+#
+# WHY SELF-HOSTED
+# ---------------
+# The gateway is VPC-internal; GitHub-hosted runners cannot reach it. This queues behind a
+# running benchmark on the single self-hosted runner, which is harmless — it just applies later.
+#
+# WHY A PAT AND NOT GITHUB_TOKEN
+# ------------------------------
+# GITHUB_TOKEN is forbidden from pushing changes under .github/workflows/**, and the pickers
+# live there. The push therefore uses SKILLBERRY_BOT_TOKEN, which needs `workflow` scope. If it
+# lacks it the push fails loudly rather than silently leaving the lists stale.
+# ============================================================================
+
+name: Sync model lists
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent_default:
+        description: "New agent_model default (required if the current one is no longer served)"
+        type: string
+        default: ""
+      optimizer_default:
+        description: "New optimizer_model default (only if the current one is no longer served)"
+        type: string
+        default: ""
+      apply:
+        description: "Commit the update. Unchecked = report drift only."
+        type: boolean
+        default: true
+  schedule:
+    # Off-minute on purpose: :00 and :30 are the busiest slots on the Actions fleet.
+    - cron: "7,37 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time; never stack rotations on top of each other.
+  group: sync-model-lists
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: sync model pickers
+    runs-on: [self-hosted, ibm-vpc]
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # PAT so the push may touch .github/workflows/** (GITHUB_TOKEN may not).
+          token: ${{ secrets.SKILLBERRY_BOT_TOKEN }}
+          persist-credentials: true
+
+      - name: Fetch the served model list
+        run: |
+          set -euo pipefail
+          : "${ANTHROPIC_BASE_URL:?}" ; : "${ANTHROPIC_AUTH_TOKEN:?}"
+          code=$(curl -sS -m 60 -o /tmp/served_models.json -w '%{http_code}' \
+            "$ANTHROPIC_BASE_URL/models" -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN")
+          if [ "$code" != "200" ]; then
+            echo "::error:: gateway /models returned HTTP $code — cannot sync"
+            head -c 300 /tmp/served_models.json || true
+            exit 1
+          fi
+          n=$(python3 -c "import json;print(len(json.load(open('/tmp/served_models.json'))['data']))")
+          echo "gateway serves $n model(s)"
+          [ "$n" -gt 0 ] || { echo "::error:: empty model list — refusing to blank the pickers"; exit 1; }
+
+      - name: Sync
+        id: sync
+        run: |
+          set +e
+          args=(--models /tmp/served_models.json --repo .)
+          if [ "${{ inputs.apply }}" = "false" ]; then args+=(--check); else args+=(--write); fi
+          [ -n "${{ inputs.agent_default }}" ]     && args+=(--agent-default "${{ inputs.agent_default }}")
+          [ -n "${{ inputs.optimizer_default }}" ] && args+=(--optimizer-default "${{ inputs.optimizer_default }}")
+          python3 ci/benchmarks/lib/sync_models.py "${args[@]}" | tee /tmp/sync.log
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # 0 = in sync / applied, 1 = drift (check mode only), 2 = needs a human decision.
+          [ "$rc" = "2" ] && exit 2
+          exit 0
+
+      - name: Validate the generated workflow
+        # A default outside its own options is an invalid workflow; sync_models refuses to
+        # produce one, and this is the independent check that it did not.
+        run: |
+          set -euo pipefail
+          if command -v actionlint >/dev/null 2>&1; then
+            actionlint .github/workflows/benchmarks.yml
+            echo "actionlint: clean"
+          fi
+          # Independent of actionlint, and unit-tested: asserts each picker default is among
+          # its own options, so the check still runs on a runner without actionlint.
+          python3 ci/benchmarks/lib/sync_models.py --validate --repo .
+
+      - name: Commit
+        if: ${{ inputs.apply != false }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .github/workflows/benchmarks.yml ci/benchmarks/lib/run_suite.sh; then
+            echo "nothing to commit — pickers already match the key"; exit 0
+          fi
+          git config user.name  "skillberry-bot"
+          git config user.email "skillberry-bot@users.noreply.github.com"
+          git add .github/workflows/benchmarks.yml ci/benchmarks/lib/run_suite.sh
+          {
+            echo "ci(benchmarks): sync model pickers to the gateway key"
+            echo
+            echo "Regenerated by .github/workflows/sync-model-lists.yml from the live"
+            echo "GET \$ANTHROPIC_BASE_URL/models for the key currently in ANTHROPIC_AUTH_TOKEN."
+            echo "A stale picker means a dispatch can select a model the key cannot call, which"
+            echo "fails every rollout and reports a 0.000 that was never measured."
+            echo
+            sed 's/^/    /' /tmp/sync.log
+          } > /tmp/commit.msg
+          git commit -q -F /tmp/commit.msg
+          git push origin HEAD:${{ github.ref_name }} || {
+            echo "::error:: push failed. SKILLBERRY_BOT_TOKEN needs 'workflow' scope to modify"
+            echo "::error:: .github/workflows/** — GITHUB_TOKEN cannot, which is why a PAT is used."
+            exit 1; }
+          echo "pushed to ${{ github.ref_name }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Model picker sync"
+            echo '```'
+            cat /tmp/sync.log 2>/dev/null || echo "(sync did not run)"
+            echo '```'
+            if [ "${{ steps.sync.outputs.rc }}" = "2" ]; then
+              echo "**Action needed:** a picker default is no longer served. Re-run this workflow"
+              echo "with \`agent_default\` (and/or \`optimizer_default\`) set to a served model."
+              echo "Nothing was written — a default outside its own options is an invalid workflow."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
