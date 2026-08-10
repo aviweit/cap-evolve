@@ -32,8 +32,21 @@ def rollup(tasks: list[dict], steps: list[dict] | None = None) -> dict | None:
     in ``tasks`` shares the SAME run-level reward only, it never carried real per-task
     cost/latency, so summing over tasks previously double/N-counted a constant value.
     """
-    rb = [t["reward_baseline"] for t in tasks if _num(t.get("reward_baseline"))]
-    ro = [t["reward_opt"] for t in tasks if _num(t.get("reward_opt"))]
+    # Infra-errored tasks are EXCLUDED from both means. An ungradeable task is missing data,
+    # not a reward of 0.0 — the same principle the harness enforces via n_scored. Averaging
+    # them in as zeros is exactly what made pilot run 31331458168 publish `0.680 -> 0.620`
+    # while its own report and per-run UI said 0.680 -> 0.705: six of fifty tasks failed on
+    # infrastructure, and 0.7045 * 44/50 = 0.62. The dashboard understated the optimized
+    # result by 8.5 points purely because of failed containers.
+    #
+    # Both sides are filtered by the SAME flag on purpose. `opt_infra` is set when EITHER
+    # measurement was ungradeable (metrics.py: `_infra_task(o) or _infra_task(b)`), so a task
+    # that lost one side is not a valid paired sample. Filtering only the opt side would leave
+    # `reward_base` averaged over 50 tasks and `reward_opt` over 44 — a delta between two
+    # different populations, which is worse than either number alone.
+    scored = [t for t in tasks if not t.get("opt_infra")]
+    rb = [t["reward_baseline"] for t in scored if _num(t.get("reward_baseline"))]
+    ro = [t["reward_opt"] for t in scored if _num(t.get("reward_opt"))]
     if not (rb and ro):
         return None
     steps = steps or []
@@ -41,6 +54,9 @@ def rollup(tasks: list[dict], steps: list[dict] | None = None) -> dict | None:
         "reward_base": round(sum(rb) / len(rb), 6),
         "reward_opt": round(sum(ro) / len(ro), 6),
         "n": len(tasks),
+        # How many of `n` actually produced a paired measurement. Published so a consumer can
+        # tell 0.705-over-44-of-50 from 0.705-over-50-of-50 instead of assuming full coverage.
+        "n_scored": len(ro),
         # totals across the run's iteration timeline (baseline + each hill-climb
         # step + finalize) — 0 when steps data is absent (e.g. older records).
         "eval_usd": round(sum(s.get("eval_usd") or 0 for s in steps), 6),

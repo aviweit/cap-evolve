@@ -212,7 +212,13 @@ function render() {
   for (const r of rows) {
     const tr = document.createElement("tr");
     tr.className = "run-row";
-    const reward = r.suite ? `${fmt(r.suite.reward_base)} → ${fmt(r.suite.reward_opt)}` : "—";
+    // Coverage matters as much as the number: 0.705 over 44 of 50 tasks is not the same claim
+    // as 0.705 over 50, and infra-errored tasks are excluded from the means (they are missing
+    // data, not zeros). Show n_scored/n whenever some task failed to produce a paired result.
+    const cov = r.suite && Number.isFinite(r.suite.n_scored) && r.suite.n_scored < r.suite.n
+      ? ` <span class="muted" title="${r.suite.n - r.suite.n_scored} task(s) infra-errored and are excluded from the means">(${r.suite.n_scored}/${r.suite.n})</span>`
+      : "";
+    const reward = r.suite ? `${fmt(r.suite.reward_base)} → ${fmt(r.suite.reward_opt)}${cov}` : "—";
     const evalUsd = r.suite && r.suite.eval_usd != null ? `$${fmt(r.suite.eval_usd, 4)}` : "—";
     const optUsd = r.suite ? `$${fmt(r.suite.optimizer_usd, 4)}` : "—";
     const latency = r.suite && (r.suite.eval_seconds != null || r.suite.optimizer_seconds != null)

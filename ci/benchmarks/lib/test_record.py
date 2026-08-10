@@ -32,9 +32,42 @@ def _write_jsonl(p: Path, rows):
 
 def test_rollup_math():
     r = record.rollup([TASK_OK, TASK2], STEPS)
-    assert r == {"reward_base": 0.0, "reward_opt": 0.5, "n": 2,
+    assert r == {"reward_base": 0.0, "reward_opt": 0.5, "n": 2, "n_scored": 2,
                  "eval_usd": 0.15, "optimizer_usd": 0.05,
                  "eval_seconds": 120.0, "optimizer_seconds": 12.0}
+
+
+# ---- infra-errored tasks are missing data, not zeros ------------------------
+#
+# Pilot run 31331458168 published `0.680 -> 0.620` while its own report and per-run UI said
+# `0.680 -> 0.705`. Six of fifty tasks had failed on infrastructure and were averaged in as
+# 0.0: 0.7045 * 44/50 = 0.62. The dashboard understated the optimized result by 8.5 points
+# because containers died, and inverted the sign of the result — a regression instead of an
+# improvement.
+
+INFRA = {**TASK_OK, "task": "99", "reward_baseline": 1.0, "reward_opt": 0.0, "opt_infra": True}
+
+
+def test_rollup_excludes_infra_errored_tasks_from_both_means():
+    r = record.rollup([TASK_OK, TASK2, INFRA], STEPS)
+    # TASK_OK 1.0 + TASK2 0.0 over 2 scored tasks; the infra task contributes to neither mean
+    assert r["reward_opt"] == 0.5, "an ungradeable task must not be averaged in as 0.0"
+    assert r["reward_base"] == 0.0
+    assert r["n"] == 3 and r["n_scored"] == 2, "coverage must be published, not hidden"
+
+
+def test_rollup_filters_both_sides_with_the_same_flag():
+    """opt_infra is set when EITHER side was ungradeable (metrics.py), so a task that lost one
+    side is not a valid paired sample. Filtering only the opt side would compare a 3-task
+    baseline against a 2-task optimized figure."""
+    r = record.rollup([TASK_OK, TASK2, INFRA], STEPS)
+    # INFRA's baseline is 1.0; had it leaked into reward_base the mean would be 0.333
+    assert r["reward_base"] == 0.0, "the infra task's baseline leaked into reward_base"
+
+
+def test_rollup_returns_none_when_every_task_is_infra_errored():
+    """No paired measurement at all: publish nothing rather than a fabricated 0.0."""
+    assert record.rollup([INFRA], STEPS) is None
 
 
 def test_rollup_sums_steps_not_tasks():
