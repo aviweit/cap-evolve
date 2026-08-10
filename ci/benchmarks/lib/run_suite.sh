@@ -118,6 +118,22 @@ ENV
     # 1800s was too tight once containers contend: 8 of the pilot's 34 failures were
     # CancelledError, i.e. the rollout was still waiting when the clock ran out. 3600s.
     export HARBOR_TIMEOUT="${HARBOR_TIMEOUT:-3600}"
+    # Harbor applies a SEPARATE 360s budget to agent SETUP (harbor/trial/trial.py:
+    # _AGENT_SETUP_TIMEOUT_SEC = 360), independent of HARBOR_TIMEOUT above. Pilot run
+    # 31331458168 lost 5 of its 6 infra-errored tasks to it:
+    #
+    #   AgentSetupTimeoutError: Agent setup timed out after 360.0 seconds
+    #
+    # Setup is not cheap on these images. Harbor first installs Node itself
+    # (`apt-get install curl bash nodejs npm procps`) and then fetches claude-code — and on
+    # Debian-based swebench images it takes the non-Alpine branch, `curl -fsSL https://…`,
+    # rather than npm. So the pre-warmed npm cache does NOT shorten this path: it only helps
+    # the Alpine branch. Both steps are network-bound and 6 containers do them concurrently.
+    #
+    # x3 -> 1080s. Raising the ceiling is the honest fix here; baking Node and claude-code
+    # into the task images would remove the work entirely and is the better long-term answer.
+    export HARBOR_EXTRA_FLAGS="${HARBOR_EXTRA_FLAGS:---agent-setup-timeout-multiplier 3}"
+    echo "harbor extra flags: $HARBOR_EXTRA_FLAGS"
     export HARBOR_TASK_IDS="$IDS_CSV"
     # Keep harbor OFF the root filesystem. Pilot run 31297290155 failed 50/50 with
     #   #10 importing to docker
