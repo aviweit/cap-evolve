@@ -23,8 +23,8 @@ benchmark — the intake/integration step should CLONE + INSTALL all dependencie
                 update_reservation_passengers, get_flight_status,
                 transfer_to_human_agents).
 - seed:         seed_capability/primitive_skill/ is a READ-ONLY reference. The
-                optimizer MUST NOT edit or delete it. It may only CREATE new
-                sibling skill packages (e.g. seed_capability/rebooking_workflow/).
+                optimizer MUST NOT edit or delete it or any file inside it.
+                It may only CREATE new sibling skill packages.
 - capability_path:   seed_capability
 - actions:      [create]   (create new skills ONLY — never edit primitive_skill)
 - capability_sources:  []
@@ -37,6 +37,28 @@ benchmark — the intake/integration step should CLONE + INSTALL all dependencie
    functions). They cannot introduce new API calls or bypass the primitive layer.
 4. The optimizer tests ONE composite skill at a time: adapter.apply() uploads it
    to the store and restarts SPA with SKILL_NAME=<that_skill>.
+
+## COMPOSITE-WRAPPER PATTERN (when primitive tool logic needs extending)
+
+If a primitive tool (e.g. `cancel_reservation`) needs additional logic, the optimizer
+MUST NOT edit it. Instead:
+
+1. Create a new composite tool function in the new skill's `scripts/` directory
+   (e.g. `cancel_reservation_with_eligibility_check`).
+2. The composite function implements the extra logic, then delegates to the primitive
+   tool (calls `cancel_reservation(...)` internally).
+3. Create a new SKILL.md that lists ALL 14 primitive tools EXCEPT the one being
+   wrapped, PLUS the new composite tool in its place.
+4. adapter.apply() uploads this new skill to the store and restarts SPA with
+   SKILL_NAME=<new_skill_name> — the agent sees the composite tool instead of the
+   raw primitive.
+
+Example: to add eligibility checking to `cancel_reservation`:
+- Create `seed_capability/cancellation_policy_skill/scripts/cancel_reservation_checked.py`
+  that checks eligibility then calls `cancel_reservation(reservation_id)`
+- Create `seed_capability/cancellation_policy_skill/SKILL.md` listing
+  the 13 unchanged primitives + `cancel_reservation_checked` (not `cancel_reservation`)
+- NEVER touch `seed_capability/primitive_skill/` at all
 
 # 2. BENCHMARK / DATASET
 

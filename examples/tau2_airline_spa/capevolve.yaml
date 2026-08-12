@@ -18,6 +18,7 @@ optimizer_skill: claude-code
 optimizer_model: claude-opus-4-8
 optimizer_max_turns: 100
 optimizer_usd_per_iter: 20.0
+optimizer_instructions_file: examples/tau2_airline_spa/optimizer/INSTRUCTIONS.md
 
 # --- how to iterate ---------------------------------------------------------
 algorithm_skill: hill-climb
@@ -39,8 +40,8 @@ gate_mode: paired
 gate_k_se: 0.0
 
 # --- budget -----------------------------------------------------------------
-max_iterations: 1
-stall: 0
+max_iterations: 5
+stall: 3
 max_metric_calls: 0
 max_usd: 200.0
 max_optimizer_usd: 100.0
