@@ -89,8 +89,8 @@ sibling skill directories.
     USE_AGENT_TOOLS=false
     USE_AGENT_PROMPTS=true
     MCP_PROMPTS_POSITION=postfix
-    SPA_PROVIDER_NAME=litellm.ibm
-    SPA_MODEL_NAME=aws/gpt-oss-120b
+    SPA_PROVIDER_NAME=litellm
+    SPA_MODEL_NAME=openai/aws/gpt-oss-120b
 
 ## 2d. tau2 Environment Manager (the HTTP API primitive tools call)
 - port:         8004
@@ -115,10 +115,9 @@ sibling skill directories.
 ## Models + credentials
 - agent model:      ibm/skillberry-local  (litellm alias → SPA on localhost:7000)
 - user sim model:   openai/aws/gpt-oss-120b  (direct via OPENAI_BASE_URL)
-- OPENAI_BASE_URL:  upstream LLM endpoint (e.g. IBM litellm gateway)
-- OPENAI_API_KEY:   API key for upstream
-- IBM_LITELLM_API_BASE: (= OPENAI_BASE_URL, exported for SPA's litellm.ibm provider)
-- IBM_THIRD_PARTY_API_KEY: (= OPENAI_API_KEY, exported for SPA)
+- OPENAI_API_KEY:   API key for upstream LLM
+- OPENAI_API_BASE:  upstream LLM endpoint URL
+- OPENAI_BASE_URL:  upstream LLM base URL (same value as OPENAI_API_BASE)
 
 ## Critical: SPA restart per candidate
 Before each evaluation, adapter.apply() does:

@@ -32,7 +32,7 @@ STORE_TAG="${SKILLBERRY_STORE_TAG:-0.2.1}"
 BENCHMARKS_COMMIT="${SKILLBERRY_BENCHMARKS_COMMIT:-a3a83266008275e9d800fd709927fa3dc4f23ec5}"
 AGENT_COMMIT="${SKILLBERRY_AGENT_COMMIT:-e359494f18267e339f9561acbd7a930e3b51189e}"
 
-# SPA configuration
+# SPA configuration defaults (can be overridden by .env or exported vars)
 SPA_PROVIDER_NAME="${SPA_PROVIDER_NAME:-litellm}"
 SPA_MODEL_NAME="${SPA_MODEL_NAME:-openai/aws/gpt-oss-120b}"
 
@@ -85,13 +85,13 @@ _require_env() {
     die "$var is not set — $desc. Set it in $REPO/.env or export it."
   fi
 }
-# Skillberry Proxy-Agent (SPA)
-_require_env SPA_PROVIDER_NAME "SPA needs it to select the LLM provider (e.g. litellm)"
-_require_env SPA_MODEL_NAME    "SPA needs it to select the model (e.g. aws/gpt-oss-120b)"
+# Skillberry Proxy-Agent (SPA) — these always have defaults set above, just echo them
+echo "  SPA_PROVIDER_NAME=$SPA_PROVIDER_NAME"
+echo "  SPA_MODEL_NAME=$SPA_MODEL_NAME"
 # tau2-bench / upstream LLM
-_require_env OPENAI_API_KEY  "needed for the upstream LLM"
+_require_env OPENAI_API_KEY  "needed for the upstream LLM API key"
 _require_env OPENAI_API_BASE "needed for the upstream LLM endpoint URL"
-_require_env OPENAI_BASE_URL "needed for the upstream LLM base URL"
+_require_env OPENAI_BASE_URL "needed for the upstream LLM base URL (same value as OPENAI_API_BASE)"
 echo "  ✓ all required credentials present"
 
 # ---------------------------------------------------------------------------
