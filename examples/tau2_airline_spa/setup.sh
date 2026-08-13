@@ -39,6 +39,21 @@ SPA_MODEL_NAME="${SPA_MODEL_NAME:-aws/gpt-oss-120b}"
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mSETUP FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Load repo-root .env into shell (no overwrite of already-exported vars)
+if [ -f "$REPO/.env" ]; then
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _line="${_line#"${_line%%[![:space:]]*}"}"   # ltrim whitespace
+    # skip blank lines and comments
+    [[ -z "$_line" || "$_line" == \#* || "$_line" != *=* ]] && continue
+    _key="${_line%%=*}"
+    _val="${_line#*=}"
+    # strip surrounding quotes
+    _val="${_val%\"}" ; _val="${_val#\"}"
+    _val="${_val%\'}" ; _val="${_val#\'}"
+    [ -z "${!_key+x}" ] && export "$_key=$_val"
+  done < "$REPO/.env"
+fi
+
 wait_for_port(){
   local port="$1" name="$2" max="${3:-20}"
   for i in $(seq 1 "$max"); do
@@ -61,6 +76,24 @@ say "1/7  Install cap-evolve (Python venv + core CLI)"
 "$PY" -m pip install -q --index-url "$PIP_INDEX" -e "$REPO/core" || die "pip install ./core failed"
 "$VENV/bin/cap-evolve" version || die "cap-evolve CLI not available"
 echo "  ✓ cap-evolve installed"
+
+# ---------------------------------------------------------------------------
+say "1.5/7  Check required credentials"
+_require_env() {
+  local var="$1" desc="$2"
+  if [ -z "${!var:-}" ]; then
+    die "$var is not set — $desc. Set it in $REPO/.env or export it."
+  fi
+}
+# Skillberry Proxy-Agent (SPA)
+_require_env SPA_PROVIDER_NAME       "SPA needs it to select the LLM provider (e.g. litellm.ibm)"
+_require_env SPA_MODEL_NAME          "SPA needs it to select the model (e.g. aws/gpt-oss-120b)"
+_require_env IBM_LITELLM_API_BASE    "SPA's litellm.ibm provider needs the LiteLLM gateway URL"
+_require_env IBM_THIRD_PARTY_API_KEY "SPA's litellm.ibm provider needs the API key"
+# tau2-bench user simulator (direct upstream LLM)
+_require_env OPENAI_API_KEY  "tau2 user simulator needs it for the upstream LLM"
+_require_env OPENAI_BASE_URL "tau2 user simulator needs the upstream LLM endpoint URL"
+echo "  ✓ all required credentials present"
 
 # ---------------------------------------------------------------------------
 say "2/7  Clone + install tau2-bench (from skillberry-benchmarks @ $BENCHMARKS_COMMIT)"
@@ -241,11 +274,6 @@ export SKILLBERRY_AGENT_DIR="$AGENT_DIR"
 export SKILLBERRY_STORE_DIR="$STORE_DIR"
 
 echo "  project scaffolded at $PROJECT"
-
-# Check
-if [ -z "${OPENAI_API_KEY:-}" ] && ! grep -q '^OPENAI_API_KEY=' "$REPO/.env" 2>/dev/null; then
-  echo "  WARNING: OPENAI_API_KEY not set — the run needs it for the upstream LLM."
-fi
 
 PYTHONPATH="$PROJECT/adapters" "$VENV/bin/cap-evolve" check "$PROJECT" || die "cap-evolve check did not pass"
 
