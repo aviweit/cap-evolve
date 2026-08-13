@@ -31,42 +31,42 @@ benchmark — the intake/integration step should CLONE + INSTALL all dependencie
 
 ## CONSTRAINTS ON NEW COMPOSITE SKILLS
 
-1. Each new skill is a directory with SKILL.md + optional scripts/.
+1. Each new skill is a directory with SKILL.md + scripts/.
 2. The SKILL.md snippet is what SPA injects as system prompt enrichment.
-3. Any scripts in the skill must ONLY call the primitive tools (the 14 frozen
-   functions). They cannot introduce new API calls or bypass the primitive layer.
-4. The optimizer tests ONE composite skill at a time: adapter.apply() uploads it
+3. **scripts/ = the COMPLETE tool set sent to the LLM.** Each .py file with a
+   public function becomes a callable tool. The LLM sees ONLY what is in scripts/.
+4. scripts/ must contain ALL relevant tools: unchanged primitives (copied) +
+   new composite tools. Composite tools call primitives via
+   `_make_api_call(tool_name="<primitive>", ...)`.
+5. The optimizer tests ONE composite skill at a time: adapter.apply() uploads it
    to the store and restarts SPA with SKILL_NAME=<that_skill>.
 
-## COMPOSITE-WRAPPER PATTERN (when primitive tool logic needs extending)
+## TWO COMPOSITE TOOL PATTERNS
 
-If a primitive tool (e.g. `cancel_reservation`) needs additional logic, the optimizer
-MUST NOT edit it. Instead:
+### Pattern 1: WRAPPER (replace a primitive with an enhanced version)
 
-1. Create a new composite tool function in the new skill's `scripts/` directory
-   (e.g. `cancel_reservation_with_eligibility_check`).
-2. The composite function implements the extra logic, then delegates to the primitive
-   tool (calls `cancel_reservation(...)` internally).
-3. Create a new SKILL.md that lists ALL 14 primitive tools EXCEPT the one being
-   wrapped, PLUS the new composite tool in its place.
-4. adapter.apply() uploads this new skill to the store and restarts SPA with
-   SKILL_NAME=<new_skill_name> — the agent sees the composite tool instead of the
-   raw primitive.
+When a primitive tool needs additional logic (guards, validation, computation):
+- scripts/ contains: 13 primitives (EXCLUDE the wrapped one) + the composite.
+- The composite calls the primitive via `_make_api_call(tool_name="...", ...)`.
+- The agent sees ONLY the composite — cannot bypass the guard.
 
-Example: to add eligibility checking to `cancel_reservation`:
-- Create `seed_capability/cancellation_policy_skill/scripts/cancel_reservation_checked.py`
-  that checks eligibility then calls `cancel_reservation(reservation_id)`
-- Create `seed_capability/cancellation_policy_skill/SKILL.md` listing
-  the 13 unchanged primitives + `cancel_reservation_checked` (not `cancel_reservation`)
-- NEVER touch `seed_capability/primitive_skill/` at all
+### Pattern 2: AGGREGATION (new tool combining multiple primitives)
+
+When the agent needs a multi-step operation it does incorrectly or not at all:
+- scripts/ contains: all 14 primitives + the new composite (ADDED, none removed).
+- The composite calls multiple primitives via `_make_api_call(tool_name="...", ...)`.
+- The agent gains a new capability without losing any primitive.
+
+Both patterns: NEVER touch `seed_capability/primitive_skill/` — only CREATE new
+sibling skill directories.
 
 # 2. BENCHMARK / DATASET
 
 ## 2a. tau2-bench (the task suite + runner)
 - benchmark:    tau2-bench airline domain (airline_skillberry variant)
 - repo:         https://github.com/skillberry-ai/skillberry-benchmarks.git (subdir tau2/tau2-bench)
-- commit:       94e978a154b727ec00fa50149f00a452ab635d64
-- install:      git clone; git checkout 94e978a; pip install -e tau2/tau2-bench
+- commit:       a3a83266008275e9d800fd709927fa3dc4f23ec5
+- install:      git clone; git checkout a3a8326; pip install -e tau2/tau2-bench
 - domain:       airline_skillberry
 - agent type:   llm_agent (with LLM calls routed through SPA)
 
@@ -136,7 +136,7 @@ Before each evaluation, adapter.apply() does:
 
 # 5. STARTUP SEQUENCE
 
-  1. Clone skillberry-benchmarks (@ 94e978a), skillberry-store (tag 0.2.1), skillberry-agent (@ e359494)
+  1. Clone skillberry-benchmarks (@ a3a8326), skillberry-store (tag 0.2.1), skillberry-agent (@ e359494)
   2. Install dependencies for each
   3. Start skillberry-store (port 8000) — wait for health check
   4. Start tau2 Env Manager (port 8004)

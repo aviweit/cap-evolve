@@ -35,22 +35,83 @@ SKILL.md as system prompt enrichment + any scripts as callable tools.
 **What the SKILL.md does:** It is injected as system prompt enrichment by SPA. It
 should guide the agent to orchestrate the 14 frozen primitive tools correctly.
 
-**Composite-wrapper pattern (extending primitive tool logic):**
-If a primitive tool needs additional logic (e.g. eligibility checking before
-`cancel_reservation`), do NOT edit the primitive. Instead:
-1. Create a new composite tool function in your skill's `scripts/` (e.g.
-   `cancel_reservation_with_eligibility_check.py`) that implements the extra logic
-   and delegates to the primitive tool internally.
-2. In your SKILL.md, list ALL 14 primitive tools EXCEPT the one being wrapped, PLUS
-   the new composite tool in its place.
-3. The composite function is the only path — the agent sees it instead of the raw
-   primitive.
-
 **The 14 frozen primitive tools** (available via the store, called by scripts):
 book_reservation, calculate, cancel_reservation, get_reservation_details,
 get_user_details, list_all_airports, search_direct_flight, search_onestop_flight,
 send_certificate, update_reservation_baggages, update_reservation_flights,
 update_reservation_passengers, get_flight_status, transfer_to_human_agents.
+
+## SCRIPTS/ = THE EXACT TOOL SET SENT TO THE LLM
+
+**CRITICAL:** The `scripts/` folder of your new skill defines the COMPLETE set of
+tools that the Skillberry Agent sends to the LLM. Each `.py` file with a public
+function becomes a callable tool. The LLM sees ONLY what is in `scripts/` — nothing
+more, nothing less.
+
+Therefore your new skill's `scripts/` MUST contain:
+- Every **primitive tool** the agent still needs (copied from `./primitive_skill/scripts/`)
+- Every **new composite tool** you create
+
+If you WRAP a primitive (replace it), EXCLUDE the original from scripts/ and include
+only the composite replacement. If you ADD a new aggregation tool, include it
+ALONGSIDE all 14 primitives.
+
+Composite tools call primitives via `_make_api_call(tool_name="<primitive>", ...)`:
+
+```python
+_make_api_call(tool_name="cancel_reservation", reservation_id=reservation_id)
+_make_api_call(tool_name="get_reservation_details", reservation_id=reservation_id)
+_make_api_call(tool_name="get_user_details", user_id=user_id)
+```
+
+### Pattern 1: WRAPPER (replace a primitive with an enhanced version)
+
+Use when the agent misuses a primitive (wrong args, skips a check, violates policy).
+
+`scripts/` contains: 13 primitive tools + 1 composite (the wrapped primitive is EXCLUDED).
+
+Example — `cancel_reservation_checked.py` (replaces `cancel_reservation`):
+```python
+def cancel_reservation_checked(reservation_id: str, user_id: str):
+    """Cancel a reservation after verifying eligibility.
+    Args:
+        reservation_id (str): The reservation ID.
+        user_id (str): The user ID (must own the reservation).
+    Returns:
+        The cancellation result or an error explaining why cancellation is denied.
+    """
+    user = _make_api_call(tool_name="get_user_details", user_id=user_id)
+    if reservation_id not in (user.get("reservations") or []):
+        return {"error": f"Reservation {reservation_id} does not belong to user {user_id}"}
+    details = _make_api_call(tool_name="get_reservation_details", reservation_id=reservation_id)
+    if details.get("status") == "cancelled":
+        return {"error": "Reservation is already cancelled"}
+    return _make_api_call(tool_name="cancel_reservation", reservation_id=reservation_id)
+```
+
+### Pattern 2: AGGREGATION (new tool combining multiple primitives)
+
+Use when the agent needs a multi-step operation it does incorrectly or not at all.
+
+`scripts/` contains: all 14 primitive tools + the new composite tool (ADDED, none removed).
+
+Example — `get_all_reservation_details.py` (new tool, does not replace anything):
+```python
+def get_all_reservation_details(user_id: str):
+    """Get details for ALL reservations belonging to a user.
+    Args:
+        user_id (str): The user ID.
+    Returns:
+        A list of reservation detail objects for every reservation the user holds.
+    """
+    user = _make_api_call(tool_name="get_user_details", user_id=user_id)
+    reservation_ids = user.get("reservations") or []
+    results = []
+    for rid in reservation_ids:
+        details = _make_api_call(tool_name="get_reservation_details", reservation_id=rid)
+        results.append(details)
+    return results
+```
 
 ## GOAL
 
@@ -110,20 +171,20 @@ Before you keep any decision in your new skill, confirm all three:
 
 ## Choosing your approach by FAILURE TYPE
 
-- **RULE VIOLATION** — the agent breaks a rule it could follow. **Best lever: a
-  composite tool** that wraps the primitive, enforces the rule in code (validation /
-  guard / computation), and delegates to the primitive only when the check passes.
-  The agent sees ONLY the composite tool — it cannot bypass the guard. Complement
-  with a SKILL.md note stating the rule (knowledge reinforcement).
+- **RULE VIOLATION** — the agent breaks a rule it could follow. **Best lever:
+  Pattern 1 (WRAPPER)** — wrap the primitive with a guard that enforces the rule in
+  code and delegates only when the check passes. The agent sees ONLY the composite
+  tool — it cannot bypass the guard. Complement with a SKILL.md note stating the rule.
 - **CAPABILITY GAP / ACTION STALL** — the agent has no reliable way to do the
-  thing. **Create a composite tool** that performs the whole multi-step action via
-  primitives in its body (e.g. check-then-cancel, loop-search-then-book). The agent
-  calls ONE tool that does it all correctly.
+  thing. **Best lever: Pattern 2 (AGGREGATION)** — create a new composite tool that
+  performs the whole multi-step action by calling multiple primitives in its body
+  (e.g. loop through reservation IDs and call get_reservation_details for each). The
+  agent calls ONE tool that does it all correctly.
 - **KNOWLEDGE GAP** — a format/criterion/fact the agent cannot derive. Add it to
   the SKILL.md prose (explicit format, worked example, decision rule).
 - **DECISION / PERMISSION** — the agent acts when it should refuse (or vice versa).
-  Encode the discriminating CONDITION in a composite tool guard — refuse/raise ONLY
-  when the predicate fails. Never loosen a global rule in prose.
+  **Pattern 1 (WRAPPER)** with a discriminating CONDITION — refuse/return error ONLY
+  when the predicate fails, delegate normally otherwise.
 
 ## VERIFY-THE-FIX
 - **Composite tool guard:** mentally trace the tool body on the EXACT args from the
@@ -155,6 +216,8 @@ domain defines (policy dates, fixed fees, domain enums).
 - You did NOT edit or delete anything inside `./primitive_skill/`. All your work is
   in a NEW sibling directory you created.
 - Your new skill directory has a valid SKILL.md (with frontmatter: name, description).
+- Your new skill's `scripts/` folder contains the COMPLETE tool set: all relevant
+  primitive tools (copied) + your new composite tools. Nothing else.
 - Every design choice passes the THREE TESTS (REAL, SAFE, VERIFIED) with a verify
   line in PROCESS.md.
 - For rule-violation / behavioral clusters you created composite tool scripts (code
