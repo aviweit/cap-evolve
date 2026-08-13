@@ -33,8 +33,8 @@ BENCHMARKS_COMMIT="${SKILLBERRY_BENCHMARKS_COMMIT:-a3a83266008275e9d800fd709927f
 AGENT_COMMIT="${SKILLBERRY_AGENT_COMMIT:-e359494f18267e339f9561acbd7a930e3b51189e}"
 
 # SPA configuration
-SPA_PROVIDER_NAME="${SPA_PROVIDER_NAME:-litellm.ibm}"
-SPA_MODEL_NAME="${SPA_MODEL_NAME:-aws/gpt-oss-120b}"
+SPA_PROVIDER_NAME="${SPA_PROVIDER_NAME:-litellm}"
+SPA_MODEL_NAME="${SPA_MODEL_NAME:-openai/aws/gpt-oss-120b}"
 
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mSETUP FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -86,13 +86,12 @@ _require_env() {
   fi
 }
 # Skillberry Proxy-Agent (SPA)
-_require_env SPA_PROVIDER_NAME       "SPA needs it to select the LLM provider (e.g. litellm.ibm)"
-_require_env SPA_MODEL_NAME          "SPA needs it to select the model (e.g. aws/gpt-oss-120b)"
-_require_env IBM_LITELLM_API_BASE    "SPA's litellm.ibm provider needs the LiteLLM gateway URL"
-_require_env IBM_THIRD_PARTY_API_KEY "SPA's litellm.ibm provider needs the API key"
-# tau2-bench user simulator (direct upstream LLM)
-_require_env OPENAI_API_KEY  "tau2 user simulator needs it for the upstream LLM"
-_require_env OPENAI_BASE_URL "tau2 user simulator needs the upstream LLM endpoint URL"
+_require_env SPA_PROVIDER_NAME "SPA needs it to select the LLM provider (e.g. litellm)"
+_require_env SPA_MODEL_NAME    "SPA needs it to select the model (e.g. aws/gpt-oss-120b)"
+# tau2-bench / upstream LLM
+_require_env OPENAI_API_KEY  "needed for the upstream LLM"
+_require_env OPENAI_API_BASE "needed for the upstream LLM endpoint URL"
+_require_env OPENAI_BASE_URL "needed for the upstream LLM base URL"
 echo "  ✓ all required credentials present"
 
 # ---------------------------------------------------------------------------
@@ -243,11 +242,9 @@ if ! curl -sf "http://localhost:$SPA_PORT/health" >/dev/null 2>&1; then
   export MCP_PROMPTS_POSITION=postfix
   export SPA_PROVIDER_NAME="$SPA_PROVIDER_NAME"
   export SPA_MODEL_NAME="$SPA_MODEL_NAME"
-  # SPA's litellm.ibm provider needs these (mirror OPENAI_* vars)
-  export IBM_THIRD_PARTY_API_KEY="${IBM_THIRD_PARTY_API_KEY:-${OPENAI_API_KEY:-}}"
-  export IBM_LITELLM_API_BASE="${IBM_LITELLM_API_BASE:-${OPENAI_BASE_URL:-}}"
-  if [ -z "$IBM_THIRD_PARTY_API_KEY" ]; then
-    die "IBM_THIRD_PARTY_API_KEY (or OPENAI_API_KEY) must be set for SPA"
+  # Ensure LLM credentials are available for SPA's provider
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    die "OPENAI_API_KEY must be set (SPA's litellm provider needs it)"
   fi
   nohup bash -c "cd $AGENT_DIR && . .venv/bin/activate && make run" > proxy-agent.log 2>&1 &
   sleep 5
