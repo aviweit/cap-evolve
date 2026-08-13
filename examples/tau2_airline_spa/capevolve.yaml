@@ -1,0 +1,50 @@
+# cap-evolve run spec — optimize tau2 airline via SPA + Skillberry Store.
+#
+# tau2 native runner (airline_skillberry domain). LLM calls routed through
+# Skillberry Proxy-Agent (SPA) → Skillberry Store + upstream LLM.
+#
+# Primitive skill (14 tools) is FROZEN in the store. Optimizer creates NEW
+# composite skills: SKILL.md snippets that SPA translates into system prompt
+# enrichment guiding the agent to orchestrate primitive tools.
+
+# --- what to optimize -------------------------------------------------------
+capabilities: [skill-package]            # composite skills (prompt enrichment via SPA)
+capability_path: seed_capability         # holds the frozen primitive_skill (read-only reference)
+actions: [create]                        # optimizer can only CREATE new composite skills
+capability_sources: []
+
+# --- who proposes edits -----------------------------------------------------
+optimizer_skill: claude-code
+optimizer_model: claude-opus-4-8
+optimizer_max_turns: 100
+optimizer_usd_per_iter: 20.0
+optimizer_instructions_file: examples/tau2_airline_spa/optimizer/INSTRUCTIONS.md
+
+# --- how to iterate ---------------------------------------------------------
+algorithm_skill: hill-climb
+algorithm_focus: all
+
+# --- data + splits ----------------------------------------------------------
+dataset_source: adapter
+split_seed: 0
+split_train: 1.0
+split_val: 1.0
+split_test: 1.0
+split_ids_file: split_ids.json
+
+# --- scoring ----------------------------------------------------------------
+num_trials: 10
+
+# --- acceptance gate --------------------------------------------------------
+gate_mode: paired
+gate_k_se: 0.0
+
+# --- budget -----------------------------------------------------------------
+max_iterations: 5
+stall: 3
+max_metric_calls: 0
+max_usd: 200.0
+max_optimizer_usd: 100.0
+
+# --- iteration store --------------------------------------------------------
+store: git
