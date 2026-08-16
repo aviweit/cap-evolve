@@ -38,6 +38,7 @@ SPA_MODEL_NAME="${SPA_MODEL_NAME:-openai/aws/gpt-oss-120b}"
 
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mSETUP FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
+command -v uv >/dev/null 2>&1 || die "uv is required but not found — install from https://docs.astral.sh/uv/"
 
 # Load repo-root .env into shell (no overwrite of already-exported vars)
 if [ -f "$REPO/.env" ]; then
@@ -122,7 +123,8 @@ if [ ! -d "$STORE_DIR/.git" ]; then
 fi
 cd "$STORE_DIR"
 if [ ! -d ".venv" ]; then
-  python3.11 -m venv .venv || python3 -m venv .venv || die "store venv creation failed"
+  uv venv -p 3.11 .venv || die "could not create Python 3.11 venv for store (is uv installed?)"
+  uv pip install pip --python .venv/bin/python
 fi
 . .venv/bin/activate
 if [ ! -f ".stamps/install-requirements-" ] 2>/dev/null; then
@@ -226,7 +228,8 @@ if [ ! -d "$AGENT_DIR/.git" ]; then
 fi
 cd "$AGENT_DIR"
 if [ ! -d ".venv" ]; then
-  python3.11 -m venv .venv || python3 -m venv .venv || die "agent venv creation failed"
+  uv venv -p 3.11 .venv || die "could not create Python 3.11 venv for agent (is uv installed?)"
+  uv pip install pip --python .venv/bin/python
 fi
 . .venv/bin/activate
 if [ ! -f ".stamps/install-requirements-" ] 2>/dev/null; then
