@@ -191,6 +191,8 @@ def start_spa(skill_name: str) -> None:
 
     env = os.environ.copy()
     env["SKILL_NAME"] = skill_name
+    env.setdefault("SPA_PROVIDER_NAME", "litellm")
+    env.setdefault("SPA_MODEL_NAME", _DEFAULT_USER_MODEL)
     env.setdefault("USE_AGENT_TOOLS", "false")
     env.setdefault("USE_AGENT_PROMPTS", "true")
     env.setdefault("MCP_PROMPTS_POSITION", "postfix")
