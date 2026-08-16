@@ -176,6 +176,11 @@ def stop_spa() -> None:
                 os.kill(int(pid), 9)
     except Exception:
         pass
+    # Remove stale sentinel that would prevent the next make run from starting
+    try:
+        os.remove("/tmp/skillberry-agent-service.pid")
+    except FileNotFoundError:
+        pass
 
 
 def start_spa(skill_name: str) -> None:
