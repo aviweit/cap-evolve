@@ -138,7 +138,7 @@ if ! curl -sf "http://localhost:$STORE_PORT/health" >/dev/null 2>&1; then
   sleep 5
 fi
 cd "$REPO"
-wait_for_port "$STORE_PORT" "skillberry-store"
+wait_for_port "$STORE_PORT" "skillberry-store" 60
 
 # ---------------------------------------------------------------------------
 say "4/7  Start tau2 Environment Manager (port $ENV_MGR_PORT)"
