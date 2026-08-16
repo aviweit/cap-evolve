@@ -194,11 +194,6 @@ def start_spa(skill_name: str) -> None:
     env.setdefault("USE_AGENT_TOOLS", "false")
     env.setdefault("USE_AGENT_PROMPTS", "true")
     env.setdefault("MCP_PROMPTS_POSITION", "postfix")
-    # SPA's litellm.ibm provider needs these
-    if "IBM_THIRD_PARTY_API_KEY" not in env:
-        env["IBM_THIRD_PARTY_API_KEY"] = env.get("OPENAI_API_KEY", "")
-    if "IBM_LITELLM_API_BASE" not in env:
-        env["IBM_LITELLM_API_BASE"] = env.get("OPENAI_BASE_URL", "")
 
     # Must activate the venv — make run includes a verify-venv check.
     cmd = f"cd {spa_dir} && . .venv/bin/activate && make run"
