@@ -23,21 +23,22 @@ export function Hub() {
   })
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const hasLive = !!data?.some((r) => r.status === 'live')
+  const hasLive = !!data?.some((r) => r.status === 'running')
 
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
 
-  // Live runs first, then most-recent.
-  const runs = [...(data ?? [])].sort((a, b) => {
-    if (a.status === 'live' && b.status !== 'live') return -1
-    if (b.status === 'live' && a.status !== 'live') return 1
-    return b.mtime - a.mtime
-  })
+  // Runs that still need attention first (running / awaiting an agent), then recency.
+  const rank = (s: RunSummary['status']) =>
+    s === 'running' ? 0 : s === 'awaiting_agent' ? 1 : 2
+  const runs = [...(data ?? [])].sort(
+    (a, b) => rank(a.status) - rank(b.status) || b.mtime - a.mtime,
+  )
 
   return (
     <AppShell live={hasLive}>
@@ -115,7 +116,15 @@ function RunRow({
   selected: boolean
   onToggle: () => void
 }) {
-  const tone = deltaTone(run.delta_pct)
+  // A relative % is undefined off a zero baseline (every toy_calc run starts at 0.0),
+  // so fall back to the ABSOLUTE Δ rather than leaving the column blank.
+  const deltaLabel =
+    run.delta_pct != null
+      ? signedPct(run.delta_pct)
+      : run.delta_abs != null
+        ? `${run.delta_abs > 0 ? '+' : ''}${run.delta_abs.toFixed(3)}`
+        : '—'
+  const tone = deltaTone(run.delta_pct ?? run.delta_abs)
   return (
     <Card
       className={cn(
@@ -140,17 +149,22 @@ function RunRow({
               </span>
             )}
           </div>
-          <StatusBadge status={run.status} className="mt-1" />
+          <StatusBadge status={run.status} reason={run.status_reason} className="mt-1" />
         </div>
 
-        <Metric label="best" value={pct(run.best_val)} accent />
+        <Metric label="baseline" value={pct(run.baseline_val)} hideOnSm />
+        <Metric label="best val" value={pct(run.best_val)} accent />
+        <Metric label="Δ val" value={deltaLabel} className={TONE_CLASS[tone]} />
+        <Metric label="sealed test" value={pct(run.test_reward)} />
+        <Metric label="cands" value={String(run.iterations)} hideOnSm />
         <Metric
-          label="Δ"
-          value={signedPct(run.delta_pct)}
-          className={TONE_CLASS[tone]}
+          label="cost"
+          value={run.cost_metered === false ? 'n/a' : usd(run.total_usd)}
+          title={run.cost_metered === false
+            ? 'this runner reports no per-call cost — $0 would be a guess, not a measurement'
+            : undefined}
+          hideOnSm
         />
-        <Metric label="iters" value={String(run.iterations)} />
-        <Metric label="cost" value={usd(run.total_usd)} hideOnSm />
         <ArrowUpRight size={16} className="shrink-0 text-muted" aria-hidden />
       </Link>
     </Card>
@@ -163,16 +177,20 @@ function Metric({
   accent,
   className,
   hideOnSm,
+  title,
 }: {
   label: string
   value: string
   accent?: boolean
   className?: string
   hideOnSm?: boolean
+  /** Hover explanation — used to say WHY a value reads "n/a" rather than a number. */
+  title?: string
 }) {
   return (
-    <div className={cn('w-16 text-right', hideOnSm && 'hidden sm:block')}>
-      <div className={cn('tnum text-sm', accent ? 'text-accent' : 'text-foreground', className)}>
+    <div className={cn('w-16 text-right', hideOnSm && 'hidden sm:block')} title={title}>
+      <div className={cn('tnum text-sm', title && !/^[$0-9]/.test(value)
+        ? 'text-muted' : accent ? 'text-accent' : 'text-foreground', className)}>
         {value}
       </div>
       <div className="text-[10px] uppercase tracking-wide text-muted">{label}</div>

@@ -8,6 +8,130 @@ All notable changes to cap-evolve are documented here. The format follows
 [0.1.0]: https://github.com/skillberry-ai/cap-evolve/releases/tag/v0.1.0
 
 ## [Unreleased]
+### Fixed
+- **`agent-optimize`'s gate rejected byte-identical copies of the seed.**
+  `gate_check.regressions()` vetoed on *any* strictly lower per-task reward from *any* parent
+  level, while its docstring claimed to "mirror the harness's no-regression rule exactly".
+  `harness` vetoes only when the parent measured-and-**passed** (`par >= 1.0`), which is what
+  `SKILL.md` specifies — so agent-optimize's gate was silently stricter than every other
+  algorithm's, and uniquely broken above one trial. At `num_trials: 1` rewards are 0/1 and
+  the rules coincide; above that a reward is a fraction and the parent's is frozen from one
+  draw, so a task whose true rate is 0.45 that drew 4/5 vetoes almost any re-measurement of
+  the same capability. Measured P(veto fires on a null edit): 0.983 at 5 trials and 0.990 at
+  10 under the old rule — it got *worse* with more trials — versus 0.428 and 0.129 under the
+  harness rule, which converges. Pinned by a test that compares both rules across every
+  fifth and asserts the harness predicate's source text.
+- **`diagnose` was hardcoded to `rollouts/val`**, making a train split unreachable as a
+  learning surface for all five algorithms. Now takes `--split train|val`, default unchanged,
+  with `test` excluded so the seal cannot be diagnosed against.
+- **`spend.py`/`measure.py` located the run's spec by filename**, so every agent-mode run of
+  a variant spec silently reported `predicates: []` — the entire re-read-your-constraints
+  discipline no-opped without a word.
+- **`commit.py` accepted duplicate candidate ids**, which is how two rejects came to share one
+  set of rollouts (one edit judged on another's evidence). It now refuses a tag that already
+  has an accept/reject event, read from `events.jsonl` so it holds across processes.
+- **`cap-evolve check --project X` checked garbage.** `Path(argv[0])` made the path the
+  literal string `--project`, so the hard gate reported "no adapter" for a project whose
+  adapter was present — a false failure on the one command whose job is to be trustworthy
+  before you spend money.
+- **`cap-evolve run` printed two JSON documents on stdout**, so `| jq` failed. Invisible
+  because the suite runs `--dashboard off`.
+- **Every run leaked a second dashboard server**: `maybe_launch` ran twice and the port
+  helper steps past an occupied port, so the "idempotent" second call spawned another server
+  and reported *that* URL.
+- **`diff --side-by-side` marked the wrong side**, putting `+` in the left column for lines
+  that exist only on the right.
+- **The home screen scrolled and wrapped at 80×24** (36 rows × 88 cols), losing the capybara,
+  tagline and golden path — the branding was exactly what got lost. `home()` is adaptive in
+  both axes now: 19–22 rows at 80×24 with all 14 command names kept, full table at ≥40 rows.
+- **The dashboard could not name the algorithm on a real agent run.** The agent-optimize
+  markers listed event kinds a real run never emits; its distinguishing event is `screen`.
+- **Gate rationales rendered blank** — agent-mode commits record them in `note`, the reducer
+  read only `reason`.
+- **A candidate correctly killed by a cheap screen rendered as a red `failed` badge.** An
+  explicit reject is a recorded verdict even with `val: null`.
+- **Spend read `$0.000` for runs whose runner reports no per-call cost**, presenting missing
+  data as a measurement. Now "not reported", worded so it is true both for a genuinely free
+  zero-API adapter and for real-but-unpriced spend, which the run dir cannot distinguish.
+- Plus: the per-task matrix never read `val_per_task.json`; the sealed test had no baseline
+  to be read against; GEPA's minibatch tab read fields the event never wrote; Compare
+  disagreed with the hub on candidate counts and mixed incomparable splits silently; the
+  Memory tab was a 3,530px wall of harness bookkeeping; `convergence: true` was silently
+  ignored by gepa/skillopt; agent mode drew 23 blank chart rows inside labelled axes; and
+  `export_run_artifacts.sh` collapsed per-trial rollouts so `pass^k` was not real.
+- **The self-contained `dashboard.html` rendered a seventh of its content.**
+  `el.append(svg('text', …)).textContent = x` — `ParentNode.append()` returns `undefined`, so a
+  `TypeError` on the first axis label aborted the inline script and silently dropped the heatmap,
+  diffs, lineage, cost, evaluations and candidates. Measured on one run: 941 → 6,782 characters of
+  rendered body text, zero JS errors. This is why costs and logs were invisible.
+- **Run status was always wrong.** Everything unfinalized collapsed to `"live"`, so a run that died
+  weeks ago reported as running. Now derived from event evidence, with `awaiting_agent` for the
+  agent-mode handoff — which is a normal state, not a failure.
+- **Indecisive verdicts rendered as `rejected`**, conflating "could not measure" with "measured and
+  lost". Now a first-class status that never sets `best_so_far`.
+- **Missing data rendered as confident values**: `pass^k NaN%` (a dict reached a percent
+  formatter), a red `failed` badge for an absent status, and "nothing has been charged yet" for an
+  absent cost ledger. All now degrade to an explicit missing state.
+- **`cap-evolve run --project X` silently read a different project's `capevolve.yaml`**, which
+  also changed `orchestration_mode` and so whether a paid optimizer subprocess ran at all.
+- **Dashboard deep links returned HTTP 404** (`/runs/<id>`, `/compare`) — only in-app navigation
+  worked; a shared link or page refresh broke.
+- `agent-optimize`'s documented gate, commit and copy steps could not run; `check.py` now executes
+  every command the skill documents. Prose budget parsing turned `$1,200` into `$1.00` and
+  `2,000 USD` into `$0.00`.
+
+### Added
+- **Four real τ²-bench airline runs** on `aws/gpt-oss-120b` (agent + user simulator) with
+  `aws/claude-opus-5` proposing edits, committed with `events.jsonl` at
+  `examples/tau2_airline/run_agentopt_v{2,3,4}/`. **All four are null results** — `best_id =
+  seed`, so every delta is 0 *by construction*, and train reached 0.5308 against a 0.90 target.
+  They are kept because the diagnosis is the finding: a byte-identical copy of the seed,
+  measured through the real gate, is rejected. At `num_trials: 1` the run-to-run noise is
+  **1.7× what a single val task flip is worth** (SD 0.1423 vs 0.0833), so no edit of any
+  quality could have been recognised. `num_trials: 5` cut that to SD 0.0479 exactly as
+  predicted (3.0×), which then exposed that `gate_k_se: 0.2` sets a bar ~3.6× *below* the
+  noise floor. Two defects were cancelling: an over-permissive significance bar and an
+  over-strict regression veto. `gate_k_se` was deliberately **not** changed — the right value
+  follows from a measured noise floor, which now exists.
+- **`subsample.full_val_ceiling()`** — when a screen covers every failing val task, the
+  candidate's best *conceivable* full-val mean is computable; if it is below the parent, no
+  full-val eval can accept, so a promote escalates to a **provable** kill. No path to accept.
+- **`commit.py --reject-basis {gate|screen_kill|ceiling|budget|infra}`** — a screen's
+  `decision` is authoritative only as its own statistical verdict ("promote" = could not prove
+  harm, never "reached full val"); the driver's disposition is now a separate machine-readable
+  field, so the audit trail can no longer contradict itself.
+- **A Screens tab** in the dashboard: agent-optimize's cheap-screening mechanism had no
+  representation at all — subset ids, holdout/informative split, and kill/promote decisions
+  were written to disk and never surfaced.
+- **A background music bed for the demo video**, synthesised from a chord table with the
+  stdlib `wave` module (`scripts/demo-video/music.py`) — nothing downloaded, no licence to
+  clear, byte-reproducible, with a `--check` self-test.
+- **`ci/e2e_all_algorithms.sh`** asserts the two algorithm classes differently, because
+  conflating them is how a broken loop hides: the three deterministic algorithms must accept a
+  candidate and seal test at 1.0, while the two agent-mode ones must hand off after baseline
+  with `final.json` absent.
+- **A real CLI surface**: branded home screen, `help <command>` with runnable examples, `init`,
+  `doctor` (readiness check that names the fix for each failure), `algorithms`, and `cap-evolve
+  diff` to read the edit that moved the number. Help was previously one usage line.
+- **An algorithm-agnostic live view and dashboard.** The same panels and tabs for all five
+  algorithms, with per-algorithm extras derived from event kinds that were already emitted and
+  previously ignored. Includes a reconciled cost ledger that reports *unattributed* spend rather
+  than hiding it, and a full event log.
+- **Subset screening for `agent-optimize`** — a cheap tier that can only `kill` or `promote`, never
+  accept; deterministic, recorded, and biased against false kills.
+- `ci/e2e_all_algorithms.sh`, which drives every algorithm end to end on the zero-API example.
+
+### Removed
+- **The evograph dashboard iframe, and with it the `custom_view` extension point.** The
+  weakness graph used to be a separate bundled React app + FastAPI backend
+  (`skills/algorithms/evograph/dashboard/`, `scripts/view.py`) mounted into the main
+  dashboard through `custom_view.py`. Every algorithm now renders in the *same* dashboard
+  with the same visual language, and per-algorithm detail is a first-class tab rather than
+  an embedded document — the weakness graph reads the run dir's `wiki/` directly. This
+  supersedes the `custom_view` mechanism described under 0.1.0 below: an algorithm no
+  longer ships its own view.
+- **The "Insights" panel** and three duplicated cost sections in the static dashboard.
+
 ### Added
 - **Live terminal progress: `cap-evolve run --follow` and `cap-evolve tail` (#116).** A
   classic run was silent for its whole duration — a hung multi-hour run looked exactly
