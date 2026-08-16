@@ -183,10 +183,11 @@ def stop_spa() -> None:
         pass
 
 
-def start_spa(skill_name: str) -> None:
+def start_spa(skill_name: str, *, retries: int = 2) -> None:
     """Start SPA with the given SKILL_NAME.
 
     Runs inside the service's own venv (make run requires an active venv).
+    Retries up to `retries` times on health-check timeout (transient failures).
     """
     spa_dir = _get_spa_dir()
     if not spa_dir or not Path(spa_dir).is_dir():
@@ -202,20 +203,26 @@ def start_spa(skill_name: str) -> None:
     env.setdefault("USE_AGENT_PROMPTS", "true")
     env.setdefault("MCP_PROMPTS_POSITION", "postfix")
 
-    # Must activate the venv — make run includes a verify-venv check.
-    cmd = f"cd {spa_dir} && . .venv/bin/activate && make run"
-    subprocess.Popen(
-        ["bash", "-c", cmd],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
     port = os.environ.get("SKILLBERRY_AGENT_PORT", SPA_PORT)
-    if not _wait_for_health(port, timeout=60):
-        raise RuntimeError(
-            f"SPA failed to start with SKILL_NAME={skill_name} on port {port}"
+    cmd = f"cd {spa_dir} && . .venv/bin/activate && make run"
+
+    for attempt in range(1 + retries):
+        subprocess.Popen(
+            ["bash", "-c", cmd],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        if _wait_for_health(port, timeout=60):
+            return
+        if attempt < retries:
+            stop_spa()
+            time.sleep(3)
+
+    raise RuntimeError(
+        f"SPA failed to start with SKILL_NAME={skill_name} on port {port} "
+        f"after {1 + retries} attempts"
+    )
 
 
 def restart_spa(skill_name: str) -> None:
