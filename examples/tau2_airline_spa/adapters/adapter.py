@@ -379,17 +379,23 @@ class Adapter(CapabilityAdapter):
         ]
 
         if not skill_dirs:
-            return
+            if candidate_dir.name == "seed":
+                return
+            raise RuntimeError(
+                f"No valid composite skill found in {candidate_dir} "
+                "(expected a subdirectory with SKILL.md)"
+            )
 
         # Upload each composite skill to the store
         for skill_dir in skill_dirs:
-            spa_env.upload_skill(skill_dir)
+            if not spa_env.upload_skill(skill_dir):
+                raise RuntimeError(
+                    f"Failed to upload skill {skill_dir.name} to store"
+                )
 
-        # Restart SPA with the last (newest) composite skill
         skill_name = skill_dirs[-1].name
-        if skill_name != Adapter._current_skill_name:
-            spa_env.restart_spa(skill_name)
-            Adapter._current_skill_name = skill_name
+        spa_env.restart_spa(skill_name)
+        Adapter._current_skill_name = skill_name
 
     # ---- gold-safe feedback builder --------------------------------------
 
