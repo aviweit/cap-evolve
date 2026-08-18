@@ -314,6 +314,28 @@ def _delete_object(kind: str, uuid: str) -> bool:
     return status in (200, 204, 404)
 
 
+def _list(kind: str, tags: "str | None" = None) -> list:
+    """GET /<kind>/ and return the rows as a list of dicts.
+
+    The store returns a BARE LIST when neither ``limit`` nor ``offset`` is passed,
+    and an ``{items, total, offset, limit}`` envelope otherwise; both are handled.
+    Returns [] if the store cannot be reached.
+    """
+    import json
+
+    q = f"?fields=wide" + (f"&tags={tags}" if tags else "")
+    status, body = _curl(["-X", "GET", _store_url(f"/{kind}/{q}")])
+    if status != 200:
+        return []
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        data = data.get("items") or data.get(kind) or []
+    return [r for r in data if isinstance(r, dict)] if isinstance(data, list) else []
+
+
 def _primitive_names() -> set:
     """Names of every tool currently tagged ``primitive-tool`` in the store.
 
@@ -321,21 +343,64 @@ def _primitive_names() -> set:
     empty set if the store cannot be reached, in which case the caller skips the
     comparison rather than reporting a false alarm.
     """
-    import json
+    return {str(r["name"]) for r in _list("tools", tags=PRIMITIVE_TAG) if r.get("name")}
 
-    status, body = _curl(
-        ["-X", "GET", _store_url(f"/tools/?tags={PRIMITIVE_TAG}&fields=wide")]
-    )
-    if status != 200:
-        return set()
-    try:
-        data = json.loads(body)
-    except Exception:
-        return set()
-    rows = data.get("tools") if isinstance(data, dict) else data
-    if not isinstance(rows, list):
-        return set()
-    return {str(r.get("name")) for r in rows if isinstance(r, dict) and r.get("name")}
+
+def purge_non_primitive_content() -> bool:
+    """Delete every tool that is not a frozen primitive, and every snippet.
+
+    Call this only AFTER the skill has been deleted: at that point any surviving
+    non-primitive tool is an orphan (a wrapper from an earlier run whose skill is
+    gone), and orphans are harmful — they linger in the store, pollute listings,
+    and make name-based dependency resolution ambiguous for the next import.
+
+    Primitives are protected by ``_is_protected`` and are never touched. Tools whose
+    metadata cannot be read are left alone (fail closed).
+    """
+    ok = True
+    for row in _list("tools"):
+        uuid = row.get("uuid")
+        if not uuid or _is_protected(row):
+            continue
+        ok &= _delete_object("tool", uuid)
+    for row in _list("snippets"):
+        uuid = row.get("uuid")
+        if uuid:
+            ok &= _delete_object("snippet", uuid)
+    return ok
+
+
+def reset_store_to_skill(skill_dir: "str | Path", skill_name: str = SKILL_NAME) -> None:
+    """Make ``skill_dir`` the ONLY skill in the store, from a clean slate.
+
+    This is the single entry point used before every evaluation, so each run —
+    starting with the baseline, which is handed the seed — begins against a store
+    that holds exactly the frozen primitives plus this one skill:
+
+      1. delete the current skill together with its own tools and snippets
+      2. purge any leftover non-primitive tools/snippets (orphans from prior runs)
+      3. import ``skill_dir`` fresh
+      4. verify the frozen primitives are all still present
+
+    Raises RuntimeError if any step fails, so a corrupt store stops the run instead
+    of silently scoring a wrong tool set.
+    """
+    skill_dir = Path(skill_dir)
+    before = _primitive_names()
+
+    if not delete_skill(skill_name):
+        raise RuntimeError(f"could not remove existing skill {skill_name} from the store")
+    if not purge_non_primitive_content():
+        raise RuntimeError("could not purge leftover non-primitive tools/snippets")
+    if not upload_skill(skill_dir):
+        raise RuntimeError(f"could not import skill from {skill_dir}")
+
+    after = _primitive_names()
+    if before and not before.issubset(after):
+        raise RuntimeError(
+            f"frozen primitive tools disappeared during reset: {sorted(before - after)}. "
+            "Re-run setup.sh to re-import them."
+        )
 
 
 def delete_skill(skill_name: str = SKILL_NAME) -> bool:

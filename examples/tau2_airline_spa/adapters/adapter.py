@@ -370,16 +370,22 @@ class Adapter(CapabilityAdapter):
         There is exactly ONE skill in the store. The optimizer modifies it in
         place, so deploying a candidate means replacing it:
 
-        1. Write edits to candidate_dir (pure) if any.
-        2. DELETE the existing ``airline_skill`` along with ALL of its tools and
-           snippets, so no stale wrapper survives a candidate that removed or
-           renamed one (see spa_env.delete_skill — the store's own cascade cannot
-           do this and silently leaves the tools behind).
-        3. Import the candidate's ``airline_skill/`` via POST /skills/import-anthropic.
-        4. Restart SPA with SKILL_NAME=airline_skill.
+        Because cap-evolve calls ``live()`` -> ``apply()`` before EVERY evaluation,
+        and the baseline is handed the seed, this is also what guarantees that each
+        ``cap-evolve run`` starts against a store refreshed from the seed skill.
 
-        The frozen primitive tools are standalone in the store and belong to no
-        skill manifest, so step 2 never touches them.
+        1. Write edits to candidate_dir (pure) if any.
+        2. Refresh the store via spa_env.reset_store_to_skill:
+           a. DELETE ``airline_skill`` with ALL of its tools and snippets, so no
+              stale wrapper survives a candidate that removed or renamed one (the
+              store's own cascade cannot do this — it silently leaves tools behind).
+           b. Purge leftover non-primitive tools/snippets orphaned by earlier runs.
+           c. Import the candidate's ``airline_skill/`` fresh.
+           d. Verify every frozen primitive is still present.
+        3. Restart SPA with SKILL_NAME=airline_skill.
+
+        The frozen primitive tools are standalone in the store, belong to no skill
+        manifest, and are additionally tag-guarded, so step 2 never touches them.
         """
         if edits:
             self.materialize(candidate_dir, edits)
@@ -393,12 +399,10 @@ class Adapter(CapabilityAdapter):
                 f"candidate must contain the single {SKILL_NAME}/ skill package"
             )
 
-        if not spa_env.delete_skill(SKILL_NAME):
-            raise RuntimeError(
-                f"Failed to delete existing skill {SKILL_NAME} from the store"
-            )
-        if not spa_env.upload_skill(skill_dir):
-            raise RuntimeError(f"Failed to upload skill {SKILL_NAME} to store")
+        # Full refresh: drop the current skill (its tools + snippets), purge any
+        # orphans left by earlier runs, then import this candidate. Raises if the
+        # store ends up inconsistent or a frozen primitive went missing.
+        spa_env.reset_store_to_skill(skill_dir, SKILL_NAME)
 
         spa_env.restart_spa(SKILL_NAME)
         Adapter._current_skill_name = SKILL_NAME
