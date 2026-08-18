@@ -5,7 +5,8 @@
 # --- what to optimize -------------------------------------------------------
 capabilities: [skill-package]
 capability_path: seed_capability
-actions: [create]
+actions: [modify]                        # optimizer MODIFIES the single airline_skill in place
+skill_name: airline_skill                # the one skill in the store; never renamed
 capability_sources: []
 
 # --- who proposes edits -----------------------------------------------------

@@ -1,9 +1,10 @@
 """Project adapter — optimize tau2-bench AIRLINE via SPA + Skillberry Store.
 
 Wires cap-evolve to the tau2 airline domain with LLM calls routed through
-Skillberry Proxy-Agent (SPA). Primitive tools (14 functions) are frozen in the
-store. The optimizer creates NEW composite skills whose SKILL.md snippets SPA
-translates into system prompt enrichment.
+Skillberry Proxy-Agent (SPA). The 14 primitive tools are frozen STANDALONE tools
+in the store. Exactly ONE skill — ``airline_skill`` — is loaded and served to the
+agent; the optimizer modifies it in place (SKILL.md prompt enrichment plus the
+wrapper/composite tools under scripts/).
 
   * ``tasks``      -> all 50 airline tasks (stable, non-empty for every split).
   * ``run_batch``  -> tau2's own batch runner (``run_tasks``) with LLM calls
@@ -11,8 +12,9 @@ translates into system prompt enrichment.
   * ``run_target`` -> thin wrapper over ``run_batch`` for one task.
   * ``score``      -> tau2's own reward in [0,1] (deterministic given a rollout);
                       gold-AWARE but gold-SAFE, ARGUMENT-LEVEL feedback.
-  * ``apply``      -> uploads the candidate's composite skill to the store,
-                      restarts SPA with SKILL_NAME=<candidate>, waits for health.
+  * ``apply``      -> deletes + re-imports the candidate's ``airline_skill`` in the
+                      store, restarts SPA with SKILL_NAME=airline_skill, waits
+                      for health. Frozen primitives are never touched.
 
 ``cap-evolve check`` does NO live LLM call: ``tasks``/``score``/``materialize``
 are network-free, and SPA endpoint resolution is lazy.
@@ -34,6 +36,9 @@ from cap_evolve import CapabilityAdapter, Rollout, Score, Task
 import spa_env
 
 DOMAIN = "airline_skillberry"
+
+# The one skill in the store, modified in place by the optimizer.
+SKILL_NAME = spa_env.SKILL_NAME
 
 TAU2_LOG_DIR = Path(os.environ.get("TAU2_LOG_DIR", "/tmp"))
 
@@ -94,7 +99,7 @@ def _shown_metrics(reward: float, reward_info: dict, rollout) -> list:
 
 class Adapter(CapabilityAdapter):
 
-    _current_skill_name: str | None = None
+    _current_skill_name: str = SKILL_NAME  # fixed: there is only ever one skill
     _last_sim_path: "Path | None" = None   # set by run_batch/run_trials; read by trajectories()
 
     # ---- tasks -----------------------------------------------------------
@@ -360,42 +365,43 @@ class Adapter(CapabilityAdapter):
     # ---- making a candidate live ----------------------------------------
 
     def apply(self, candidate_dir, edits=None) -> None:
-        """Deploy the candidate's composite skill: upload to store, restart SPA.
+        """Deploy the candidate's ``airline_skill``: re-import it, restart SPA.
+
+        There is exactly ONE skill in the store. The optimizer modifies it in
+        place, so deploying a candidate means replacing it:
 
         1. Write edits to candidate_dir (pure) if any.
-        2. Find the new composite skill sub-package(s) in candidate_dir.
-        3. Upload each to the store via POST /skills/import-anthropic.
-        4. Restart SPA with SKILL_NAME=<composite_skill_name>.
+        2. DELETE the existing ``airline_skill`` along with ALL of its tools and
+           snippets, so no stale wrapper survives a candidate that removed or
+           renamed one (see spa_env.delete_skill — the store's own cascade cannot
+           do this and silently leaves the tools behind).
+        3. Import the candidate's ``airline_skill/`` via POST /skills/import-anthropic.
+        4. Restart SPA with SKILL_NAME=airline_skill.
+
+        The frozen primitive tools are standalone in the store and belong to no
+        skill manifest, so step 2 never touches them.
         """
         if edits:
             self.materialize(candidate_dir, edits)
 
         candidate_dir = Path(candidate_dir)
+        skill_dir = candidate_dir / SKILL_NAME
 
-        # Find composite skill dirs (those with SKILL.md, excluding the frozen primitive_skill)
-        skill_dirs = [
-            d for d in sorted(candidate_dir.iterdir())
-            if d.is_dir() and (d / "SKILL.md").exists() and d.name != "primitive_skill"
-        ]
-
-        if not skill_dirs:
-            if candidate_dir.name == "seed":
-                return
+        if not (skill_dir / "SKILL.md").exists():
             raise RuntimeError(
-                f"No valid composite skill found in {candidate_dir} "
-                "(expected a subdirectory with SKILL.md)"
+                f"{SKILL_NAME}/SKILL.md not found under {candidate_dir} — the "
+                f"candidate must contain the single {SKILL_NAME}/ skill package"
             )
 
-        # Upload each composite skill to the store
-        for skill_dir in skill_dirs:
-            if not spa_env.upload_skill(skill_dir):
-                raise RuntimeError(
-                    f"Failed to upload skill {skill_dir.name} to store"
-                )
+        if not spa_env.delete_skill(SKILL_NAME):
+            raise RuntimeError(
+                f"Failed to delete existing skill {SKILL_NAME} from the store"
+            )
+        if not spa_env.upload_skill(skill_dir):
+            raise RuntimeError(f"Failed to upload skill {SKILL_NAME} to store")
 
-        skill_name = skill_dirs[-1].name
-        spa_env.restart_spa(skill_name)
-        Adapter._current_skill_name = skill_name
+        spa_env.restart_spa(SKILL_NAME)
+        Adapter._current_skill_name = SKILL_NAME
 
     # ---- gold-safe feedback builder --------------------------------------
 

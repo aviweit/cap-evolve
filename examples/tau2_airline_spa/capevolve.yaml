@@ -3,14 +3,16 @@
 # tau2 native runner (airline_skillberry domain). LLM calls routed through
 # Skillberry Proxy-Agent (SPA) → Skillberry Store + upstream LLM.
 #
-# Primitive skill (14 tools) is FROZEN in the store. Optimizer creates NEW
-# composite skills: SKILL.md snippets that SPA translates into system prompt
-# enrichment guiding the agent to orchestrate primitive tools.
+# The 14 primitive tools are FROZEN standalone tools in the store (imported from
+# seed_capability/primitive_tools/functions.py, tagged `primitive-tool`). There is
+# exactly ONE skill — `airline_skill` — which the optimizer modifies in place:
+# its SKILL.md becomes SPA prompt enrichment and its scripts/ become the tool set.
 
 # --- what to optimize -------------------------------------------------------
-capabilities: [skill-package]            # composite skills (prompt enrichment via SPA)
-capability_path: seed_capability         # holds the frozen primitive_skill (read-only reference)
-actions: [create]                        # optimizer can only CREATE new composite skills
+capabilities: [skill-package]            # the single airline_skill (tools + prompt enrichment via SPA)
+capability_path: seed_capability         # holds airline_skill/ (editable) + primitive_tools/ (frozen)
+actions: [modify]                        # optimizer MODIFIES the single airline_skill in place
+skill_name: airline_skill                # the one skill in the store; never renamed
 capability_sources: []
 
 # --- who proposes edits -----------------------------------------------------

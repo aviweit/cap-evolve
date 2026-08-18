@@ -1,3 +1,53 @@
+"""tau2 airline PRIMITIVE TOOLS — the constant, frozen tool set.
+
+This module is imported into the Skillberry Store as STANDALONE tools (not a
+skill) by ``setup.sh``, mirroring the ``import-primitive-tools`` target in
+skillberry-benchmarks/tau2/Makefile.
+
+DO NOT MODIFY. The optimizer never touches this file. Every public function here
+becomes one store tool tagged ``primitive-tool``.
+
+``_make_api_call`` is an internal helper: because the importer's AST filter skips
+any function whose name starts with ``_``, it is NEVER registered as a store
+tool. It resolves the primitive's name from the calling frame, so it must only
+ever be called directly from a primitive defined in this module.
+"""
+
+import inspect
+import json
+
+import requests
+
+# Define the URL. ``env_id`` is injected by the store's executor at the top of
+# the generated module, before this code is concatenated in.
+base_url = "http://127.0.0.1:8004"
+tools_url = f"{base_url}/{env_id}/tools"  # noqa: F821 — env_id injected by executor
+
+
+def _make_api_call(**kwargs):
+    """Helper function to make API calls with consistent structure."""
+    method_name = inspect.currentframe().f_back.f_code.co_name
+    headers = {"Content-Type": "application/json"}
+    url = f"{tools_url}/{method_name}"
+    response = requests.post(
+        url, json={"name": method_name, "arguments": kwargs}, headers=headers
+    )
+
+    if response.status_code != 200:
+        raise requests.exceptions.HTTPError(
+            f"HTTP {response.status_code}: {response.text}"
+        )
+
+    result = response.json()
+    # Tau2 environment manager stores the response as flattened json string inside
+    # "content" key. However, on a failure - content key is a string containing
+    # the error message.
+    try:
+        return json.loads(result["content"])
+    except (json.JSONDecodeError, TypeError):
+        return result["content"]
+
+
 def book_reservation(
     user_id: str,
     origin: str,
@@ -201,7 +251,9 @@ def update_reservation_baggages(
     )
 
 
-def update_reservation_flights(reservation_id: str, cabin: str, flights: str, payment_id: str):
+def update_reservation_flights(
+    reservation_id: str, cabin: str, flights: str, payment_id: str
+):
     """
     Update the flight information of a reservation.
 

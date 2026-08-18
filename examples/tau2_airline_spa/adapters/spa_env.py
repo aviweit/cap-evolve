@@ -4,9 +4,15 @@ Replaces the RITS module from the original tau2_airline example. Points tau2's
 litellm calls at SPA (localhost:7000) for the agent, while the user simulator
 calls the upstream LLM directly via OPENAI_BASE_URL.
 
-Provides service lifecycle helpers: restart_spa(skill_name) stops SPA, sets
-SKILL_NAME, restarts, and waits for the health check — used by adapter.apply()
-before each evaluation.
+Provides service lifecycle helpers: restart_spa() stops SPA, sets SKILL_NAME,
+restarts, and waits for the health check — used by adapter.apply() before each
+evaluation.
+
+Store helpers: delete_skill() removes the single skill together with ALL of its
+tools and snippets, so upload_skill() can re-import the optimizer's modified
+version under the same name without orphaning anything. The frozen primitive
+tools are never touched — they belong to no skill manifest, and a tag check
+guards them regardless.
 
 LAZY: no network at import time, so ``cap-evolve check`` stays offline.
 """
@@ -26,6 +32,10 @@ _DEFAULT_USER_MODEL = "openai/aws/gpt-oss-120b"
 # Ports
 SPA_PORT = "7000"
 STORE_PORT = "8000"
+
+# The one and only skill in the store. Never renamed — the optimizer modifies it
+# in place, and apply() always deletes + re-imports it under this exact name.
+SKILL_NAME = "airline_skill"
 
 _SPA_DIR: Optional[str] = None
 _STORE_DIR: Optional[str] = None
@@ -183,7 +193,7 @@ def stop_spa() -> None:
         pass
 
 
-def start_spa(skill_name: str, *, retries: int = 2) -> None:
+def start_spa(skill_name: str = SKILL_NAME, *, retries: int = 2) -> None:
     """Start SPA with the given SKILL_NAME.
 
     Runs inside the service's own venv (make run requires an active venv).
@@ -225,8 +235,8 @@ def start_spa(skill_name: str, *, retries: int = 2) -> None:
     )
 
 
-def restart_spa(skill_name: str) -> None:
-    """Stop SPA, then restart with a new SKILL_NAME."""
+def restart_spa(skill_name: str = SKILL_NAME) -> None:
+    """Stop SPA, then restart it so it re-reads the skill from the store."""
     stop_spa()
     time.sleep(2)
     start_spa(skill_name)
@@ -237,18 +247,195 @@ def restart_spa(skill_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _store_url(path: str) -> str:
+    """Absolute store URL for a path like ``/skills/airline_skill``."""
+    port = os.environ.get("SKILLBERRY_STORE_PORT", STORE_PORT)
+    return f"http://localhost:{port}{path}"
+
+
+PRIMITIVE_TAG = "primitive-tool"
+
+# The frozen primitive tools. These are imported standalone from
+# seed_capability/primitive_tools/functions.py and MUST NEVER be deleted or
+# modified — every wrapper in airline_skill depends on them. Belt-and-braces:
+# a tool is protected if it carries the tag, OR its name is in this set, OR it
+# came from the primitive module. Any one match is enough to spare it.
+PRIMITIVE_MODULE = "functions.py"
+PRIMITIVE_TOOL_NAMES = frozenset({
+    "book_reservation",
+    "calculate",
+    "cancel_reservation",
+    "get_reservation_details",
+    "get_user_details",
+    "list_all_airports",
+    "search_direct_flight",
+    "search_onestop_flight",
+    "send_certificate",
+    "update_reservation_baggages",
+    "update_reservation_flights",
+    "update_reservation_passengers",
+    "get_flight_status",
+    "transfer_to_human_agents",
+})
+
+
+def _is_protected(tool: dict) -> bool:
+    """True if this tool is a frozen primitive and must never be deleted."""
+    if PRIMITIVE_TAG in (tool.get("tags") or []):
+        return True
+    if str(tool.get("name") or "") in PRIMITIVE_TOOL_NAMES:
+        return True
+    if str(tool.get("module_name") or "") == PRIMITIVE_MODULE:
+        return True
+    return False
+
+
+def _curl(args: list[str], timeout: int = 60) -> "tuple[int, str]":
+    """Run curl and return (http_status, body). Status -1 means curl itself failed."""
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "-w", "\n%{http_code}", *args],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except Exception:
+        return -1, ""
+    if result.returncode != 0:
+        return -1, result.stdout
+    body, _, status = result.stdout.rpartition("\n")
+    try:
+        return int(status.strip()), body
+    except ValueError:
+        return -1, body
+
+
+def _delete_object(kind: str, uuid: str) -> bool:
+    """DELETE /<kind>s/<uuid>. A 404 counts as already gone."""
+    status, _ = _curl(["-X", "DELETE", _store_url(f"/{kind}s/{uuid}")])
+    return status in (200, 204, 404)
+
+
+def _primitive_names() -> set:
+    """Names of every tool currently tagged ``primitive-tool`` in the store.
+
+    Used as a before/after tripwire around destructive operations. Returns an
+    empty set if the store cannot be reached, in which case the caller skips the
+    comparison rather than reporting a false alarm.
+    """
+    import json
+
+    status, body = _curl(
+        ["-X", "GET", _store_url(f"/tools/?tags={PRIMITIVE_TAG}&fields=wide")]
+    )
+    if status != 200:
+        return set()
+    try:
+        data = json.loads(body)
+    except Exception:
+        return set()
+    rows = data.get("tools") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return set()
+    return {str(r.get("name")) for r in rows if isinstance(r, dict) and r.get("name")}
+
+
+def delete_skill(skill_name: str = SKILL_NAME) -> bool:
+    """Delete a skill together with ALL of its tools and snippets.
+
+    Ordering matters, and the store's own cascade cannot be used:
+
+    ``DELETE /skills/<name>?delete_tools=true`` runs its tool cascade while the
+    skill is STILL registered as a dependent of its own tools, so every
+    ``tools_service.delete`` raises ``ObjectInUseError``, which the cascade
+    swallows as a warning. The skill goes away, the tools silently survive, and
+    ``deleted_tools`` comes back empty. Re-importing then mints fresh UUIDs under
+    the same names, orphaning the originals — ~14 stale tools per iteration.
+
+    So we do it in the order that works:
+      1. GET the manifest to collect ``tool_uuids`` / ``snippet_uuids``
+      2. DELETE the skill (no cascade) — this frees the dependency
+      3. DELETE each tool and snippet, now that nothing depends on them
+
+    Primitives are NEVER deleted. They belong to no skill manifest so they should
+    not appear here at all, but the checks are deliberately paranoid: a tool is
+    spared if ``_is_protected`` matches, and — critically — it is also spared when
+    its metadata cannot be read. Unknown means keep (fail closed): we would rather
+    leak a stale wrapper than delete a primitive. The primitive set is re-verified
+    after the deletions and the call fails if any went missing.
+
+    A missing skill (404) is success — callers always delete-then-import.
+
+    Returns True if the skill and all of its own tools/snippets are gone AND every
+    primitive is still present.
+    """
+    import json
+
+    before = _primitive_names()
+
+    # 1. Read the manifest before removing it.
+    status, body = _curl(["-X", "GET", _store_url(f"/skills/{skill_name}?fields=wide")])
+    if status == 404:
+        return True                        # nothing in the store yet
+    if status != 200:
+        return False
+    try:
+        manifest = json.loads(body)
+    except Exception:
+        return False
+    tool_uuids = list(manifest.get("tool_uuids") or [])
+    snippet_uuids = list(manifest.get("snippet_uuids") or [])
+
+    # Decide what may be deleted BEFORE touching anything. Fail closed: a tool
+    # whose metadata we cannot read is treated as protected.
+    deletable: list[str] = []
+    for tu in tool_uuids:
+        t_status, t_body = _curl(["-X", "GET", _store_url(f"/tools/{tu}?fields=wide")])
+        if t_status != 200:
+            continue                       # unreadable -> keep
+        try:
+            tool = json.loads(t_body)
+        except Exception:
+            continue                       # unparseable -> keep
+        if _is_protected(tool):
+            continue                       # primitive -> keep
+        deletable.append(tu)
+
+    # 2. Delete the skill itself — releases its hold on the tools/snippets.
+    status, _ = _curl(["-X", "DELETE", _store_url(f"/skills/{skill_name}")])
+    if status not in (200, 204, 404):
+        return False
+
+    # 3. Now the tools and snippets can actually be removed.
+    ok = True
+    for tu in deletable:
+        ok &= _delete_object("tool", tu)
+    for su in snippet_uuids:
+        ok &= _delete_object("snippet", su)
+
+    # 4. Verify we did not disturb the frozen primitives.
+    after = _primitive_names()
+    if before and not before.issubset(after):
+        missing = sorted(before - after)
+        raise RuntimeError(
+            f"delete_skill({skill_name}) removed frozen primitive tools: {missing}. "
+            "The store is now inconsistent — re-run setup.sh to re-import them."
+        )
+    return ok
+
+
 def upload_skill(skill_dir: str | Path) -> bool:
-    """Upload a skill directory to the store via POST /skills/import-anthropic.
+    """Import a skill directory into the store via POST /skills/import-anthropic.
+
+    Each ``.py`` file under ``scripts/`` becomes one store tool; the store
+    auto-detects each tool's dependency on the primitive it calls by bare name.
+    The primitives must already be registered (setup.sh does this) so they are in
+    the store's known-name set when the wrappers are imported.
 
     Returns True on success, False on failure.
     """
     skill_dir = str(Path(skill_dir).resolve())
-    port = os.environ.get("SKILLBERRY_STORE_PORT", STORE_PORT)
-    url = f"http://localhost:{port}/skills/import-anthropic"
+    url = _store_url("/skills/import-anthropic")
 
     try:
-        import urllib.request
-        import urllib.parse
         import json
 
         # Use subprocess + curl for multipart form upload (simpler than urllib multipart)
@@ -259,7 +446,7 @@ def upload_skill(skill_dir: str | Path) -> bool:
                 "-F", f"folder_path={skill_dir}",
                 "-F", "snippet_mode=file",
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
             try:

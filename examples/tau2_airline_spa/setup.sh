@@ -3,7 +3,8 @@
 # for optimization.
 #
 # This sets up the full SPA stack: Skillberry Store + Skillberry Proxy-Agent +
-# tau2 Environment Manager, imports primitive tools, and verifies the adapter.
+# tau2 Environment Manager, imports the frozen primitive tools as standalone
+# store tools, imports the single `airline_skill`, and verifies the adapter.
 #
 #   bash examples/tau2_airline_spa/setup.sh
 #
@@ -68,6 +69,37 @@ wait_for_port(){
     sleep 5
   done
   die "$name failed to start on port $port"
+}
+
+port_is_listening(){
+  local port="$1"
+  lsof -Pi :"$port" -sTCP:LISTEN -t >/dev/null 2>&1 && return 0
+  # Fallback when lsof is unavailable: any HTTP answer means the port is bound.
+  curl -s -o /dev/null -m 2 "http://127.0.0.1:$port/docs" && return 0
+  return 1
+}
+
+# Wait for a background service to bind its port. Unlike wait_for_port this also
+# watches the PID, so a process that dies during startup fails immediately with
+# its log instead of stalling for the whole timeout.
+wait_for_listen(){
+  local port="$1" name="$2" pid="$3" log="$4" max="${5:-30}"
+  for i in $(seq 1 "$max"); do
+    if port_is_listening "$port"; then
+      echo "  ✓ $name listening on port $port"
+      return 0
+    fi
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      echo "  $name process exited during startup. Log:"
+      tail -40 "$log" 2>/dev/null || true
+      die "$name died before binding port $port"
+    fi
+    echo "  waiting for $name to bind port $port... (attempt $i/$max)"
+    sleep 2
+  done
+  echo "  $name log:"
+  tail -40 "$log" 2>/dev/null || true
+  die "$name failed to bind port $port after $((max * 2))s"
 }
 
 # ---------------------------------------------------------------------------
@@ -144,12 +176,16 @@ wait_for_port "$STORE_PORT" "skillberry-store" 60
 
 # ---------------------------------------------------------------------------
 say "4/7  Start tau2 Environment Manager (port $ENV_MGR_PORT)"
-if lsof -Pi :"$ENV_MGR_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
+if port_is_listening "$ENV_MGR_PORT"; then
   echo "  ✓ env manager already running on port $ENV_MGR_PORT"
 else
   echo "  starting env manager..."
-  # tau2 is installed in cap-evolve's venv; start the EnvironmentManager inline
-  nohup "$PY" -c "
+  # tau2 is installed in cap-evolve's venv; start the EnvironmentManager inline.
+  # Startup is slow (~10s): importing tau2 pulls in litellm, which tries to fetch
+  # its remote model-cost map and can stall until that request times out, then the
+  # domain/agent registry is built. Poll for the port rather than sleeping a fixed
+  # interval. LITELLM_LOCAL_MODEL_COST_MAP skips the doomed remote fetch entirely.
+  LITELLM_LOCAL_MODEL_COST_MAP=True nohup "$PY" -c "
 import asyncio
 from tau2.orchestrator.environment_manager import EnvironmentManager
 
@@ -159,63 +195,83 @@ async def runner():
 
 asyncio.run(runner())
 " > "$REPO/env_manager.log" 2>&1 &
-  sleep 5
-  if ! lsof -Pi :"$ENV_MGR_PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
-    echo "  env manager log:"
-    tail -20 "$REPO/env_manager.log" 2>/dev/null || true
-    die "env manager failed to start on port $ENV_MGR_PORT"
-  fi
-  echo "  ✓ env manager started on port $ENV_MGR_PORT"
+  ENV_MGR_PID=$!
+  wait_for_listen "$ENV_MGR_PORT" "env manager" "$ENV_MGR_PID" "$REPO/env_manager.log" 45
 fi
 
 # ---------------------------------------------------------------------------
-say "5/7  Purge store + import primitive tools (14 functions)"
+say "5/7  Purge store + import primitive tools, then the single airline_skill"
 # Purge
 curl -s -X DELETE "http://localhost:$STORE_PORT/admin/purge-all" >/dev/null 2>&1 || true
 echo "  store purged"
 
-# Import primitive tools from the seed_capability
-PRIM_TOOLS="$EX_DIR/seed_capability/primitive_skill/scripts/tau2_primitive_functions.py"
-if [ ! -f "$PRIM_TOOLS" ]; then
-  die "primitive tools file not found: $PRIM_TOOLS"
-fi
+# --- 5a. Primitive tools: constant, standalone, tagged `primitive-tool` -------
+# Mirrors the `import-primitive-tools` target in skillberry-benchmarks/tau2/Makefile.
+# These are NOT a skill. They are never modified by the optimizer.
+PRIM_TOOLS="$EX_DIR/seed_capability/primitive_tools/functions.py"
+[ -f "$PRIM_TOOLS" ] || die "primitive tools file not found: $PRIM_TOOLS"
 
-# Extract public function names
-FUNC_NAMES=$("$PY" -c "
-import ast, sys
-with open('$PRIM_TOOLS') as f:
-    tree = ast.parse(f.read())
-funcs = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and not n.name.startswith('_')]
-print(' '.join(funcs))
-") || die "failed to parse primitive tools"
+# Extract PUBLIC function names only — this is what excludes `_make_api_call`,
+# which stays an internal helper of the primitives and never becomes a tool.
+FUNC_NAMES=$("$PY" "$EX_DIR/scripts/extract_functions.py" "$PRIM_TOOLS") \
+  || die "failed to parse primitive tools"
+[ -n "$FUNC_NAMES" ] || die "no public functions found in $PRIM_TOOLS"
 
 TOOL_COUNT=0
+FAILED_COUNT=0
 for func_name in $FUNC_NAMES; do
   RESPONSE=$(curl -s -X POST \
     "http://localhost:$STORE_PORT/tools/add?selected_func=$func_name&update=true" \
     -F "tool=@$PRIM_TOOLS" 2>&1)
   if echo "$RESPONSE" | grep -q '"uuid"'; then
     TOOL_COUNT=$((TOOL_COUNT + 1))
+    # Tag it `primitive-tool`: GET -> set tags -> PUT
+    TOOL_DATA=$(curl -s -X GET "http://localhost:$STORE_PORT/tools/$func_name" 2>&1)
+    if echo "$TOOL_DATA" | grep -q '"name"'; then
+      UPDATED=$(printf '%s' "$TOOL_DATA" | "$PY" -c \
+        "import sys,json; d=json.load(sys.stdin); d['tags']=['primitive-tool']; print(json.dumps(d))" 2>/dev/null)
+      if [ -n "$UPDATED" ]; then
+        printf '%s' "$UPDATED" | curl -s -X PUT \
+          "http://localhost:$STORE_PORT/tools/$func_name" \
+          -H "Content-Type: application/json" -d @- >/dev/null 2>&1 \
+          || echo "  ⚠ could not tag $func_name"
+      fi
+    fi
   else
     echo "  ⚠ failed to import $func_name"
+    FAILED_COUNT=$((FAILED_COUNT + 1))
   fi
 done
-echo "  ✓ imported $TOOL_COUNT primitive tools"
+echo "  ✓ imported $TOOL_COUNT primitive tools (tagged primitive-tool)"
 [ "$TOOL_COUNT" -gt 0 ] || die "no primitive tools imported"
+[ "$FAILED_COUNT" -eq 0 ] || die "$FAILED_COUNT primitive tool(s) failed to import"
 
-# Import primitive_skill as a skill package so SPA can serve it
-PRIM_SKILL_DIR="$EX_DIR/seed_capability/primitive_skill"
-echo "  importing primitive_skill..."
+# --- 5b. The single skill: airline_skill -------------------------------------
+# Imported AFTER the primitives so the store can auto-detect each wrapper's
+# dependency on the primitive it calls by bare name.
+SKILL_DIR="$EX_DIR/seed_capability/airline_skill"
+[ -f "$SKILL_DIR/SKILL.md" ] || die "airline_skill/SKILL.md not found at $SKILL_DIR"
+echo "  importing airline_skill..."
+# Delete first so a re-run replaces rather than collides (404 on a clean store is fine).
+curl -s -X DELETE \
+  "http://localhost:$STORE_PORT/skills/airline_skill?delete_tools=true&delete_snippets=true" \
+  >/dev/null 2>&1 || true
 SKILL_RESP=$(curl -s -X POST "http://localhost:$STORE_PORT/skills/import-anthropic" \
   -F "source_type=folder" \
-  -F "folder_path=$(cd "$PRIM_SKILL_DIR" && pwd)" \
+  -F "folder_path=$(cd "$SKILL_DIR" && pwd)" \
   -F "snippet_mode=file" 2>&1)
 if echo "$SKILL_RESP" | grep -qE '"success"|"skill_name"'; then
-  echo "  ✓ primitive_skill imported to store"
+  echo "  ✓ airline_skill imported to store"
 else
-  echo "  ⚠ primitive_skill import response: $SKILL_RESP"
-  die "failed to import primitive_skill"
+  echo "  ⚠ airline_skill import response: $SKILL_RESP"
+  die "failed to import airline_skill"
 fi
+
+# Verify: exactly one skill, and its wrappers each depend on a primitive.
+WRAPPER_COUNT=$(curl -s "http://localhost:$STORE_PORT/skills/airline_skill?fields=full" 2>/dev/null \
+  | "$PY" -c "import sys,json; print(len(json.load(sys.stdin).get('tools') or []))" 2>/dev/null || echo 0)
+echo "  ✓ airline_skill exposes $WRAPPER_COUNT tools"
+[ "$WRAPPER_COUNT" -gt 0 ] || die "airline_skill imported but exposes no tools"
 
 # ---------------------------------------------------------------------------
 say "6/7  Clone + start Skillberry Proxy-Agent (@ $AGENT_COMMIT, port $SPA_PORT)"
@@ -238,8 +294,8 @@ fi
 deactivate
 # Start SPA if not already running
 if ! curl -sf "http://localhost:$SPA_PORT/health" >/dev/null 2>&1; then
-  echo "  starting SPA with SKILL_NAME=primitive_skill..."
-  export SKILL_NAME=primitive_skill
+  echo "  starting SPA with SKILL_NAME=airline_skill..."
+  export SKILL_NAME=airline_skill
   export USE_AGENT_TOOLS=false
   export USE_AGENT_PROMPTS=true
   export MCP_PROMPTS_POSITION=postfix
@@ -267,6 +323,8 @@ mkdir -p "$PROJECT/adapters"
 cp "$EX_DIR/adapters/adapter.py" "$EX_DIR/adapters/spa_env.py" "$PROJECT/adapters/"
 rm -rf "$PROJECT/seed_capability"
 cp -R "$EX_DIR/seed_capability" "$PROJECT/seed_capability"
+rm -rf "$PROJECT/scripts"
+cp -R "$EX_DIR/scripts" "$PROJECT/scripts"
 cp "$EX_DIR/capevolve.yaml" "$EX_DIR/split_ids.json" "$PROJECT/"
 
 # Export service dirs for the adapter
