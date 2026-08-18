@@ -7,7 +7,8 @@ must be nested INSIDE the function below and prefixed with '_'.
 
 
 def update_reservation_passengers_wrapper(reservation_id: str, passengers: str):
-    """Update the passenger information of a reservation.
+    """
+    Update the passenger information of a reservation.
 
     Args:
         reservation_id (str): The reservation ID, such as 'ZFA04Y'.
@@ -15,6 +16,11 @@ def update_reservation_passengers_wrapper(reservation_id: str, passengers: str):
 
     Returns:
         The updated reservation.
+
+    Raises:
+        ValueError: If the reservation is not found.
+        ValueError: If the number of passengers does not match.
+
     """
     return update_reservation_passengers(
         reservation_id=reservation_id,

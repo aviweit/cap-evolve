@@ -7,9 +7,11 @@ must be nested INSIDE the function below and prefixed with '_'.
 
 
 def list_all_airports_wrapper():
-    """Return a list of all available airports.
+    """
+    Returns a list of all available airports.
 
     Returns:
-        A dictionary mapping IATA codes to airport information.
+        A dictionary mapping IATA codes to AirportInfo objects.
+
     """
     return list_all_airports()

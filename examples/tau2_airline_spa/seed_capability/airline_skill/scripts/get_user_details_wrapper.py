@@ -7,12 +7,16 @@ must be nested INSIDE the function below and prefixed with '_'.
 
 
 def get_user_details_wrapper(user_id: str):
-    """Get the details of a user, including their reservations.
+    """
+    Get the details of a user, including their reservations.
 
     Args:
         user_id (str): The user ID, such as 'sara_doe_496'.
 
     Returns:
         The user details.
+
+    Raises:
+        ValueError: If the user is not found.
     """
     return get_user_details(user_id=user_id)

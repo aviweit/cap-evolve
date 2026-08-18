@@ -19,29 +19,24 @@ def book_reservation_wrapper(
     nonfree_baggages: int,
     insurance: str,
 ):
-    """Create a flight reservation for a user with the specified travel details.
+    """
+    Creates a flight reservation for a user with specified travel details.
 
-    Args:
-        user_id (str): Identifier of the user making the reservation, such as
-            'sara_doe_496'.
-        origin (str): Departure airport IATA code, such as 'JFK'.
-        destination (str): Arrival airport IATA code, such as 'LAX'.
-        flight_type (str): Type of flight, either 'one_way' or 'round_trip'.
-        cabin (str): Cabin class, one of 'basic_economy', 'economy', 'business'.
-        flights (str): An array of objects containing the flight number and date for
-            each segment.
-        passengers (str): An array of objects containing first name, last name and date
-            of birth for each passenger.
-        payment_methods (str): An array of objects containing the payment id and amount
-            for each payment method.
-        total_baggages (int): The total number of baggage items included in the
-            reservation.
-        nonfree_baggages (int): The number of non-free baggage items included in the
-            reservation.
-        insurance (str): Whether travel insurance was purchased, either 'yes' or 'no'.
+    Parameters:
+        user_id (str): Identifier of the user making the reservation.
+        origin (str): Departure location.
+        destination (str): Arrival location.
+        flight_type (str): Type of flight (e.g., one-way, round-trip).
+        cabin (str): Cabin class (e.g., economy, business).
+        flights (str): Flight identifiers or details.
+        passengers (str): Passenger information.
+        payment_methods (str): Selected payment method(s).
+        total_baggages (int): Total number of baggages.
+        nonfree_baggages (int): Number of baggages requiring payment.
+        insurance (str): Insurance option selected.
 
     Returns:
-        The reservation confirmation details.
+        dict: Reservation confirmation details.
     """
     return book_reservation(
         user_id=user_id,

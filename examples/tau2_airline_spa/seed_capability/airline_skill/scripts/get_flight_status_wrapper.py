@@ -7,13 +7,18 @@ must be nested INSIDE the function below and prefixed with '_'.
 
 
 def get_flight_status_wrapper(flight_number: str, date: str):
-    """Get the status of a flight.
+    """
+    Get the status of a flight.
 
     Args:
-        flight_number (str): The flight number, such as 'HAT001'.
-        date (str): The date of the flight in the format 'YYYY-MM-DD'.
+        flight_number (str): The flight number.
+        date (str): The date of the flight.
 
     Returns:
         The status of the flight.
+
+    Raises:
+        ValueError: If the flight is not found.
+
     """
     return get_flight_status(flight_number=flight_number, date=date)

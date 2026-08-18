@@ -7,9 +7,8 @@ must be nested INSIDE the function below and prefixed with '_'.
 
 
 def transfer_to_human_agents_wrapper(summary: str):
-    """Transfer the user to a human agent, with a summary of the user's issue. Only
-    transfer if the user explicitly asks for a human agent OR given the policy and the
-    available tools, you cannot solve the user's issue.
+    """
+    Transfer the user to a human agent, with a summary of the user's issue. Only transfer if the user explicitly asks for a human agent OR given the policy and the available tools, you cannot solve the user's issue.
 
     Args:
         summary (str): A summary of the user's issue.
