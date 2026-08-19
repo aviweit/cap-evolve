@@ -176,6 +176,9 @@ Before each evaluation, adapter.apply() does:
 - deterministic: reads reward from rollout.metadata (never re-runs)
 - feedback:     gold-SAFE, argument-level: names the wrong ARGUMENT key + the
                 AGENT'S OWN wrong value. Never the gold value.
+- shown metrics: reward (primary), db_match, cost_usd (display-only)
+- cost_usd is ALWAYS 0.0 and tokens ALWAYS 0 — only optimizer spend is budgeted.
+  See "ONLY OPTIMIZER SPEND IS BUDGETED HERE" under §7 for the mechanism.
 
 # 5. STARTUP SEQUENCE
 
@@ -217,6 +220,41 @@ Before each evaluation, adapter.apply() does:
 - gate:             paired, k_se 0.0
 - store:            git
 - The smoke/quick-test specs override the numbers above.
+
+## ONLY OPTIMIZER SPEND IS BUDGETED HERE
+**Every rollout reports `cost_usd: 0.0` and `tokens: 0`. Only OPTIMIZER spend is
+actually budgeted, and the dashboard's cost panel is blank for the agent half.**
+
+Why, precisely (tau2 prices a run per message):
+- `get_response_cost()` prices each LLM response with litellm's `completion_cost`
+  (`tau2/utils/llm_utils.py:91`).
+- `get_cost(messages)` sums those into `(agent_cost, user_cost)` — but returns `None`
+  if **any** message has no cost (`llm_utils.py:327-345`), and the orchestrator then
+  records `agent_cost = user_cost = None` (`orchestrator/orchestrator.py:264-268`).
+- SPA proxies the agent's calls without returning usage, so the agent's messages are
+  unpriced. Because the rule above is all-or-nothing, that zeroes the
+  **user-simulator** half too — even though those calls go straight to the upstream
+  LLM and never touch SPA.
+- The model strings here (`ibm/skillberry-local`, `openai/aws/gpt-oss-120b`) are also
+  absent from litellm's price map, so even a fully-reported path would price at 0.
+- `Rollout.tokens` is hardcoded 0 by the adapter. tau2 does expose
+  `get_token_usage()`, but the adapter does not plumb it.
+
+What follows from that:
+- **`max_usd` (200) can never bind.** It caps RUNNER spend, which always measures 0.
+  The budgets that actually stop a run are `max_optimizer_usd` (100) and the
+  per-iteration `optimizer_usd_per_iter` (40). Treat `max_usd` as inert here, not as
+  a safety net.
+- **A 0 in the cost panel means "not measured", NOT "free".** The upstream LLM is
+  really being billed for every agent turn and every user-simulator turn of every
+  task, on every trial, for both the baseline and each candidate.
+- **Never use reported cost to compare candidates or size a run.** Get the real
+  figure from the upstream provider's own accounting.
+
+Fixing this properly requires returning usage from SPA, which is deliberately OUT OF
+SCOPE for this example. Until then it is a DOCUMENTED LIMITATION, not an adapter bug:
+`_shown_metrics()` still emits `cost_usd` as a display-only secondary metric, so the
+panel stays honestly at 0 instead of inventing a number.
 
 # 8. CONFIGURING TASK SCOPE
 - Default: all 50 tasks (split_ids.json)
