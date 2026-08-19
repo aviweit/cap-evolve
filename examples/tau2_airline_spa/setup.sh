@@ -336,6 +336,8 @@ echo "  project scaffolded at $PROJECT"
 PYTHONPATH="$PROJECT/adapters" "$VENV/bin/cap-evolve" check "$PROJECT" || die "cap-evolve check did not pass"
 
 printf '\n\033[1;32mREADY.\033[0m  Next:\n'
+printf '  SPA_PROVIDER_NAME=%s \\\n' "$SPA_PROVIDER_NAME"
+printf '  SPA_MODEL_NAME=%s \\\n' "$SPA_MODEL_NAME"
 printf '  SKILLBERRY_AGENT_DIR=%s \\\n' "$AGENT_DIR"
 printf '  SKILLBERRY_STORE_DIR=%s \\\n' "$STORE_DIR"
 printf '  cap-evolve run --spec %s/capevolve.yaml\n' "$PROJECT"

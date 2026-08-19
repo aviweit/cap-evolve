@@ -102,6 +102,31 @@ class Adapter(CapabilityAdapter):
     _current_skill_name: str = SKILL_NAME  # fixed: there is only ever one skill
     _last_sim_path: "Path | None" = None   # set by run_batch/run_trials; read by trajectories()
 
+    # Set by apply() when this candidate could NOT be deployed (store refresh or SPA
+    # restart failed, or the candidate has no usable skill package). While it is set,
+    # run_batch/run_trials return errored rollouts instead of evaluating whatever SPA
+    # happens to be serving. Cleared at the top of every apply(), so a failure never
+    # leaks into the next candidate.
+    _deploy_error: "str | None" = None
+
+    # ---- deployment failures --------------------------------------------
+
+    @staticmethod
+    def _deploy_error_rollout(task_id: str) -> Rollout:
+        """An errored Rollout standing in for a task that could not be evaluated.
+
+        Setting ``Rollout.error`` is the contract the harness already understands:
+        the trial is marked errored, excluded from the split mean and from paired
+        deltas, and NOT counted as a 0.0 (``core/cap_evolve/loop.py`` —
+        ``aggregate_scores`` drops tasks with no valid trial). So a candidate we
+        could not deploy costs that candidate, never the whole run.
+        """
+        return Rollout(
+            task_id=task_id,
+            error=f"candidate deployment failed: {Adapter._deploy_error}",
+            metadata={"domain": DOMAIN, "tau2_reward": 0.0},
+        )
+
     # ---- tasks -----------------------------------------------------------
 
     def tasks(self, split: str) -> list[Task]:
@@ -132,6 +157,9 @@ class Adapter(CapabilityAdapter):
         LLM calls for the agent are routed through SPA (via ibm/skillberry-local
         model string). User simulator calls go directly to the upstream LLM.
         """
+        if Adapter._deploy_error:
+            return {t.id: self._deploy_error_rollout(t.id) for t in tasks}
+
         from tau2.run import run_tasks
         from tau2.utils.utils import DATA_DIR, get_now
 
@@ -251,10 +279,17 @@ class Adapter(CapabilityAdapter):
         self, tasks: list[Task], ctx, *, n_trials: int, base_seed: int
     ) -> dict[str, list[Rollout]]:
         """Run ALL trials in ONE tau2 run_tasks call."""
+        n_trials = int(n_trials)
+
+        if Adapter._deploy_error:
+            return {
+                t.id: [self._deploy_error_rollout(t.id) for _ in range(max(n_trials, 1))]
+                for t in tasks
+            }
+
         from tau2.run import run_tasks
         from tau2.utils.utils import DATA_DIR, get_now
 
-        n_trials = int(n_trials)
         by_id = self._tau2_tasks_by_id()
         tau2_tasks = [by_id[t.id] for t in tasks if t.id in by_id]
 
@@ -339,14 +374,22 @@ class Adapter(CapabilityAdapter):
         meta = rollout.metadata or {}
 
         if rollout.error:
-            return Score(
-                task_id=task.id,
-                reward=0.0,
-                feedback=(
+            if str(rollout.error).startswith("candidate deployment failed"):
+                feedback = (
+                    f"This candidate was never evaluated ({rollout.error}). The store "
+                    "refresh or the SPA restart failed, so no reward was measured — "
+                    "the result says nothing about the skill itself."
+                )
+            else:
+                feedback = (
                     "Rollout did not complete for an infrastructure reason "
                     f"({rollout.error}). This is uncontrollable noise, not an agent "
                     "policy/tool failure; do not optimize against it."
-                ),
+                )
+            return Score(
+                task_id=task.id,
+                reward=0.0,
+                feedback=feedback,
                 metrics=_shown_metrics(0.0, {}, rollout),
             )
 
@@ -386,6 +429,12 @@ class Adapter(CapabilityAdapter):
 
         The frozen primitive tools are standalone in the store, belong to no skill
         manifest, and are additionally tag-guarded, so step 2 never touches them.
+
+        NEVER RAISES for a deployment failure. A store refresh that fails or an SPA
+        that will not come back up is per-candidate infrastructure noise: it is
+        recorded in ``_deploy_error`` and turned into errored rollouts by
+        ``run_batch``/``run_trials``, so the harness excludes the candidate instead of
+        the run dying with the budget half spent.
         """
         if edits:
             self.materialize(candidate_dir, edits)
@@ -393,18 +442,34 @@ class Adapter(CapabilityAdapter):
         candidate_dir = Path(candidate_dir)
         skill_dir = candidate_dir / SKILL_NAME
 
+        # Start every deployment from a clean slate: a failure recorded for the
+        # PREVIOUS candidate must never suppress this one's evaluation.
+        Adapter._deploy_error = None
+
         if not (skill_dir / "SKILL.md").exists():
-            raise RuntimeError(
+            Adapter._deploy_error = (
                 f"{SKILL_NAME}/SKILL.md not found under {candidate_dir} — the "
                 f"candidate must contain the single {SKILL_NAME}/ skill package"
             )
+            return
 
-        # Full refresh: drop the current skill (its tools + snippets), purge any
-        # orphans left by earlier runs, then import this candidate. Raises if the
-        # store ends up inconsistent or a frozen primitive went missing.
-        spa_env.reset_store_to_skill(skill_dir, SKILL_NAME)
+        try:
+            # Full refresh: drop the current skill (its tools + snippets), purge any
+            # orphans left by earlier runs, then import this candidate. Raises if the
+            # store ends up inconsistent or a frozen primitive went missing.
+            spa_env.reset_store_to_skill(skill_dir, SKILL_NAME)
 
-        spa_env.restart_spa(SKILL_NAME)
+            spa_env.restart_spa(SKILL_NAME)
+        except RuntimeError as e:
+            # A store refresh or an SPA restart that will not come up is INFRA noise,
+            # not a verdict on this candidate's capability. Raising here would escape
+            # ``live()`` (core/cap_evolve/harness.py enters it inline) and abort the
+            # whole run, losing the remaining budget over one flaky restart. Record it
+            # instead: run_batch/run_trials then return errored rollouts, which the
+            # harness already excludes from the mean rather than scoring 0.0.
+            Adapter._deploy_error = str(e)
+            return
+
         Adapter._current_skill_name = SKILL_NAME
 
     # ---- gold-safe feedback builder --------------------------------------
