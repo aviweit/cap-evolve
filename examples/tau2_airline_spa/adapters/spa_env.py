@@ -154,7 +154,6 @@ def _upstream_llm_args() -> dict:
 def _wait_for_health(port: str, timeout: int = 60) -> bool:
     """Poll localhost:<port>/health until responsive or timeout."""
     import urllib.request
-    import urllib.error
 
     deadline = time.time() + timeout
     url = f"http://localhost:{port}/health"

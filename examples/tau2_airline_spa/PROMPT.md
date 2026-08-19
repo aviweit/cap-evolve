@@ -135,7 +135,7 @@ All patterns: NEVER touch `seed_capability/primitive_tools/`.
 
 ## 2e. Tasks
 - all 50 airline tasks (IDs "0" through "49")
-- configurable via split_ids.json (or split_ids_task9.json for single-task runs)
+- configurable via split_ids.json (or split_ids.quick-test.json for single-task runs)
 
 # 3. RUNNER + MODELS + CREDENTIALS
 
@@ -154,8 +154,11 @@ All patterns: NEVER touch `seed_capability/primitive_tools/`.
 - agent model:      ibm/skillberry-local  (litellm alias → SPA on localhost:7000)
 - user sim model:   openai/aws/gpt-oss-120b  (direct via OPENAI_BASE_URL)
 - OPENAI_API_KEY:   API key for upstream LLM
-- OPENAI_API_BASE:  upstream LLM endpoint URL
-- OPENAI_BASE_URL:  upstream LLM base URL (same value as OPENAI_API_BASE)
+- OPENAI_API_BASE / OPENAI_BASE_URL: two names for ONE value — the upstream LLM
+                    endpoint URL. litellm reads OPENAI_API_BASE; the user simulator
+                    path reads OPENAI_BASE_URL (spa_env._upstream_llm_args). Set
+                    EITHER and setup.sh derives the other; setting both to DIFFERENT
+                    URLs is refused rather than silently resolved.
 
 ## Critical: skill replacement + SPA restart per candidate
 Before each evaluation, adapter.apply() does:
@@ -204,24 +207,28 @@ Before each evaluation, adapter.apply() does:
     * Tools call primitives BY NAME; no tool calls _make_api_call
     * Helpers must be nested inside their tool and _-prefixed
 
-# 7. BUDGET / GATE
+# 7. BUDGET / GATE   (mirrors capevolve.yaml — keep the two in sync)
 - algorithm:        hill-climb (--focus all)
-- max_iterations:   1           num_trials: 1
-- per-iteration optimizer $ cap: optimizer_usd_per_iter 20
+- max_iterations:   5           stall: 3
+- num_trials:       10
+- per-iteration optimizer $ cap: optimizer_usd_per_iter 40
 - optimizer_max_turns: 100
 - max_optimizer_usd: 100        max_usd: 200
 - gate:             paired, k_se 0.0
 - store:            git
+- The smoke/quick-test specs override the numbers above.
 
 # 8. CONFIGURING TASK SCOPE
 - Default: all 50 tasks (split_ids.json)
-- Single task: use split_ids_task9.json
-  Switch via: cap-evolve run --split-ids-file split_ids_task9.json
-  Or edit capevolve.yaml: split_ids_file: split_ids_task9.json
+- Narrower scope: use one of the shipped split files —
+    split_ids.smoke.json       (10 tasks)
+    split_ids.quick-test.json  (1 task)
+- Switch by editing the spec's `split_ids_file:`, or by running the matching spec
+  (capevolve.smoke.yaml / capevolve.quick-test.yaml). `cap-evolve run` takes
+  `--spec`; there is NO `--split-ids-file` flag.
 ```
 
 > The bundled `examples/tau2_airline_spa/` is the **result** of following this prompt:
 > the adapter (`adapters/adapter.py` + `adapters/spa_env.py`), the seed capability
 > (`seed_capability/airline_skill/` + the frozen `seed_capability/primitive_tools/`),
 > and `setup.sh` are what the intake / implement-and-check flow produced.
-> See `DESIGN-optimization-rework.md` for the rationale behind the single-skill model.

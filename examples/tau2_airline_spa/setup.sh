@@ -124,8 +124,24 @@ echo "  SPA_PROVIDER_NAME=$SPA_PROVIDER_NAME"
 echo "  SPA_MODEL_NAME=$SPA_MODEL_NAME"
 # tau2-bench / upstream LLM
 _require_env OPENAI_API_KEY  "needed for the upstream LLM API key"
-_require_env OPENAI_API_BASE "needed for the upstream LLM endpoint URL"
-_require_env OPENAI_BASE_URL "needed for the upstream LLM base URL (same value as OPENAI_API_BASE)"
+
+# OPENAI_API_BASE and OPENAI_BASE_URL are two names litellm accepts for ONE value:
+# litellm reads OPENAI_API_BASE, while spa_env._upstream_llm_args() reads
+# OPENAI_BASE_URL for the user simulator. Requiring the operator to set the same URL
+# twice is a trap, so accept either and derive the other.
+if [ -n "${OPENAI_API_BASE:-}" ] && [ -z "${OPENAI_BASE_URL:-}" ]; then
+  export OPENAI_BASE_URL="$OPENAI_API_BASE"
+  echo "  derived OPENAI_BASE_URL from OPENAI_API_BASE"
+elif [ -n "${OPENAI_BASE_URL:-}" ] && [ -z "${OPENAI_API_BASE:-}" ]; then
+  export OPENAI_API_BASE="$OPENAI_BASE_URL"
+  echo "  derived OPENAI_API_BASE from OPENAI_BASE_URL"
+elif [ -z "${OPENAI_API_BASE:-}" ] && [ -z "${OPENAI_BASE_URL:-}" ]; then
+  die "set OPENAI_API_BASE or OPENAI_BASE_URL to the upstream LLM endpoint URL. Set it in $REPO/.env or export it."
+elif [ "$OPENAI_API_BASE" != "$OPENAI_BASE_URL" ]; then
+  # Both set but disagreeing is almost certainly a mistake, and which one wins
+  # depends on which component makes the call — refuse rather than pick.
+  die "OPENAI_API_BASE ($OPENAI_API_BASE) and OPENAI_BASE_URL ($OPENAI_BASE_URL) differ. They are two names for the same endpoint — set them to the same URL, or set only one."
+fi
 echo "  ✓ all required credentials present"
 
 # SPA's ports are fixed, so an occupied port is a hard stop — check it now rather
