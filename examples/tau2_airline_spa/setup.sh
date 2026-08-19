@@ -348,10 +348,16 @@ say "7/7  Scaffold cap-evolve project + wire adapter + check"
 "$PY" "$REPO/skills/phases/intake/scripts/run.py" --base "$REPO/.capevolve" --workdir "$REPO" --force >/dev/null 2>&1 \
   || true
 PROJECT="$REPO/.capevolve/project"
-mkdir -p "$PROJECT/adapters"
+mkdir -p "$PROJECT/adapters" "$PROJECT/optimizer"
 
 # Wire
 cp "$EX_DIR/adapters/adapter.py" "$EX_DIR/adapters/spa_env.py" "$PROJECT/adapters/"
+# The optimizer instructions MUST live in the project: cap-evolve resolves
+# optimizer_instructions_file relative to the CWD first and only then relative to
+# the project, so a repo-relative path silently falls back to the generic
+# scaffolded template whenever the run is started from anywhere but the repo root
+# — taking the MODIFY-only constraint and the store-import rules with it.
+cp "$EX_DIR/optimizer/INSTRUCTIONS.md" "$PROJECT/optimizer/"
 rm -rf "$PROJECT/seed_capability"
 cp -R "$EX_DIR/seed_capability" "$PROJECT/seed_capability"
 rm -rf "$PROJECT/scripts"

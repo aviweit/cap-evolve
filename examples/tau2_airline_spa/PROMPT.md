@@ -292,6 +292,20 @@ Print, as an explicit closing section, that `.venv` was NOT removed and that
 `.capevolve` was NOT touched — each with the reason and the path, so the user knows
 exactly what is left to clean up by hand. Report how many run_* directories remain.
 
+## setup.sh must copy the optimizer instructions INTO the project
+`cap-evolve` resolves `optimizer_instructions_file` relative to the CWD first and
+only then relative to the project (core/cap_evolve/cli.py). A repo-relative value
+therefore resolves only when the run happens to start from the repo root; from any
+other directory the flag is silently omitted and the optimizer gets the GENERIC
+scaffolded template instead — losing the MODIFY-only constraint and the
+store-import rules (nested `_`-prefixed helpers, one public function per file,
+never call `_make_api_call`) with no warning. So:
+  - setup.sh: mkdir -p "$PROJECT/optimizer" and copy optimizer/INSTRUCTIONS.md there
+  - every spec: `optimizer_instructions_file: optimizer/INSTRUCTIONS.md` (project-relative)
+This also satisfies `pipeline_selftest.py`, which resolves the key STRICTLY
+project-relative and reports a problem when it points outside the project.
+Keep every `{{...}}` placeholder intact — the harness fills them per iteration.
+
 ## Deletion guardrails (both scripts)
 - Verify $REPO is the cap-evolve checkout ($REPO/core/cap_evolve exists) before
   removing anything.

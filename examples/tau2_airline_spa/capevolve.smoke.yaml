@@ -14,7 +14,7 @@ optimizer_skill: claude-code
 optimizer_model: claude-opus-4-8
 optimizer_max_turns: 40
 optimizer_usd_per_iter: 3.0
-optimizer_instructions_file: examples/tau2_airline_spa/optimizer/INSTRUCTIONS.md
+optimizer_instructions_file: optimizer/INSTRUCTIONS.md   # project-relative — see setup.sh
 
 # --- how to iterate ---------------------------------------------------------
 algorithm_skill: hill-climb
