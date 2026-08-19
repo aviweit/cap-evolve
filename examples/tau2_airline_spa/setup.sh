@@ -358,6 +358,13 @@ rm -rf "$PROJECT/scripts"
 cp -R "$EX_DIR/scripts" "$PROJECT/scripts"
 cp "$EX_DIR/capevolve.yaml" "$EX_DIR/split_ids.json" "$PROJECT/"
 
+# Breadcrumb: record which example scaffolded this project dir last.
+# .capevolve/project is shared by skillsbench, tau2_airline AND this example, so a
+# mixed directory is easy to end up with and confusing to diagnose. Nothing reads
+# this file — teardown.sh deliberately never touches .capevolve — it exists purely
+# so a human can tell whose files these are.
+printf 'tau2_airline_spa\n' > "$PROJECT/.owned-by"
+
 # Export service dirs for the adapter
 export SKILLBERRY_AGENT_DIR="$AGENT_DIR"
 export SKILLBERRY_STORE_DIR="$STORE_DIR"

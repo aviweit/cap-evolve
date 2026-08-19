@@ -256,7 +256,58 @@ SCOPE for this example. Until then it is a DOCUMENTED LIMITATION, not an adapter
 `_shown_metrics()` still emits `cost_usd` as a display-only secondary metric, so the
 panel stays honestly at 0 instead of inventing a number.
 
-# 8. CONFIGURING TASK SCOPE
+# 8. SETUP / TEARDOWN SCRIPT REQUIREMENTS
+
+setup.sh and teardown.sh are generated alongside adapters/adapter.py and
+adapters/spa_env.py. Several paths under the repo are SHARED with the other
+examples (examples/skillsbench, examples/tau2_airline), so teardown must remove
+ONLY what this example created.
+
+## teardown.sh contract
+Does exactly three things, in this order:
+  1. stop the three services (SPA, store, tau2 env manager)
+  2. remove their PID sentinels (/tmp/skillberry-{agent,store}-service.pid) and
+     this example's log files
+  3. remove the repos this example cloned:
+     vendor/skillberry-{store,agent,benchmarks}
+
+One option: `--keep-clones` — stop the services but keep the clones. Nothing else.
+No flag may exist that deletes anything shared.
+
+## NEVER touched, by default or by any flag
+- $REPO/.venv        SHARED — skillsbench and tau2_airline install cap-evolve core
+                     into the same venv. Removing it would force them to re-run
+                     their setup.sh.
+- $REPO/.capevolve   NOT TOUCHED AT ALL. It holds run_* artifacts (measurements)
+                     and the project dir that all three examples scaffold into.
+                     Cleaning it is the USER's responsibility. teardown needs no
+                     access: setup.sh refreshes this example's files there on
+                     every run, so nothing stale survives a re-setup.
+- $REPO/vendor/      the DIRECTORY itself — skillsbench keeps vendor/skillsbench
+                     inside it. Remove only this example's own subdirectories, and
+                     rmdir vendor/ only if it ends up empty.
+
+## Before exiting, teardown MUST warn
+Print, as an explicit closing section, that `.venv` was NOT removed and that
+`.capevolve` was NOT touched — each with the reason and the path, so the user knows
+exactly what is left to clean up by hand. Report how many run_* directories remain.
+
+## Deletion guardrails (both scripts)
+- Verify $REPO is the cap-evolve checkout ($REPO/core/cap_evolve exists) before
+  removing anything.
+- Vet every path before `rm -rf`: refuse "/", $HOME, $REPO itself, .capevolve and
+  anything under it, the shared venv, and anything resolving outside $REPO.
+  `set -u` does NOT protect here — these variables are always set, just
+  potentially wrong, so `rm -rf "$VENDOR/$d"` with a bad VENDOR is the failure
+  mode to defend against.
+- Stop services by the PID recorded in the service's own sentinel. Fall back to
+  the port owner ONLY after confirming the process is that service, and use
+  `lsof -sTCP:LISTEN` (unfiltered lsof also returns CLIENTS of the port — on a
+  live run that includes cap-evolve's own runner talking to SPA).
+- SIGTERM before SIGKILL.
+- Both scripts must be idempotent — a second run exits 0 and changes nothing.
+
+# 9. CONFIGURING TASK SCOPE
 - Default: all 50 tasks (split_ids.json)
 - Narrower scope: use one of the shipped split files —
     split_ids.smoke.json       (10 tasks)
@@ -269,4 +320,5 @@ panel stays honestly at 0 instead of inventing a number.
 > The bundled `examples/tau2_airline_spa/` is the **result** of following this prompt:
 > the adapter (`adapters/adapter.py` + `adapters/spa_env.py`), the seed capability
 > (`seed_capability/airline_skill/` + the frozen `seed_capability/primitive_tools/`),
-> and `setup.sh` are what the intake / implement-and-check flow produced.
+> and `setup.sh` + `teardown.sh` are what the intake / implement-and-check flow
+> produced. §8 is the contract those two scripts must satisfy.
