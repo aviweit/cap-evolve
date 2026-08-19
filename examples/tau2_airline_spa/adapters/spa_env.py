@@ -33,6 +33,11 @@ _DEFAULT_USER_MODEL = "openai/aws/gpt-oss-120b"
 SPA_PORT = "7000"
 STORE_PORT = "8000"
 
+# SPA records its service PID here. This is the
+# authoritative handle on the process we started — always prefer it to guessing
+# from whoever happens to own the port.
+SPA_PID_FILE = "/tmp/skillberry-agent-service.pid"
+
 # The one and only skill in the store. Never renamed — the optimizer modifies it
 # in place, and apply() always deletes + re-imports it under this exact name.
 SKILL_NAME = "airline_skill"
@@ -163,34 +168,148 @@ def _wait_for_health(port: str, timeout: int = 60) -> bool:
     return False
 
 
-def stop_spa() -> None:
-    """Stop the SPA service."""
-    spa_dir = _get_spa_dir()
-    if spa_dir and Path(spa_dir).is_dir():
-        try:
-            subprocess.run(
-                ["make", "stop"], cwd=spa_dir,
-                capture_output=True, text=True, timeout=15,
-            )
-        except Exception:
-            pass
-    # Force-kill anything on the port
-    port = os.environ.get("SKILLBERRY_AGENT_PORT", SPA_PORT)
+def _read_spa_pid() -> "int | None":
+    """The PID SPA recorded in its sentinel, or None if absent/unreadable."""
     try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
+        raw = Path(SPA_PID_FILE).read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return None
+    except OSError as e:
+        print(f"  warning: could not read {SPA_PID_FILE}: {e}")
+        return None
+    try:
+        return int(raw.split()[0])
+    except (ValueError, IndexError):
+        print(f"  warning: {SPA_PID_FILE} does not contain a PID: {raw!r}")
+        return None
+
+
+def _process_args(pid: int) -> str:
+    """The full command line of ``pid``, or "" if it cannot be read.
+
+    ``ps`` rather than /proc so this also works on macOS.
+    """
+    try:
+        r = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "args="],
             capture_output=True, text=True, timeout=5,
         )
-        for pid in result.stdout.strip().split():
-            if pid:
-                os.kill(int(pid), 9)
-    except Exception:
-        pass
-    # Remove stale sentinel that would prevent the next make run from starting
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _is_spa_process(pid: int) -> bool:
+    """Is ``pid`` really the SPA service, and not some unrelated port squatter?
+
+    SPA is started by ``make run`` as ``python -m main`` from the agent checkout
+    (``skillberry-agent/.mk/local.mk: SERVICE_ENTRY_MODULE := main``). Requiring
+    both markers is what stops us SIGKILLing a stranger that merely holds 7000 —
+    on macOS that is ``ControlCenter`` (AirPlay Receiver), a system process.
+    """
+    args = _process_args(pid)
+    if not args:
+        return False
+    return "python" in args and "-m main" in args
+
+
+def _pids_on_port(port: str) -> "list[int]":
+    """PIDs LISTENING on ``port`` (empty if lsof is unavailable or finds nothing).
+
+    ``-sTCP:LISTEN`` is essential, not cosmetic: a bare ``lsof -ti :7000`` also lists
+    every process with an open CLIENT connection to that port. On a live run that
+    includes cap-evolve's own hill-climb runner talking to SPA — so the unfiltered
+    form both reports phantom port conflicts and, in the code this replaces, made
+    ``kill -9`` a way to shoot our own optimizer.
+    """
     try:
-        os.remove("/tmp/skillberry-agent-service.pid")
-    except FileNotFoundError:
-        pass
+        r = subprocess.run(
+            ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out: list[int] = []
+    for tok in r.stdout.split():
+        try:
+            out.append(int(tok))
+        except ValueError:
+            continue
+    return out
+
+
+def _terminate(pid: int, *, grace: float = 10.0) -> bool:
+    """SIGTERM ``pid``, escalate to SIGKILL if it outlives ``grace`` seconds.
+
+    SIGTERM first so SPA can shut down cleanly (this is what SPA's own
+    ``stop-service.sh`` sends). Returns True once the process is gone.
+    """
+    for sig in (15, 9):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            print(f"  warning: not permitted to signal PID {pid}; leaving it alone")
+            return False
+        deadline = time.time() + (grace if sig == 15 else 5.0)
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.25)
+    return False
+
+
+def port_owner_conflict(port: str) -> "str | None":
+    """Describe a NON-SPA process holding ``port``, or None if the port is free/ours.
+
+    Used as a preflight so an occupied port fails fast with the culprit named,
+    instead of burning the whole health-check budget on a start that cannot work.
+    """
+    for pid in _pids_on_port(port):
+        if not _is_spa_process(pid):
+            return f"PID {pid} ({_process_args(pid) or 'unknown process'})"
+    return None
+
+
+def stop_spa() -> None:
+    """Stop the SPA service, killing ONLY the process SPA itself recorded.
+
+    Order matters:
+
+      1. The sentinel PID is authoritative — SPA's own ``start-service.sh`` wrote it,
+         so it identifies the process we started rather than whoever owns the port.
+      2. Fall back to the port ONLY when there is no usable sentinel, and even then
+         kill a PID only once ``_is_spa_process`` confirms it. A bare
+         ``os.kill(pid, 9)`` on the port owner would SIGKILL macOS's ControlCenter,
+         which holds 7000 for AirPlay Receiver by default.
+      3. Always remove the sentinel. SPA's ``make stop`` does NOT remove it, and a
+         stale sentinel makes the next ``make run`` print "service is already
+         running" and exit 0 without starting anything — after which the health
+         check can only time out.
+    """
+    pid = _read_spa_pid()
+    if pid is not None:
+        if _is_spa_process(pid):
+            _terminate(pid)
+        else:
+            # Sentinel outlived its process (or the PID was recycled). Nothing to
+            # kill; step 3 clears the file.
+            pass
+    else:
+        for cand in _pids_on_port(SPA_PORT):
+            if _is_spa_process(cand):
+                _terminate(cand)
+            else:
+                print(
+                    f"  warning: port {SPA_PORT} is held by PID {cand} "
+                    f"({_process_args(cand) or 'unknown process'}), which is not SPA — "
+                    "refusing to kill it. Free the port and retry."
+                )
+
+    Path(SPA_PID_FILE).unlink(missing_ok=True)
 
 
 def start_spa(skill_name: str = SKILL_NAME, *, retries: int = 2) -> None:
@@ -213,7 +332,15 @@ def start_spa(skill_name: str = SKILL_NAME, *, retries: int = 2) -> None:
     env.setdefault("USE_AGENT_PROMPTS", "true")
     env.setdefault("MCP_PROMPTS_POSITION", "postfix")
 
-    port = os.environ.get("SKILLBERRY_AGENT_PORT", SPA_PORT)
+    conflict = port_owner_conflict(SPA_PORT)
+    if conflict:
+        raise RuntimeError(
+            f"port {SPA_PORT} is already held by {conflict}, which is not SPA. "
+            f"SPA's port is fixed at {SPA_PORT} (tau2 and SPA hardcode it), so free "
+            "the port and retry."
+        )
+
+    port = SPA_PORT
     cmd = f"cd {spa_dir} && . .venv/bin/activate && make run"
 
     for attempt in range(1 + retries):

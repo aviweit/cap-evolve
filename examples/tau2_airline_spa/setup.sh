@@ -25,8 +25,9 @@ TAU2_DIR="$BENCHMARKS_DIR/tau2/tau2-bench"
 
 # Ports
 STORE_PORT="${SKILLBERRY_STORE_PORT:-8000}"
-SPA_PORT="${SKILLBERRY_AGENT_PORT:-7000}"
 ENV_MGR_PORT="${TAU2_ENV_MANAGER_PORT:-8004}"
+SPA_PORT="7000"
+SPA_CONFIG_PORT="7001"
 
 # Pinned versions (reproducibility)
 STORE_TAG="${SKILLBERRY_STORE_TAG:-0.2.1}"
@@ -126,6 +127,20 @@ _require_env OPENAI_API_KEY  "needed for the upstream LLM API key"
 _require_env OPENAI_API_BASE "needed for the upstream LLM endpoint URL"
 _require_env OPENAI_BASE_URL "needed for the upstream LLM base URL (same value as OPENAI_API_BASE)"
 echo "  ✓ all required credentials present"
+
+# SPA's ports are fixed, so an occupied port is a hard stop — check it now rather
+# than 6 steps later when the health check times out with no explanation.
+_spa_is_pid(){ ps -p "$1" -o args= 2>/dev/null | grep -q -- "-m main"; }
+for _p in "$SPA_PORT" "$SPA_CONFIG_PORT"; do
+  for _pid in $(lsof -ti :"$_p" -sTCP:LISTEN 2>/dev/null || true); do
+    if ! _spa_is_pid "$_pid"; then
+      printf '  port %s is held by PID %s: %s\n' \
+        "$_p" "$_pid" "$(ps -p "$_pid" -o args= 2>/dev/null | head -1)" >&2
+      die "SPA needs ports $SPA_PORT and $SPA_CONFIG_PORT, and its port is fixed at $SPA_PORT (tau2 and SPA hardcode it). Free the port and re-run. On macOS this is usually ControlCenter — turn off System Settings > General > AirDrop & Handoff > AirPlay Receiver."
+    fi
+  done
+done
+echo "  ✓ SPA ports $SPA_PORT/$SPA_CONFIG_PORT are free (or already SPA)"
 
 # ---------------------------------------------------------------------------
 say "2/7  Clone + install tau2-bench (from skillberry-benchmarks @ $BENCHMARKS_COMMIT)"

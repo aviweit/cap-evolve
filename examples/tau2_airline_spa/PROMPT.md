@@ -103,9 +103,24 @@ All patterns: NEVER touch `seed_capability/primitive_tools/`.
 - repo:         https://github.com/skillberry-ai/skillberry-agent.git
 - commit:       e359494f18267e339f9561acbd7a930e3b51189e
 - install:      git clone; python3.11 -m venv .venv; make install-requirements
-- run:          make run  (port 7000)
+- run:          make run  (ports 7000 main + 7001 config)
 - health:       curl http://localhost:7000/health
 - DEPENDS ON:   store (port 8000) must be running first
+- PORT IS FIXED at 7000 and is NOT configurable by env var. Three places outside
+  this example hardcode it: tau2's `config.py`
+  (`SKILLBERRY_AGENT_URL = "http://127.0.0.1:7000"`), two literals in `tau2/run.py`,
+  and `uvicorn.run(..., port=7000)` in SPA's `main.py`. A knob here would move the
+  health check without moving the routing, so there deliberately isn't one.
+  * Both 7000 and 7001 must be FREE before `setup.sh` — it preflights them and
+    stops with the offending PID named.
+  * On macOS, port 7000 is held by `ControlCenter` (AirPlay Receiver) by DEFAULT.
+    Turn it off: System Settings > General > AirDrop & Handoff > AirPlay Receiver.
+  * To run SPA on another port you must patch those three locations yourself; the
+    example does not support it.
+  * `stop_spa()`/`teardown.sh` kill only the PID SPA recorded in
+    `/tmp/skillberry-agent-service.pid`, and fall back to the port owner ONLY after
+    confirming it is SPA — so a foreign process squatting 7000 is reported, never
+    SIGKILLed.
 - env config:
     SKILL_NAME=airline_skill
     USE_AGENT_TOOLS=false
