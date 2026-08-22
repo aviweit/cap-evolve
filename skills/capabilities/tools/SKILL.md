@@ -24,6 +24,49 @@ tightened to documentation-only edits.)
 
 ## What you can change here
 
+> **Confirm which parts of a docstring the framework actually SENDS — some of it may be
+> discarded.** A docstring is not the wire schema. One benchmark harness builds each
+> tool's schema `description` from the docstring **summary plus the prose before `Args:`**, and
+> drops the `Returns:` section entirely. Measured across a 14-tool toolset there: **5469 of 12929
+> docstring characters (42%) never reached the model**, and on the one tool whose return had
+> been documented most carefully it was **1791 of 1906 — 94% dropped**. Rounds of behavioural
+> guidance had been written into that void, and one edit credited as "verified" turned out to
+> work only because the return **VALUE** changed shape (which the model does see at call time),
+> not because anything documented it. So there are three delivered surfaces — the summary and
+> pre-`Args:` prose, the per-parameter `Args:` descriptions, and the returned value itself —
+> and one that looks identical and does nothing. Render the live toolset and count the
+> delivered characters per candidate rather than trusting the file; the same render also
+> catches a docstring that raises at REGISTRATION time, which fails every rollout as an
+> infrastructure error rather than a low score.
+
+
+> **A tool return is re-read on every later turn, so enriching it is not free — measure it.**
+> Measured on a multi-turn tool-use benchmark with a mid-tier runner: one round accepted an edit that CONSTRAINED
+> behaviour (in-code preconditions, val 0.5889 → 0.6778, +8.9pp) while **four separate edits
+> that ADDED information all landed at or below the same parent**: richer docs + derived
+> facts merged onto the winner **0.6444**, composite tools **0.6556**, argument derivation
+> **0.6666** (identical to that round's null control), and a structural policy rewrite
+> **0.5777** (also identical to the control). Multi-turn rollouts have a step budget and the
+> whole conversation is re-read each turn, so verbose returns crowd out the signal they were
+> meant to supply. Keep what the agent ACTS on — amounts, eligibility, the corrective hint —
+> and cut what it can read off the object it already has. When in doubt, run the subtraction
+> as its own gated candidate; it is as legitimate a hypothesis as the addition, and here the
+> additive ones were the losers.
+
+> **Changing a return SHAPE can corrupt the learning signal without touching the score.**
+> Optimizer-side code that parses tool returns to build feedback is written against the
+> PRISTINE shape, and a candidate is entitled to change it. Observed: a candidate that nested
+> summary objects under a list key the feedback code read as bare ids made that code `str()` the
+> dicts, so its feedback claimed the id was *"not among"* the held ids — for calls whose id was
+> perfectly valid. The reward
+> was never affected — it comes from the harness's own DB/action checks, which never read a
+> tool's return — but one optimiser spent a whole iteration hunting a scoring bug that did not
+> exist, and another concluded the key name was capping its score. Two lessons, in order:
+> **audit the measurement before you believe a defect**, and make return-parsing tolerant of
+> shapes a candidate may legitimately introduce (extract ids from `str` *or* `dict` entries)
+> rather than forbidding the enrichment. The signal degrades exactly when the candidate is
+> most interesting, which is the worst possible time.
+
 **The tool's docstring AND its return value are what the agent SEES — make both
 clear and recovery-oriented.** The doc surface (description, important-notes,
 per-param, `Raises:`, examples) drives *which* tool the model calls and *how* it
@@ -34,6 +77,26 @@ returns/errors AND doc fixes across all implicated tools can and should all ship
 the same candidate. (1-line generic examples; worked bodies in
 [`references/examples.md`](references/examples.md), depth below and in
 [`references/concepts.md`](references/concepts.md).)
+
+> **A docstring section header can silently break tool registration — always render the
+> live toolset after editing.** Observed: adding a worked example under an
+> `Example:` / `Examples:` header made `docstring_parser` return a `DocstringExample`
+> object, that harness's `Tool` model required `examples: list[str]`, so building the environment
+> raised and **all 90 rollouts of that candidate died as `INFRASTRUCTURE_ERROR`** — an
+> entire evaluation spent on a parse error, not on the edit. Keep the example text, but put
+> it under ordinary prose (e.g. "A correct call looks like:"), and prove the toolset still
+> builds before you spend rollouts:
+> ```bash
+> # Apply the candidate, then build the toolset the way the HARNESS builds it and list what
+> # registered. The last line is harness-specific -- substitute your runner's own construction
+> # call; the point is that it must be the real one, not an import.
+> python -c "import sys; sys.path.insert(0,'<project>/adapters'); from adapter import Adapter; \
+> from pathlib import Path; Adapter().apply(Path('<candidate_dir>')); \
+> tools = <your harness's get_tools() call>; \
+> print(len(tools), sorted(t.name for t in tools))"
+> ```
+> An import check is NOT enough — the file imported fine; it was *registration* that failed. If
+> the adapter exposes a render/validate helper, call that instead and keep it in the loop.
 
 **Read this skill in full before editing. Ship MULTIPLE fixes per iteration — but
 every one must be REAL (targets a currently-failing task), SAFE (cannot change a
