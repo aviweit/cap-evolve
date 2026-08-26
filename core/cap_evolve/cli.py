@@ -656,6 +656,29 @@ def _cmd_run(argv):
         # run print TWO json documents, so `cap-evolve run | jq` could not parse it.
         if _stderr_is_usable():
             print(json.dumps(status), file=sys.stderr, flush=True)
+    # How the candidate will be DELIVERED (spec `runtime:`). Checked here, before any
+    # step runs: for an out-of-process runtime a dead stack makes every candidate's
+    # deployment fail, and since that is correctly per-candidate infra noise, the run
+    # would not crash — it would error every rollout and finish having measured nothing.
+    from . import runtime as _runtime
+    try:
+        if args.plan_only:
+            # --plan-only prints the plan and executes nothing, so it must not preflight:
+            # preflight STARTS a provisioned-but-stopped stack, which would give an
+            # inspection flag service side effects (and fail outright when the stack is
+            # not provisioned at all). The declared VALUE is still validated — that is
+            # offline, so an unknown runtime is refused here too.
+            runtime_rec = {"runtime": _runtime.declared(spec)}
+        else:
+            runtime_rec = _runtime.preflight(spec, skills, skills_dir)
+    except _runtime.RuntimeError_ as e:
+        err = {"error": str(e), "step": "runtime-preflight"}
+        print(json.dumps(err))
+        print(f"runtime preflight failed: {e}", file=sys.stderr)
+        return 1
+    if not args.plan_only and _stderr_is_usable():
+        print(_runtime.describe(runtime_rec), file=sys.stderr, flush=True)
+
     cap_path = spec.get("capability_path", "seed_capability")
     ratios = f"{spec.get('split_train',0.5)},{spec.get('split_val',0.25)},{spec.get('split_test',0.25)}"
 
@@ -720,6 +743,7 @@ def _cmd_run(argv):
                           "spec_path": str(spec_path), "spec": spec,
                           "optimizer": optimizer_name, "optimizer_cmd": opt_cmd,
                           "algorithm": algorithm_name, "focus": algorithm_focus,
+                          "runtime": runtime_rec,
                           "target_model": spec.get("target_model", ""),
                           "orchestration_mode": orchestration_mode,
                           "gate_mode": spec.get("gate_mode", "auto (paired)"),

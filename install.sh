@@ -67,7 +67,7 @@ echo "  from: $SRC"
 echo "  to:   $DEST"
 
 shopt -s nullglob
-COMPONENTS=(orchestrate phases capabilities algorithms optimizers)
+COMPONENTS=(orchestrate phases capabilities algorithms optimizers runtimes)
 for comp in "${COMPONENTS[@]}"; do
   for skill in "$SRC/$comp"/*/; do
     [[ -d "$skill" ]] || continue
