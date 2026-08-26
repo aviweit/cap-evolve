@@ -8,6 +8,314 @@ All notable changes to cap-evolve are documented here. The format follows
 [0.1.0]: https://github.com/skillberry-ai/cap-evolve/releases/tag/v0.1.0
 
 ## [Unreleased]
+### Fixed
+- **Review follow-ups (PR #399).** Three findings from code review, all in the agent-optimize
+  host: (1) `_CODE_SUFFIXES` was a 14-entry allowlist, so a capability whose code is C, C++, C#,
+  PHP, Swift, Kotlin or Objective-C was treated as prose and never got the "the form that works
+  is a guard in the code" advice — the same silent miss this host was fixed for on `.py`/`.js`,
+  relocated to whichever language nobody listed. The set is broadened across scripting, shell,
+  compiled, functional and query languages and is now documented as **known-good, not
+  exhaustive**, so absence reads as a gap to fill rather than a decision that the language is
+  prose. (2) A *declared* capability with no matching skill package was skipped by
+  `harness._stage_context` while the payload still said `staged: True`, making
+  some-capabilities-missing indistinguishable from everything-staged — while the all-missing case
+  had always been loud. The context now carries `guidance_missing` and emits a `::warning::`
+  naming the capability, since silently optimizing a surface with no allowed-edit-space brief is
+  the exact defect this host was opened to fix. (3) A stray blank line after the concurrency
+  guard's `return 2`.
+
+- **The end_turn diagnosis accused a complete run of abandoning work.** Run 32871360361 booked 4
+  of 10 rounds, investigated a round-5 lever, judged the residual failure unfixable by the
+  surfaces it owned, **sealed test itself**, wrote its report and stopped at 121 of 1650 turns.
+  The host told the operator it had "stopped of its own accord … which is what a turn ending on
+  outstanding work looks like … a backgrounded job … cannot resume a non-interactive run" —
+  the exact defect the warning was written for, on a run that was complete and honest. Two facts
+  already in the payload disprove it: `seal == "agent"` (a loop that dies mid-turn leaves the
+  host to seal, as run 32814848187 did) and an empty `unbooked_rounds`. The diagnosis now
+  branches on both and reports unspent rounds as **under-use** — "it stopped when it ran out of
+  edits it trusted, not when it ran out of rounds" — while the foreground explanation is kept for
+  the case that actually produced it. The "a candidate may never have been committed" hedge no
+  longer fires when the backstop came back clean, since it sent readers hunting for a candidate
+  that provably did not exist.
+
+- **A parent-gated round discarded the drift-free comparison it had already paid to measure.**
+  Run 32871360361 round 4 gated in `parent` mode: `cand4` at 0.53 against the seed's *stored* 0.38
+  = +0.15, bar 0.11 (drift), so 1.4x — marginal. The same round's two concurrent controls both
+  read **exactly 0.27**, so the drift-free answer from the identical rollouts is **+0.26 against a
+  bar of 0.00**. The 0.11 belongs to *when* the seed was measured, not to `cand4`; parent-mode
+  gating understated the effect and inflated the bar simultaneously. Each candidate now also
+  carries `control_relative` — the same gate re-run against the concurrently-measured control,
+  costing no rollouts since the controls are already evaluated — so where the two comparisons
+  disagree, the difference is visibly drift rather than the edit. Reported rather than made the
+  default: changing the default gate mode on one benchmark's drift would be a guess about every
+  other workload, while an extra comparison is strictly more information and agrees with the
+  primary one wherever there is no drift.
+
+- **A reject that overrode the gate was recorded as the gate's own verdict.** `--reject-basis
+  gate` is documented as "full-val paired gate ran", and run 32871360361 booked it for `cand2` —
+  which `round_i1.json` recorded as `verdict: accept` at +0.19 against a concurrent control. So
+  `events.jsonl`, the run's audit record, said the gate had rejected the best candidate of the
+  run when the driver had in fact overridden it. Overriding is legitimate — `round.py` leaves the
+  decision to the driver deliberately — but misattributing it is not, and provenance is the one
+  thing that log exists to get right. `commit.py` now reads the candidate's verdict from the
+  persisted round table (possible only because `round.py` stopped leaving stdout the sole copy),
+  refuses `--reject-basis gate` when the gate accepted, and offers `driver_judgement` as the
+  truthful basis for an override. Every booked decision now carries `gate_verdict` and
+  `overrode_gate`, so a divergence is visible rather than lost.
+
+- **A round's verdict could be decided by which control replicate happened to be the
+  reference.** On run 32871360361 round 3, two byte-identical control replicates measured two
+  minutes apart read **0.32 and 0.20** — a 0.12 gap. The gate reference was whichever carried the
+  round-scoped tag (0.20), so `cand3` at 0.37 scored +0.17 and **accepted**; against the other
+  replicate it is +0.05 and rejects. Nothing in the table said the verdict rested on that coin
+  flip. Each candidate is now re-gated against *every* control replicate — which costs no new
+  rollouts, since `gate_check.py` reads what is already stored — and the table reports
+  `verdict_by_reference` plus `verdict_stable`. A verdict that flips is downgraded to
+  `inconclusive`, because a round that cannot tell an edit from re-measurement has not measured
+  anything, whatever the delta looked like against the replicate that happened to be picked.
+
+  For context on why this matters at this scale, the same run's replicate gaps were 0.00, 0.01
+  and 0.12 across three rounds: with two replicates the gap is itself a poor estimate of the
+  noise, so the stability check — a direct observation rather than an estimate — is the more
+  reliable signal.
+
+- **The round table gave the driver two incompatible noise bars, and it rejected the run's best
+  candidate on the wrong one.** On run 32871360361 round 2, `cand2` was gated against a control
+  measured in that same round (0.24, its replicate 0.25 — agreeing to 0.01) and beat it by
+  **+0.19**, three times the `k_se=1.0` threshold. The table also reported
+  `noise_floor_from_control = 0.14`, which is the control-vs-**stored**-parent gap — temporal
+  drift — and its `reading` said to treat any candidate at or below the floor as no evidence.
+  Those are different baselines, so the driver resolved the contradiction conservatively:
+  re-derived `+0.05` against the stored best and booked a **reject**, with the note *"round noise
+  floor 0.14 > margin"*. A real improvement was discarded because the instrument asked it to
+  compare a control-relative delta against a drift-derived floor. The table now reports a single
+  `evidence_bar` matched to how the round actually gated — the replicate gap under
+  `--gate-against control`, where drift is already cancelled; the larger of the replicate gap and
+  the drift under `--gate-against parent`, where every delta carries it — and the `reading` says
+  that drift bounds how far the **absolute** rewards can be trusted rather than being a bar a
+  concurrently-gated candidate must clear, and explicitly tells the driver not to re-derive a
+  delta against the stored parent and reject on that.
+
+- **`round.py` reported the control's reward under the parent's tag, hiding the round's own
+  drift.** Line 214 loaded `parent` from `gate_ref` — which under `--gate-against control` is
+  the concurrently-measured control — while the output block emitted it with `"tag": best`. On
+  run 32871360361 that printed `parent: {tag: "seed", reward: 0.34}` while `baseline.json`
+  recorded the seed at 0.38, a discrepancy no reader could reconcile. Not cosmetic: the gap
+  between the parent's stored reward and a byte-identical control measured *now* IS the round's
+  temporal drift, and on this benchmark the same seed bytes scored 0.24 / 0.44 / 0.38 across
+  three runs the same day (sd 0.103, ~3.7x the acceptance bar) — so collapsing the two erased
+  the one number that says whether any delta in the table means anything. The table now carries
+  `parent` (the candidate being climbed from, read from `best`), `gate_reference` (what deltas
+  and thresholds are actually measured against), and `parent_vs_gate_ref_drift` with a reading
+  that names it as re-measurement, not progress. `delta_vs_parent` is renamed
+  `delta_vs_gate_ref`, because under control-mode gating it never was a delta against the
+  parent.
+
+- **Every candidate eval in agent mode could die `ModuleNotFoundError`, and did.** An arm's
+  adapter deps are installed into exactly one venv, and `run_suite.sh` runs `cap-evolve run`
+  with that interpreter — so on run 32861747778 the baseline scored 0.44 while *every* round-1
+  eval (candidate and control alike) crashed importing the adapter, scoring `null` rather than
+  zero. CI's `PATH` never contains that venv's bin, and SKILL.md tells the agent to run
+  `python "$A/round.py"`, so bare `python` could never resolve to the interpreter that works;
+  the run before it had survived on luck, and with no transcript kept not even the luck was
+  inspectable. Fixed as a guard rather than as prose — the interpreter that launched the host
+  *is* the correct one (`run_suite.sh` invokes `"$PY" host.py`), so its bin dir now goes first
+  on the agent's `PATH` and every existing `python …` command in the skill becomes correct by
+  construction. The briefing also names it as `$PY` and says not to substitute another
+  interpreter, `uv run`, or a fresh venv.
+
+- **A gate too coarse to resolve its own verdict is now refused, not warned about.** The same
+  run gated at `--concurrency 100` *after* SKILL.md had told it "do not raise it to buy wall
+  clock", and `round.py`'s own table then carried "a verdict from this round can therefore not
+  resolve an effect smaller than roughly 0.08" while the run continued and booked decisions
+  regardless. This skill's own edit-form rule applies to the skill itself: where the agent has
+  the criterion and violates it anyway, the form that works is a guard in code, not a further
+  restatement in prose. `round.py` now exits 2 above concurrency 25 — where the measured
+  degradation is established — naming the value to use instead, with
+  `--allow-high-concurrency` to record the trade deliberately. Refusal, not a silent clamp, is
+  already this script's idiom for an incoherent request. The briefing states the concurrency
+  alongside `num_trials` and `gate_k_se`, because a number it never states is a number the
+  agent picks.
+
+### Added
+- **The run now keeps the agent's own transcript.** Four hours of run 32814848187 were
+  unaccounted for *and unaccountable*: its 900 metric calls account for every evaluation in
+  `events.jsonl` and none fall in the gap, so nothing was being measured — but the only record
+  of what the agent itself did was an 800-char `stdout_tail`, which narrows the cause to
+  "something hit the 4-hour Bash ceiling" and no further. `--output-format json` cannot close
+  that: it returns one result object with the final text and the totals, never the turns. So
+  `run-optimizer` takes `--transcript <path>`, and the registry carries a separate
+  `transcript_flag` (`--output-format stream-json --verbose`, verified against Claude Code
+  2.1.241) used *instead of* `json_flag` only when a transcript is requested — its last line is
+  the same result object, so cost and stop parsing are unchanged and the deterministic
+  per-iteration path is untouched. `host.py` points it at `$R/host/transcript.jsonl`, beside
+  the `driver_prompt.md` it already writes, so the run dir holds both what was asked for and
+  what was done. Secret values are scrubbed before the file is written: a transcript records
+  tool results verbatim and the run dir is a published artifact, so one `env` the agent
+  happened to run would otherwise leak the gateway token. It is published into the uploaded
+  dir directly (gzipped), *not* through the UI export: the artifact path is `$OUT/**` while the
+  run dir sits elsewhere, and `export_static` caps every file at 256 KiB keeping the FIRST
+  chunk — one turn of stream-json is already 17 KB, so the cap would have discarded exactly the
+  end-of-run evidence the transcript exists to provide. `terminal_reason` and
+  `permission_denials` join the captured stop fields — the latter distinguishes "blocked by the
+  tool allowlist" from "chose to stop", which were previously the same observation.
+
+### Fixed
+- **An explicit `iterations` dispatch was silently ignored on the smoke tier.**
+  `ITERATIONS: ${{ matrix.tier == 'smoke' && '3' || inputs.iterations || '10' }}` put the tier
+  pin first, and GitHub's `||` yields the first truthy operand — so dispatching smoke with
+  `iterations: 10` ran 3, discoverable only by reading `ITERATIONS` in the job log after the
+  budget had been spent on the wrong round count. Smoke is the tier the algorithm itself gets
+  iterated on, which makes it the worst one to pin unreachably. `NUM_TRIALS` already had this
+  right, including why its input default is `""` (with a non-empty default there is no way to
+  tell "asked for 10" from "asked for nothing"); `iterations` now has the same shape, and a
+  test asserts the two agree so the next edit to either notices.
+
+- **The hosted agent ended its turn to wait for a notification, and the process exited under
+  it.** With the turn budget raised to 600, run 32814848187 no longer ran out of turns — it
+  used 78 and stopped anyway, on `subtype: success` / `stop_reason: end_turn`, rc 0. It had
+  launched round 2's full-val gate in the background and ended its turn to await word back.
+  In a non-interactive run there is nothing to come back to: ending a turn ends the process
+  and orphans its children. The gate finished **14 minutes after the agent was gone**, wrote a
+  real verdict (`r2_comm_search` val 0.44 vs parent 0.58 → reject) that nobody read, and left
+  2 of 3 rounds unspent — while the orphaned evals were still hitting the runner as
+  `measure.py` measured the seal. Three changes, none of which restricts concurrency: the
+  briefing now states that the *main loop* runs in the foreground and that the turn which
+  launched work is the turn that collects it — fanning out subagents or a whole round's evals
+  stays encouraged, since delegating the work is not the same as detaching the wait; `round.py`
+  persists its gate table under `$R/work/` instead of leaving stdout the only copy, so an
+  abandoned round's verdict is evidence rather than a redirect the driver may have skipped; and
+  the host reports `unbooked_rounds` — candidates a round gated to a verdict that no
+  `commit.py` ever booked — which `spent.iterations` cannot distinguish from a round never
+  attempted. It reports rather than books: which decision a verdict deserves is the driver's
+  judgement, and booking an accept after `measure.py` had sealed against the old `best_id`
+  would turn a visible gap into a wrong headline number.
+
+- **`incomplete` gave turn-budget advice to an agent that was not turn-starved.** One message
+  served both stop causes and fit only the first. Run 32733635494 died on `error_max_turns`,
+  where "raise `optimizer_max_turns` or lower the round count" was exactly right; run
+  32814848187 stopped at 78 of 600 turns, and the same sentence pointed the operator at a knob
+  already 7× larger than what the agent used. The diagnosis now splits on the stop cause, and
+  reads the agent's own `stop_reason` alongside the harness's `subtype` — the discriminator is
+  the former (`end_turn`), while the latter says only `success`, which is why a voluntary stop
+  was indistinguishable from a clean finish. `--seal-only`, the path an operator reaches for on
+  a run that died mid-loop, reports abandoned rounds too.
+
+- **Agent-mode optimizer cost was reported as $0.00 on every run.** `run-optimizer` nests the
+  figure under `cost.total_cost_usd`; the host read a flat `cost_usd`/`usd` and booked `0.0`.
+  Smoke run 32733635494 spent **$8.37** (68,432 tokens) and recorded nothing — and because that
+  is indistinguishable from the genuinely-unmetered gateway the skill warns about, the wrong
+  conclusion was drawn from it twice. A dollar ceiling cannot bind what it cannot see: with 0.0
+  booked, `max_usd` and `spend.py`'s dollar predicates were inert for the whole run.
+
+- **The host now says WHY the agent stopped, and refuses to let an unfinished run look
+  finished.** `run-optimizer` passes through the agent CLI's termination fields (`subtype`,
+  `num_turns`, `is_error`, …) — vendor-neutral, like its cost parsing, and useful to the
+  deterministic path too, where an exit code of 0 also covers both "finished" and "hit
+  `--max-turns` with work outstanding". The host reports `stop_reason` / `num_turns` /
+  `rounds_booked` / `rounds_budget`, and emits an `incomplete` field plus a `::warning::` when
+  rounds were left unspent. On the run that prompted this, that state had to be reconstructed
+  from a truncated stdout tail.
+
+- **Agent mode was starved of turns.** `optimizer_max_turns` (default 80) is a
+  *deterministic-path* unit: there one optimizer invocation means "propose one edit and stop",
+  and the harness owns diagnosis, evaluation and gating. In agent mode the same allowance must
+  also cover Phase 0, diagnose, the null-control replicates, `round.py` orchestration,
+  `gate_check` and `commit.py` — per round. At 240 turns (80 × 3) run 32733635494 bought **1.9
+  rounds**: the agent stopped on `error_max_turns` having just evaluated a candidate at val
+  **0.530**, the best of the run, and never reached the `commit.py` that would have booked it.
+  So it reported 1 of 3 rounds and discarded its best result. The host budget is now
+  `max(optimizer_max_turns, 150) × (rounds + 1)` — a floor of 150/round against the ~126
+  measured, with the `+1` paying for the work that is not a round (Phase 0 and the seal). A
+  raised `optimizer_max_turns` still wins, so the floor is not a clamp.
+
+### Changed
+- **`OptimizerContext` gained a public seam, and the agent-mode host now reuses it instead of
+  hand-rolling equivalents.** The class docstring already said it exists so "an algorithm cannot
+  silently run on a thinner prompt than its siblings"; the host was the one caller that
+  re-authored the blocks, and the measured consequence was an optimizer that only ever edited
+  prose. Two of those blocks turn out to be exactly the guidance it was missing:
+  `harness._CAP_EDIT_SPACE["tools"]` ("HIGHEST-LEVERAGE EDIT: WRITE A NEW CODE-BEARING TOOL …
+  a deterministic tool can't be 'forgotten' the way a prompt rule can") and the target-reader
+  block ("when the reader is weaker than you, prefer explicit rules, worked examples, and code
+  enforcement over terse prose") — the CI agent under test being `aws/gpt-oss-120b`, precisely
+  that weak reader.
+
+  New public surface, all additive: `OptimizerContext.from_spec()` (construct from a
+  `capevolve.yaml` dict rather than argparse args, resolving the target profile the same way),
+  `capability_brief()`, `reader_brief()`, `empty_seed_brief()`, and `render_template()` (fills a
+  template's slots for a caller that is not a per-iteration one, blanking only the four
+  genuinely per-iteration slots). Plus `specfile.resolve_instructions_file()`, now the single
+  resolver for `optimizer_instructions_file` — `cli.py` calls it too, so the rule and its #252
+  warning exist once.
+
+  What the host deliberately does **not** reuse is `instructions()`: it renders the
+  per-iteration contract ("fix many root causes in this ONE candidate and STOP; the harness
+  re-scores you"), which is false where the agent owns the search, the evaluation and the gate.
+  The blocks are composed instead. Recorded on the class so the next reader does not "fix" it.
+
+  Net: three hand-rolled duplicates deleted from `host.py` (`_guidance_section`,
+  `_arm_instructions`, `_strip_template_slots`), its registry lookup delegated to
+  run-optimizer's own `load_registry`, and its code-vs-prose advice removed in favour of the
+  shared block that states it better. `empty_seed_brief` also closes a real gap: a no-skill
+  control arm (one that blanks the seed to measure "author from nothing") previously got no
+  author-from-scratch guidance in agent mode at all.
+
+### Fixed
+- **Three ways the agent-mode host was accidentally shaped around one benchmark.** Found by
+  auditing it against the repo's other workloads rather than by a failing run:
+
+  - **A project's `optimizer_instructions_file` was silently dropped.** `cli.py` applies that key
+    only for `algorithm_name in OPTIMIZER_CONTEXT_ALGORITHMS` (hill-climb / gepa / skillopt), so
+    agent mode ignored it. That is dangerous, not merely lossy: one arm uses that file to state
+    that the `{placeholders}` in its second editable file are load-bearing and that breaking one
+    makes EVERY task score 0 (the agent is never told where to write its answer). An agent that
+    never saw the warning could wipe the run's whole signal with an edit that looks harmless. The
+    host now reads and includes it — and reports a spec-named path that does not exist instead of
+    silently downgrading to generic guidance (the #252 failure mode).
+
+    Included with its **scope stated**, not pasted in: that file is written for the deterministic
+    per-iteration optimizer and tells the agent to stop after editing and not to evaluate, because
+    there the harness re-scores the candidate. In agent mode the agent owns the evaluation and the
+    gate, so an agent obeying that line would never gate anything. Benchmark facts bind; the
+    process half is explicitly superseded. Its unrendered `{{SLOT}}` template markers are stripped
+    too — the parity test already treats those as a defect on the deterministic side.
+
+  - **Code-vs-prose advice was offered to capabilities with no code.** The briefing told every
+    multi-file capability that "a rule the agent violates usually belongs in code as a guard".
+    For a two-prose-file capability (a system prompt plus a task template) that sends the agent
+    looking for code it does not own — how a prompt-only run once ended up editing `adapter.py`.
+    Now conditional on the surface actually containing code.
+
+  - **A large capability would have had every file listed.** A skill-package capability runs to
+    dozens of files; enumerating them crowded out the rest of the briefing. Now grouped by
+    directory above 20 files, stating the true total and how many are not listed individually,
+    and telling the agent to enumerate the rest itself — a bounded listing that never reads as
+    the complete surface.
+- **The hosted agent now gets the same optimizer read-context as every other algorithm.** Two
+  agent-optimize CI runs on a `[system-prompt, tools]` capability edited **only the prompt file**
+  across 4 of 4 candidates; the tool code sat writable and unopened in the same candidate dir. The
+  cause was not the spec and not the file list. `harness.OptimizerContext` exists so "an algorithm
+  cannot silently run on a thinner prompt than its siblings" — it stages each declared
+  capability's skill as `./guidance/<cap>/` *and* where the agent natively discovers skills, plus
+  the diagnose method, `capability_sources`, and the agent's features reference. The host never
+  called it, so the agent had guidance for prose and **none at all** for the tool code beside it,
+  and did what it had guidance for.
+
+  `test_optimizer_context_parity.py` had already named this hole in its own docstring:
+  agent-optimize "declares none of the context flags and drives its own loop… an algorithm absent
+  from [ALGORITHMS] is NOT covered — it can still run blind while this file stays green." It ran
+  blind. `host.py` now calls `inject()` with the agent as the optimizer row, and reports whether
+  staging succeeded — silently-off is indistinguishable from working while quietly optimizing less
+  surface, which is exactly how this went unnoticed.
+
+  Two consequences of reusing that path, both handled: the briefing points at the staged guidance
+  (unread guidance is not guidance), and the always-on `CLAUDE.md` it writes opens with "read
+  `./INSTRUCTIONS.md` FIRST" — true for the deterministic optimizer, which has one, so the host
+  writes the briefing there too (same bytes as the run-dir audit copy) and states that
+  `LEDGER.md` / `RUNMAP.md` / `prior_iterations/` belong to the other loop and are legitimately
+  absent.
+
 ### Added
 - **The benchmarks suite can run `agent-optimize`.** Until now `run_suite.sh` hardcoded
   `algorithm_skill: hill-climb`, so the fully-agentic algorithm was unreachable from CI — and

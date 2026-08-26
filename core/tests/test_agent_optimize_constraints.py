@@ -342,3 +342,200 @@ def test_full_val_ceiling_is_not_computable_without_coverage():
 
     assert "status" in full_val_ceiling([], [], [], [])
     assert "accept_possible" not in full_val_ceiling([_pt("a", 1.0)], [], ["a"], ["a"])
+
+
+# --- run 32861747778: a gate at concurrency 100 -------------------------------
+
+def _round_rc(*extra, run_dir="/nonexistent", concurrency="100"):
+    """Invoke round.py's guard. Dummy paths: the refusal must precede any run-dir access."""
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _P
+    here = _P(__file__).resolve().parents[2] / "skills/algorithms/agent-optimize/scripts"
+    p = _sp.run([_sys.executable, str(here / "round.py"), "--run-dir", run_dir,
+                 "--project", run_dir, "--candidates", "c1", "--n-trials", "1",
+                 "--concurrency", concurrency, *extra],
+                capture_output=True, text=True)
+    try:
+        return p.returncode, _json.loads(p.stdout or "{}")
+    except Exception:
+        return p.returncode, {"stdout": p.stdout, "stderr": p.stderr}
+
+
+def test_a_gate_too_coarse_to_resolve_its_own_verdict_is_refused_not_warned():
+    """Measured: the agent set --concurrency 100 after SKILL.md told it not to.
+
+    round.py already warned in its own output ("cannot resolve an effect smaller than roughly
+    0.08") and the run continued regardless, producing verdicts nobody should believe. This
+    skill's own edit-form rule applies to the skill: where the agent has the criterion and
+    violates it anyway, the form that works is a guard in the code, not another restatement in
+    prose. `--gate-against control --no-control` is already refused this way, so refusal — not
+    a silent clamp — is the established idiom here.
+    """
+    rc, out = _round_rc()
+    assert rc == 2, f"concurrency 100 was accepted: rc={rc} {out}"
+    blob = json.dumps(out).lower()
+    assert "concurrency" in blob, f"the refusal does not name the offending knob: {out}"
+    assert "8" in json.dumps(out), f"the refusal should name the value to use instead: {out}"
+
+
+def test_the_high_concurrency_refusal_has_a_deliberate_escape_hatch():
+    """A hard wall would break any tier that legitimately needs throughput; the point is that
+    raising it must be an explicit, recorded choice rather than a default someone drifts into.
+    """
+    rc, out = _round_rc("--allow-high-concurrency")
+    assert rc != 2 or "concurrency" not in json.dumps(out).lower(), (
+        f"the escape hatch does not bypass the concurrency guard: rc={rc} {out}")
+
+
+def test_the_default_concurrency_is_not_refused():
+    """The guard must be silent on the value the skill actually documents."""
+    rc, out = _round_rc(concurrency="8")
+    blob = json.dumps(out).lower()
+    assert not (rc == 2 and "concurrency" in blob), (
+        f"the documented default was refused by its own guard: rc={rc} {out}")
+
+
+def test_the_round_table_does_not_report_the_controls_reward_under_the_parents_tag():
+    """Measured on run 32871360361: `parent: {tag: 'seed', reward: 0.34}` while
+    `baseline.json` said the seed scored 0.38 — because line 214 loads `parent` from
+    `gate_ref` (the CONTROL under --gate-against control) and line 266 emits it with
+    `"tag": best`. Two different objects in one block, irreconcilable for anyone reading it.
+
+    This is not cosmetic. The true parent vs the concurrently-measured control IS the round's
+    temporal drift — the quantity that decides whether any delta means anything, measured at
+    0.24/0.44/0.38 on identical seed bytes across three runs — and conflating them erases it.
+    So the table must carry both, and the delta key must name what it is really measured
+    against.
+    """
+    import pathlib  # noqa: PLC0415
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "skills/algorithms/agent-optimize/scripts/round.py").read_text(encoding="utf-8")
+
+    assert '"delta_vs_parent"' not in src, (
+        "delta_vs_parent is computed against gate_ref, which under --gate-against control is "
+        "the control, not the parent — the key name lies")
+    assert '"delta_vs_gate_ref"' in src, "the delta key must name its actual reference"
+    assert '"gate_reference"' in src, (
+        "the table must report the object deltas were computed against, separately from the "
+        "parent it is climbing from")
+    assert '"parent_vs_gate_ref_drift"' in src, (
+        "the parent-vs-control gap is the round's own drift measurement and must be reported, "
+        "not left for a reader to reconstruct from baseline.json")
+    # The true parent must be read from `best`, never from gate_ref.
+    assert "split_result_from_rollouts(run_dir, best," in src, (
+        "the parent block still sources its reward from gate_ref rather than from `best`")
+
+
+def test_the_round_states_ONE_evidence_bar_matched_to_how_it_gated():
+    """Measured on run 32871360361 round 2: the table handed the driver two incompatible bars
+    and it took the wrong one.
+
+    `cand2` was gated against a CONCURRENT control (0.24, replicate 0.25 — agreeing to 0.01) and
+    beat it by +0.19, three times the k_se threshold. But the table also reported
+    `noise_floor_from_control = 0.14`, which is the control-vs-STORED-parent gap, i.e. temporal
+    drift — and its `reading` said "treat any candidate whose |delta| is at or below that as no
+    evidence". Comparing a control-relative delta against a drift-derived floor is apples to
+    oranges, and the driver resolved the ambiguity conservatively: it re-derived +0.05 against
+    the stored best and booked a REJECT on a candidate that had cleared its concurrent control
+    nineteen times over.
+
+    Drift is exactly what control-mode gating removes, so under that mode the bar is the
+    replicate null delta. Under parent-mode gating the delta IS against a stored reward, so
+    drift belongs in the bar. One number, named, matched to the mode.
+    """
+    import pathlib  # noqa: PLC0415
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "skills/algorithms/agent-optimize/scripts/round.py").read_text(encoding="utf-8")
+
+    assert '"evidence_bar"' in src, (
+        "the round must state ONE bar the candidate delta is judged against, or the driver "
+        "picks between the several numbers reported and may pick the wrong one")
+    # It must be mode-aware: the replicate gap under control gating, drift-inclusive otherwise.
+    bar = src[src.index('"evidence_bar"'):]
+    bar = bar[:bar.index("\n\n")] if "\n\n" in bar[:1500] else bar[:1500]
+    assert "gate_against" in bar or "control" in bar, (
+        f"evidence_bar is not matched to the gate mode: {bar[:400]}")
+    # And the drift must be described as affecting the absolute number, not as a bar to clear.
+    assert "absolute" in src.lower(), (
+        "nothing tells the reader that drift bounds the trustworthiness of the ABSOLUTE reward "
+        "rather than the candidate-vs-control comparison")
+
+
+def test_a_verdict_that_flips_with_the_choice_of_control_replicate_is_marked_unstable():
+    """Measured on run 32871360361 round 3: the verdict was decided by a coin flip.
+
+    Two byte-identical control replicates, measured two minutes apart, read 0.32 and 0.20 — a
+    0.12 gap. The gate reference was whichever one carried the round-scoped tag (0.20), so
+    `cand3` at 0.37 scored +0.17 and ACCEPTED. Against the other replicate it is +0.05 and
+    rejects. Nothing in the table said the verdict rested on that choice.
+
+    Re-gating against each replicate costs no new rollouts — they are already stored — so the
+    round can simply report whether its verdict survives every reference it could have used. One
+    that does not is not evidence, however large the delta looks against the replicate that
+    happened to be picked.
+    """
+    import pathlib  # noqa: PLC0415
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "skills/algorithms/agent-optimize/scripts/round.py").read_text(encoding="utf-8")
+
+    assert '"verdict_stable"' in src, (
+        "the table does not say whether the verdict survives the choice of control replicate, "
+        "so a coin-flip accept is indistinguishable from a real one")
+    assert '"verdict_by_reference"' in src, (
+        "the per-replicate verdicts must be shown, not just a boolean, or nobody can see how "
+        "close the call was")
+    assert "unstable" in src.lower(), (
+        "the reading must tell the driver an unstable verdict is not evidence")
+
+
+def test_rejecting_a_candidate_the_gate_ACCEPTED_cannot_claim_the_gate_as_its_basis():
+    """Run 32871360361's audit log says cand2 was rejected on basis `gate`. The gate accepted it.
+
+    `--reject-basis gate` is documented as "full-val paired gate ran", so anyone reading
+    events.jsonl concludes the gate rejected the candidate. In fact round_i1.json recorded
+    `verdict: accept` at +0.19 against a concurrent control, and the driver overrode it on its own
+    reading of the drift. Overriding is legitimate — round.py explicitly leaves the decision to
+    the driver — but recording it as the gate's own verdict makes the run's history wrong about
+    the one thing it exists to preserve.
+
+    commit.py already refuses an incoherent basis ("--reject-basis is meaningless on an accept"),
+    so the idiom exists; it just could not see the gate's verdict until round.py started
+    persisting its table.
+    """
+    import pathlib  # noqa: PLC0415
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "skills/algorithms/agent-optimize/scripts/commit.py").read_text(encoding="utf-8")
+
+    assert "driver_judgement" in src, (
+        "there is no truthful basis for an override, so a driver that disagrees with the gate has "
+        "no honest option but to misattribute the reject to the gate")
+    assert "gate_verdict" in src, (
+        "the booked event must carry the gate's own verdict, so a divergence between what the "
+        "gate said and what was booked is visible in events.jsonl rather than lost")
+    assert "overrode_gate" in src, (
+        "an override must be marked as one in the audit record")
+
+
+def test_a_parent_gated_round_still_reports_the_drift_free_comparison_it_measured():
+    """Run 32871360361 round 4 held both answers in one table and printed only the weaker one.
+
+    It gated in `parent` mode: `cand4` 0.53 against the seed's STORED 0.38 = +0.15, bar 0.11
+    (drift), so 1.4x — marginal. But the round also measured two concurrent controls that read
+    **exactly 0.27 both times**, so the drift-free comparison from the very same rollouts is +0.26
+    against a bar of 0.00. The 0.11 is a property of *when* the seed was measured, not of `cand4`;
+    parent-mode gating both understated the effect and inflated the bar.
+
+    Rather than change the default gate mode on one benchmark's evidence, report both: the
+    control-relative comparison costs no rollouts (the controls are already evaluated and
+    `gate_check.py` reads stored data), and on a benchmark without drift the two simply agree.
+    """
+    import pathlib  # noqa: PLC0415
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "skills/algorithms/agent-optimize/scripts/round.py").read_text(encoding="utf-8")
+
+    assert '"control_relative"' in src, (
+        "a parent-gated round throws away the drift-free comparison it already paid to measure, "
+        "so a real improvement can read as marginal with no way to see why")
+    assert "drift" in src.lower(), "the report must name what separates the two comparisons"

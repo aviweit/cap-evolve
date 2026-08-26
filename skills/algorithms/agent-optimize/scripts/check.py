@@ -607,6 +607,17 @@ def _round_control(c: Checker, tmp: Path) -> None:
         c.check("commit" in (r.get("next") or ""),
                 "round.py must hand the accept/reject decision back to the driver",
                 note="round.py never commits: which part of a bundle to keep is a judgement")
+        # The table must survive on disk, not only on stdout. A driver that forgot to redirect
+        # left the round's gate verdict nowhere: on run 32814848187 the abandoned round was
+        # reconstructible only because the driver happened to have redirected it somewhere
+        # someone guessed. host.py's un-booked-round backstop reads these files.
+        table = r.get("table_path") or ""
+        c.check(bool(table) and Path(table).is_file()
+                and Path(table).parent == work
+                and json.loads(Path(table).read_text(encoding="utf-8")).get("candidates"),
+                f"round.py did not persist its gate table under $R/work/ (got {table!r})",
+                note="the round's verdict is the run's evidence; it must not depend on the "
+                     "driver remembering to redirect stdout")
 
     # A round whose --n-trials differs from the parent's must be able to pair against the
     # control instead, or every delta silently carries a precision mismatch.
@@ -1024,10 +1035,25 @@ def _gate_concurrency(c: Checker, tmp: Path) -> None:
     """
     src = (HERE / "round.py").read_text(encoding="utf-8")
     m = re.search(r'"--concurrency",\s*type=int,\s*default=(\w+)', src)
-    c.check(bool(m) and m.group(1).isdigit() and int(m.group(1)) <= 12,
-            f"round.py --concurrency default is {m.group(1) if m else 'missing'}: a gate above "
+    # The default may be a literal or a named constant; resolve a name to its assignment so the
+    # check follows the value rather than the spelling (a name-only assertion would pass for
+    # DEFAULT_CONCURRENCY = 100).
+    got = m.group(1) if m else ""
+    if got and not got.isdigit():
+        nm = re.search(rf'^{re.escape(got)}\s*=\s*(\d+)', src, re.M)
+        got = nm.group(1) if nm else got
+    c.check(bool(m) and got.isdigit() and int(got) <= 12,
+            f"round.py --concurrency default is {got or 'missing'}: a gate above "
             "~12 cannot resolve an effect smaller than the 0.08 a null control moves there",
             note="the gate's measurement concurrency defaults to a LOW value")
+    # …and the refusal bound above it must exist and be a real bound, or the default is only a
+    # suggestion the driver can step over — which is what it did.
+    mb = re.search(r'^MAX_RESOLVING_CONCURRENCY\s*=\s*(\d+)', src, re.M)
+    c.check(bool(mb) and int(mb.group(1)) >= int(got or 0)
+            and "allow-high-concurrency" in src and "return 2" in src,
+            "round.py must REFUSE a concurrency too coarse to resolve its own verdict, with a "
+            "deliberate escape hatch — warning about it in the output was not enough",
+            note="a gate the driver set too hot is refused, not warned about")
     c.check("concurrency_warning" in src and "measurement_concurrency" in src,
             "round.py must report measurement_concurrency and a concurrency_warning, so a "
             "verdict that cannot resolve the effect is not read as a clean one",

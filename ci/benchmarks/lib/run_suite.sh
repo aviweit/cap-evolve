@@ -81,13 +81,23 @@ case "$ALGORITHM" in
       _stop_usd="$(awk "BEGIN{printf \"%.2f\", ${OPTIMIZER_USD_PER_ITER:-0} * $_rounds}")"
       _stop_usd=" Stop if your own (optimization) spend reaches \$${_stop_usd}."
     fi
+    # NB the stopping rule deliberately does NOT stop on consecutive rejections. It used to
+    # ("stop when two consecutive rounds are rejected"), and that clause fired exactly where
+    # the algorithm prescribes ESCALATION instead: SKILL.md says "after two rejected rounds,
+    # read the candidate's TRACE before writing a third", because a reject usually means the
+    # edit FORM was wrong, not that the search is done. On smoke run 32701056043 the agent
+    # rejected two prose candidates and stopped — never reaching the round where it would have
+    # tried a code-level guard, which its own reject note ("require calculate tool for all
+    # money") had already identified as the right form. Rejections bound nothing; rounds and
+    # spend do.
     STOP_CONDITION="Spend at most ${_rounds} rounds, where a round is one candidate taken to a\
- full-val gate decision (accepted or rejected) and booked with commit.py. Stop early when\
- spend.py's recommendation is 'stop', or after ${_rounds} rounds, or when two consecutive\
- rounds are rejected with no new failure cluster left to attack.${_stop_usd} Gate every\
- candidate on FULL val at gate_k_se=${_k_se} over ${_trials} trial(s); never gate on\
- a screen subset. Always finish by sealing test exactly once with measure.py and writing\
- the report — a run with no finalize has no result."
+ full-val gate decision (accepted or rejected) and booked with commit.py. Stop when spend.py's\
+ recommendation is 'stop', or after ${_rounds} rounds.${_stop_usd} Do NOT stop early merely\
+ because rounds were rejected: a rejection is the signal to change the edit FORM or the SURFACE\
+ on the next round, not to finish. Use every round the budget allows. Gate every candidate on\
+ FULL val at gate_k_se=${_k_se} over ${_trials} trial(s); never gate on a screen subset. Always\
+ finish by sealing test exactly once with measure.py and writing the report — a run with no\
+ finalize has no result."
     ;;
   *)
     echo "::error:: unknown ALGORITHM='$ALGORITHM' (expected hill-climb-all |" \
@@ -530,7 +540,23 @@ RUN_DIR="$WORK/.capevolve/run_suite"
 # Budget: the whole loop is ONE agent process, so the per-iteration caps become whole-loop
 # caps (x the round count). 0 stays unlimited, as everywhere else in this workflow.
 if [ "$ORCH_MODE" = "agent" ]; then
-  HOST_TURNS="$(( ${OPTIMIZER_MAX_TURNS:-80} * ITER ))"
+  # TURN BUDGET. `optimizer_max_turns` (default 80) is a DETERMINISTIC-path unit: there one
+  # optimizer invocation means "propose one edit and stop", and the harness does the diagnosis,
+  # the evaluation and the gate. In agent mode that same allowance must additionally cover
+  # Phase 0 reading, diagnose, the null-control replicates, round.py orchestration, gate_check
+  # and commit.py — every round.
+  #
+  # Measured on smoke run 32733635494 (trials=10): 240 turns (80 x 3) bought 1.9 rounds. The
+  # agent stopped on error_max_turns having just evaluated a candidate at val 0.530 — the best
+  # of the run — and never reached the commit.py that would have booked it. So the run reported
+  # 1 of 3 rounds and discarded its best result.
+  #
+  # ~126 turns/round were actually consumed there, so the floor is 150/round, and the round
+  # count is +1 to pay for the work that is not a round: Phase 0 and the final seal. An
+  # operator who raises optimizer_max_turns above the floor still wins — the max() keeps this a
+  # floor, not a clamp.
+  HOST_TURNS_PER_ROUND=$(( ${OPTIMIZER_MAX_TURNS:-80} > 150 ? ${OPTIMIZER_MAX_TURNS:-80} : 150 ))
+  HOST_TURNS="$(( HOST_TURNS_PER_ROUND * (ITER + 1) ))"
   HOST_USD_ARGS=()
   if awk "BEGIN{exit !(${OPTIMIZER_USD_PER_ITER:-0} > 0)}"; then
     HOST_USD_ARGS=(--usd-budget "$(awk "BEGIN{printf \"%.2f\", ${OPTIMIZER_USD_PER_ITER:-0} * $ITER}")")
@@ -561,6 +587,25 @@ if [ "$BENCH" = "skillsbench" ]; then
 else
   git --no-pager diff --no-index "$seed_dir" "$opt_dir" > "$dst/capability.diff" 2>/dev/null || true
   [ -d "$opt_dir" ] && cp -R "$opt_dir"/. "$dst/optimized_capability/" 2>/dev/null || true
+fi
+
+# The agent's own record, into the dir that actually gets uploaded. The artifact path is
+# $OUT/**, while the run dir lives under suite_<tier>_<bench>_proj/ — run-dir files reach the
+# artifact ONLY through the UI export, which caps every file at 256 KiB and keeps the FIRST
+# chunk (dashboard/backend/capevolve_dashboard/files.py). A stream-json transcript runs to
+# megabytes and the part that shows where a run stalled is the END, so the cap would discard
+# exactly the evidence this was added to capture. Gzipped: ~10x on JSON, so full fidelity
+# costs the artifact very little.
+if [ -d "$RUN_DIR/host" ]; then
+  mkdir -p "$OUT/host"
+  for f in "$RUN_DIR/host"/*; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.jsonl|*.jsonl.stderr) gzip -c "$f" > "$OUT/host/$(basename "$f").gz" 2>/dev/null || true ;;
+      *) cp "$f" "$OUT/host/" 2>/dev/null || true ;;
+    esac
+  done
+  echo ">>> host record -> $OUT/host ($(du -sh "$OUT/host" 2>/dev/null | cut -f1))" >&2
 fi
 
 cat "$OUT/report.md"

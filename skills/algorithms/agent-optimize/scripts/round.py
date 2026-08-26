@@ -38,6 +38,12 @@ import _bootstrap  # noqa: F401  # side-effect import: seeds sys.path for cap_ev
 
 from cap_evolve import RunDir, harness
 
+#: Gate measurement concurrency. The default is deliberately low; the ceiling is where the
+#: measured degradation is established (~0.08 at the arm level above 25, ~0.03 at 8), so above
+#: it a verdict cannot resolve the effect the round is looking for and the round is refused.
+DEFAULT_CONCURRENCY = 8
+MAX_RESOLVING_CONCURRENCY = 25
+
 HERE = Path(__file__).resolve().parent
 SKILLS = Path(os.environ.get("CAPEVOLVE_SKILLS_DIR", HERE.parents[2]))
 
@@ -102,7 +108,7 @@ def main(argv=None) -> int:
     p.add_argument("--k-se", type=float, default=1.0)
     p.add_argument("--mode", default="paired")
     p.add_argument("--split", default="val")
-    p.add_argument("--concurrency", type=int, default=8,
+    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
                    help="rollout concurrency per eval process (total = this x n_tags). Default "
                         "8, deliberately LOW, because the noise this script exists to expose is "
                         "largely load-induced and therefore fixable. Measured on byte-identical "
@@ -126,9 +132,34 @@ def main(argv=None) -> int:
                         "controls on identical seeds differed by 0.0800 paired on this "
                         "benchmark, enough to pass the gate on their own. The gap between the "
                         "replicates is the round's real bar.")
+    p.add_argument("--allow-high-concurrency", action="store_true",
+                   help="run the gate above MAX_RESOLVING_CONCURRENCY anyway. An explicit, "
+                        "recorded choice: the verdicts cannot resolve a small effect")
     p.add_argument("--no-control", action="store_true",
                    help="skip the null control (NOT recommended — you lose the noise floor)")
     args = p.parse_args(argv)
+
+    # A gate too coarse to resolve its own verdict is refused, not warned about. Measured on
+    # run 32861747778: the driver gated at --concurrency 100 after SKILL.md had told it "do not
+    # raise it to buy wall clock", and this script's own table then carried "a verdict from this
+    # round can therefore not resolve an effect smaller than roughly 0.08" while the run
+    # continued and booked decisions anyway. The skill's own edit-form rule applies to the
+    # skill: where the agent has the criterion and violates it regardless, the form that works
+    # is a guard in the code, not a third restatement in prose. Refusal (not a silent clamp) is
+    # already this script's idiom for an incoherent request — see --gate-against control
+    # --no-control below.
+    if args.concurrency and args.concurrency > MAX_RESOLVING_CONCURRENCY \
+            and not args.allow_high_concurrency:
+        print(json.dumps({
+            "error": f"--concurrency {args.concurrency} exceeds {MAX_RESOLVING_CONCURRENCY}: "
+                     "byte-identical code at identical seeds moves ~0.08 at this load versus "
+                     "~0.03 at 8, so no verdict from the round could resolve an effect smaller "
+                     "than the noise the concurrency itself adds",
+            "fix": f"re-run with --concurrency {DEFAULT_CONCURRENCY} (buy wall clock with "
+                   "fewer candidates per round, not with load), or pass "
+                   "--allow-high-concurrency to record the trade deliberately",
+        }, indent=2))
+        return 2
 
     run_dir = RunDir.open(Path(args.run_dir))
     project = Path(args.project)
@@ -179,7 +210,20 @@ def main(argv=None) -> int:
                                        "--no-control"}, indent=2))
             return 2
         gate_ref = CTL
-    parent = harness.split_result_from_rollouts(run_dir, gate_ref, args.split)
+    # TWO distinct objects, kept distinct. `gate_res` is what deltas and thresholds are measured
+    # against (the concurrent control under --gate-against control); `parent_res` is the
+    # candidate this round is climbing from. Under --gate-against parent they coincide.
+    #
+    # Conflating them reported the CONTROL's reward under the PARENT's tag: on run 32871360361
+    # the table said `parent: {tag: 'seed', reward: 0.34}` while baseline.json said the seed
+    # scored 0.38, which no reader could reconcile. Worse, the gap between the two IS this
+    # round's temporal drift — measured at 0.24/0.44/0.38 on identical seed bytes across three
+    # runs, i.e. several times the gate bar — so collapsing them erased the one number that says
+    # whether any delta in the table means anything.
+    gate_res = harness.split_result_from_rollouts(run_dir, gate_ref, args.split)
+    parent_res = (gate_res if gate_ref == best
+                  else harness.split_result_from_rollouts(run_dir, best, args.split))
+    parent = gate_res  # deltas/thresholds are always against the gate reference
     rows = []
     for ev in evals:
         tag = ev["tag"]
@@ -191,8 +235,9 @@ def main(argv=None) -> int:
         rows.append({
             "tag": tag,
             "reward": (g.get("candidate") or {}).get("reward"),
-            "delta_vs_parent": (None if (g.get("candidate") or {}).get("reward") is None
-                                else round((g["candidate"]["reward"] or 0.0) - parent.reward, 4)),
+            "delta_vs_gate_ref": (None if (g.get("candidate") or {}).get("reward") is None
+                                  else round((g["candidate"]["reward"] or 0.0)
+                                             - gate_res.reward, 4)),
             "gate_delta": (g.get("gate") or {}).get("delta"),
             "gate_threshold": (g.get("gate") or {}).get("threshold"),
             "verdict": g.get("verdict"),
@@ -200,6 +245,55 @@ def main(argv=None) -> int:
             "eval_rc": ev.get("rc"),
             "eval_error": ev.get("error"),
         })
+
+    # A parent-gated round has ALREADY measured the drift-free comparison — it just was not
+    # reporting it. On run 32871360361 round 4 the table showed cand4 at +0.15 against the seed's
+    # stored 0.38 with a bar of 0.11 (drift), i.e. marginal; the same round's two concurrent
+    # controls both read exactly 0.27, so the drift-free answer from the identical rollouts is
+    # +0.26 against a bar of 0.00. The 0.11 belongs to WHEN the seed was measured, not to cand4,
+    # so parent-mode gating understated the effect and inflated the bar at the same time.
+    #
+    # Reported rather than made the default: changing the default gate mode on one benchmark's
+    # drift would be a guess about every other workload, while an extra comparison is strictly
+    # more information and simply agrees with the primary one where there is no drift. Costs no
+    # rollouts — the controls are already evaluated and gate_check reads stored data.
+    if args.gate_against != "control" and ctl_tags:
+        for r in rows:
+            if r["tag"] in ctl_tags or r.get("reward") is None:
+                continue
+            g = _gate(Path(args.run_dir), r["tag"], args.k_se, args.mode,
+                      args.veto_regressions, current=CTL)
+            r["control_relative"] = {
+                "reference": CTL,
+                "gate_delta": (g.get("gate") or {}).get("delta"),
+                "gate_threshold": (g.get("gate") or {}).get("threshold"),
+                "verdict": g.get("verdict"),
+                "reading": ("the same comparison with the DRIFT removed: this candidate against a "
+                            "byte-identical control measured in this round rather than against a "
+                            "reward measured earlier. Where the two disagree, the difference is "
+                            "drift, not the edit."),
+            }
+
+    # Would the verdict have survived a different control replicate? On run 32871360361 round 3
+    # two byte-identical replicates read 0.32 and 0.20 two minutes apart, and the reference was
+    # simply whichever carried the round-scoped tag (0.20) — so cand3 scored +0.17 and accepted
+    # where against the other replicate it is +0.05 and rejects. The table said nothing about the
+    # verdict resting on that choice. Re-gating costs no rollouts, so there is no reason not to
+    # check; a verdict that flips is not evidence, whatever the picked replicate showed.
+    if args.gate_against == "control" and len(ctl_tags) > 1:
+        for r in rows:
+            if r["tag"] in ctl_tags or r.get("reward") is None:
+                continue
+            by_ref = {}
+            for ref in ctl_tags:
+                g = _gate(Path(args.run_dir), r["tag"], args.k_se, args.mode,
+                          args.veto_regressions, current=ref)
+                by_ref[ref] = g.get("verdict")
+            r["verdict_by_reference"] = by_ref
+            verdicts = {v for v in by_ref.values() if v is not None}
+            r["verdict_stable"] = (len(verdicts) <= 1)
+            if not r["verdict_stable"]:
+                r["verdict"] = "inconclusive"
 
     ctl = next((r for r in rows if r["tag"] == CTL), None)
     # The floor must be the control's delta against the STORED parent, never against whatever
@@ -210,8 +304,8 @@ def main(argv=None) -> int:
     if ctl is not None:
         if args.gate_against == "control":
             floor = abs(ctl["gate_delta"]) if ctl.get("gate_delta") is not None else None
-        elif ctl["delta_vs_parent"] is not None:
-            floor = abs(ctl["delta_vs_parent"])
+        elif ctl["delta_vs_gate_ref"] is not None:
+            floor = abs(ctl["delta_vs_gate_ref"])
     # The gap BETWEEN identical control replicates is the round's empirical bar. It is a
     # stronger statement than any single control's delta, because both replicates are the same
     # bytes on the same seeds: whatever separates them is pure re-measurement. Two such
@@ -231,8 +325,23 @@ def main(argv=None) -> int:
             "smaller than roughly 0.08. Re-run the gate at --concurrency 8 before believing an "
             "accept.")
     out = {
-        "parent": {"tag": best, "reward": parent.reward, "stderr": parent.stderr,
-                   "n_tasks": len(parent.per_task or [])},
+        "parent": {"tag": best, "reward": parent_res.reward, "stderr": parent_res.stderr,
+                   "n_tasks": len(parent_res.per_task or [])},
+        # What the deltas and thresholds in `candidates` are actually measured against.
+        "gate_reference": {"tag": gate_ref, "mode": args.gate_against,
+                           "reward": gate_res.reward, "stderr": gate_res.stderr},
+        # The round's OWN drift: identical-or-parent bytes measured now versus what the parent
+        # measured when it was scored. Non-null only when they are different measurements.
+        "parent_vs_gate_ref_drift": (None if gate_ref == best else
+                                     round((gate_res.reward or 0.0)
+                                           - (parent_res.reward or 0.0), 4)),
+        "drift_reading": (
+            "the parent's stored reward and a byte-identical control measured in THIS round "
+            "differ by this much. It is re-measurement drift, not progress, and any candidate "
+            "delta of comparable size is not evidence — whatever its verdict says."
+            if gate_ref != best else
+            "gated against the parent's stored reward, so this round cannot see how far that "
+            "reward has drifted since it was measured; --gate-against control measures it."),
         "measurement_concurrency": args.concurrency,
         "concurrency_warning": conc_warning,
         "null_delta_between_control_replicates": null_delta,
@@ -247,11 +356,52 @@ def main(argv=None) -> int:
         "noise_floor_basis": ("control vs the STORED parent rollouts (differing trial counts are "
                               "part of this floor, which is the point)" if args.gate_against ==
                               "control" else "control vs the parent it was copied from"),
+        # ONE bar, matched to how this round actually gated. Reporting several numbers and
+        # leaving the driver to choose is not neutral: on run 32871360361 round 2 the table
+        # showed cand2 beating its CONCURRENT control by +0.19 (three times the k_se threshold,
+        # nineteen times the 0.01 gap between the control's own replicates) alongside a
+        # `noise_floor_from_control` of 0.14 — which is the control-vs-STORED-parent gap, i.e.
+        # temporal drift. The reading told the driver to treat any delta at or below the floor as
+        # no evidence, so it compared a control-relative delta against a drift-derived floor,
+        # resolved the contradiction conservatively, and booked a REJECT on the best candidate of
+        # the run.
+        #
+        # Which bar is right depends entirely on what the delta was measured against:
+        #   * control mode — the delta is against a control measured in THIS round, so drift is
+        #     already cancelled and the bar is the gap between identical replicates.
+        #   * parent mode  — the delta is against a reward measured in an earlier round, so drift
+        #     is inside it and the bar has to include the control's drift as well.
+        "evidence_bar": {
+            "value": (null_delta if args.gate_against == "control"
+                      else (None if (null_delta is None and floor is None)
+                            else max(null_delta or 0.0, floor or 0.0))),
+            "basis": ("gap between byte-identical control replicates measured in THIS round — "
+                      "drift is cancelled by gating against a concurrent control"
+                      if args.gate_against == "control" else
+                      "the larger of the replicate gap and the control's drift against the "
+                      "stored parent, because this round's deltas ARE against that stored "
+                      "reward and carry its drift"),
+        },
         "reading": (
+            "A candidate marked `verdict_stable: false` has an UNSTABLE verdict and is "
+            "INCONCLUSIVE, never accepted: its "
+            "verdict changed depending on which byte-identical control replicate happened to be "
+            "the reference, so the round cannot tell its edit from re-measurement. Re-run it "
+            "with more trials before believing either answer. "
+            "Judge every candidate's delta against `evidence_bar`, not against any other number "
+            "here. `noise_floor_from_control` is the gap between a byte-identical control "
+            "measured now and the parent's STORED reward: that is re-measurement DRIFT, and it "
+            "bounds how far the ABSOLUTE rewards in this table can be trusted — it is not a bar "
+            "a candidate gated against a concurrent control has to clear, because that "
+            "comparison never contained the drift. Do not re-derive a delta against the stored "
+            "parent and reject on it; that puts the drift back in."
+            if args.gate_against == "control" else
             "ctl_null is a byte-identical copy of the parent, so its delta is what ZERO change "
-            "measures today. Treat any candidate whose |delta| is at or below that as no evidence, "
-            "even if its verdict is accept."
-            if floor is not None else
+            "measures today. This round gated against the parent's STORED reward, so that drift "
+            "is inside every candidate delta here: treat any candidate at or below "
+            "`evidence_bar` as no evidence, even if its verdict is accept. Gating against the "
+            "control instead removes the drift from the comparison."
+            if floor is not None or null_delta is not None else
             "no null control in this round — you cannot separate a small gain from re-measurement."
         ),
         "candidates": sorted((r for r in rows if r["tag"] not in ctl_tags),
@@ -260,6 +410,29 @@ def main(argv=None) -> int:
         "control_replicates": ctl_rows,
         "next": "read regressions, then commit.py --decision accept|reject per candidate",
     }
+    # Persist the table as well as printing it. Until now the ONLY copy lived on stdout, so
+    # whether a round's verdict survived depended on the driver remembering to redirect —
+    # and on run 32814848187 the round that was abandoned was only reconstructible because
+    # the driver happened to have redirected it to a name someone guessed. A round's gate
+    # result is the run's evidence; it should not be optional.
+    #
+    # Per-iteration name for the same reason `control_tag` is per-iteration: a fixed name
+    # would let each round destroy the previous round's table. A same-iteration re-run gets a
+    # suffix rather than overwriting, since a re-gate is usually being COMPARED with the
+    # first one.
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        stem = f"round_i{int(run_dir.spent.iterations)}"
+        table = work / f"{stem}.json"
+        n = 1
+        while table.exists():
+            table = work / f"{stem}.r{n}.json"
+            n += 1
+        table.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        out["table_path"] = str(table)
+    except OSError as exc:  # noqa: BLE001 — the printed table is still the primary output
+        out["table_write_error"] = str(exc)
+
     print(json.dumps(out, indent=2))
     return 0
 

@@ -105,6 +105,98 @@ def test_agent_optimize_stop_condition_is_derived_from_the_dispatch_inputs():
         f"the stop_condition must require a seal — no finalize, no result: {stop}")
 
 
+def test_rejections_are_not_a_stopping_condition():
+    """The clause that ended a run exactly where the algorithm prescribes escalation.
+
+    The derived stop_condition used to say "stop when two consecutive rounds are rejected".
+    SKILL.md says the opposite: "after two rejected rounds, read the candidate's TRACE before
+    writing a third" — a reject usually means the edit FORM was wrong, not that the search is
+    done. On smoke run 32701056043 the agent rejected two prose candidates and stopped, never
+    reaching the round where it would have tried a code-level guard, which its own reject note
+    ("require calculate tool for all money") had already identified as the right form.
+
+    Rounds and spend bound a run. Rejections bound nothing.
+    """
+    got = _select(ALGORITHM="agent-optimize", ITERATIONS="5")
+    stop = got["stop"].lower()
+
+    assert "two consecutive" not in stop, (
+        f"rejections are still a stopping condition: {got['stop']}")
+    assert "do not stop early merely because rounds were rejected" in stop, (
+        f"the stop_condition does not say that a rejection is not a reason to stop: "
+        f"{got['stop']}")
+    assert "change the edit form" in stop or "change the edit" in stop, (
+        f"the stop_condition does not point at escalation as the response to a reject: "
+        f"{got['stop']}")
+    # The real ceilings must survive.
+    assert "5" in stop and "spend.py" in stop
+
+
+MARK_HOST_START = "# ---- agent mode: drive the handed-off loop"
+MARK_HOST_END = "# ---- metrics + report"
+
+
+def _host_budget(**env: str) -> dict:
+    """Run the agent-mode host-invocation block and report the budget it computes."""
+    src = RUN_SUITE.read_text(encoding="utf-8")
+    block = src[src.index(MARK_HOST_START):src.index(MARK_HOST_END)]
+    # Stub the host call itself: this test is about the arithmetic, not the subprocess.
+    block = block.replace('"$PY" "$REPO/skills/algorithms/agent-optimize/scripts/host.py" \\',
+                          'echo HOSTCALL \\')
+    script = ('ORCH_MODE=agent\nITER="${ITERATIONS:-3}"\nPY=python3\nREPO=.\nBENCH=tau2\n'
+              'RUN_DIR=/tmp/x\nPROJ=/tmp/y\nOPTIMIZER_MODEL=m\n' + block +
+              '\nprintf "TURNS=%s\\nUSD=%s\\n" "$HOST_TURNS" "${HOST_USD_ARGS[*]-}"\n')
+    p = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", **env})
+    assert p.returncode == 0, f"block failed: {p.stderr}"
+    out = {}
+    for ln in p.stdout.splitlines():
+        if "=" in ln and ln.split("=", 1)[0] in ("TURNS", "USD"):
+            k, v = ln.split("=", 1)
+            out[k] = v.strip()
+    return out
+
+
+def test_agent_mode_gets_its_own_turn_allowance_not_the_per_iteration_one():
+    """80 turns/iteration is a DETERMINISTIC-path unit and starves the agent loop.
+
+    There, one optimizer invocation means "propose one edit and stop" — the harness does the
+    diagnosis, evaluation and gating. In agent mode the same allowance must also cover Phase 0
+    reading, diagnose, null-control replicates, round.py orchestration, gate_check and
+    commit.py, per round.
+
+    Measured on run 32733635494: 240 turns (80 x 3) bought 1.9 rounds. The agent stopped on
+    error_max_turns having evaluated a candidate at val 0.530 — the best of the run — and never
+    reached the commit.py that would have booked it. So the run reported 1 of 3 rounds and
+    discarded its best result.
+    """
+    got = _host_budget(ITERATIONS="3", OPTIMIZER_MAX_TURNS="80")
+    turns = int(got["TURNS"])
+
+    assert turns > 240, (
+        f"agent mode still gets the per-iteration allowance ({turns}) — the budget that was "
+        "measured to buy 1.9 of 3 rounds")
+    # Per round it must clear the ~126 turns/round that run actually consumed, with the
+    # non-round work (Phase 0, the seal) paid for on top.
+    assert turns / 3 >= 150, (
+        f"{turns} turns over 3 rounds is {turns / 3:.0f}/round; the measured requirement is "
+        "~126/round before Phase 0 and finalize")
+
+
+def test_a_raised_optimizer_max_turns_is_still_honoured():
+    """The dispatch input must remain the operator's lever, not be clamped by the floor."""
+    low = int(_host_budget(ITERATIONS="3", OPTIMIZER_MAX_TURNS="80")["TURNS"])
+    high = int(_host_budget(ITERATIONS="3", OPTIMIZER_MAX_TURNS="400")["TURNS"])
+    assert high > low, (
+        f"raising optimizer_max_turns 80 -> 400 did not raise the host budget ({low} -> {high})")
+
+
+def test_more_rounds_buy_more_turns():
+    three = int(_host_budget(ITERATIONS="3", OPTIMIZER_MAX_TURNS="80")["TURNS"])
+    ten = int(_host_budget(ITERATIONS="10", OPTIMIZER_MAX_TURNS="80")["TURNS"])
+    assert ten > three, f"the turn budget does not scale with the round count ({three}, {ten})"
+
+
 def test_unlimited_optimizer_budget_yields_no_dollar_ceiling():
     """0 means unlimited everywhere else in this workflow; keep that meaning."""
     got = _select(ALGORITHM="agent-optimize", ITERATIONS="10", OPTIMIZER_USD_PER_ITER="0")
@@ -271,3 +363,53 @@ def test_runmeta_records_which_algorithm_produced_the_number():
     assert '"algorithm"' in src, (
         "runmeta.json must record the algorithm — benchmark-history compares numbers "
         "across runs, and hill-climb vs agent-optimize is not a like-for-like comparison")
+
+
+# --- the iterations input was unreachable on smoke ---------------------------
+
+
+def _env_expr(key: str) -> str:
+    """The workflow's `env:` expression for one key, verbatim."""
+    src = WORKFLOW.read_text(encoding="utf-8")
+    for ln in src.splitlines():
+        if ln.strip().startswith(f"{key}:") and "${{" in ln:
+            return ln.split(":", 1)[1].strip()
+    raise AssertionError(f"no env expression for {key} in {WORKFLOW}")
+
+
+def test_an_explicit_iterations_dispatch_reaches_smoke():
+    """`matrix.tier == 'smoke' && '3'` came FIRST, so it short-circuited the input.
+
+    GitHub's `||` yields the first truthy operand, so with the tier pin leading, a dispatch of
+    `iterations: 10` on smoke silently produced 3 — discoverable only by reading ITERATIONS in
+    the job log, after the run had already spent its budget on the wrong round count. Smoke is
+    the tier the algorithm itself gets iterated on, so it is the worst one to make unreachable.
+
+    NUM_TRIALS already had this right, including the reason its input default is `""` (with a
+    non-empty default, "asked for 10" and "asked for nothing" are indistinguishable). The two
+    knobs must therefore have the SAME shape: input first, tier default second.
+    """
+    iters, trials = _env_expr("ITERATIONS"), _env_expr("NUM_TRIALS")
+
+    assert iters.index("inputs.iterations") < iters.index("matrix.tier"), (
+        "the tier pin still precedes the dispatch input, so an explicit `iterations` on smoke "
+        f"is short-circuited away: {iters}")
+    # Parity with the knob that already solved this, so the next edit to either notices.
+    shape = lambda e: (e.index("inputs.") < e.index("matrix.tier"),  # noqa: E731
+                       "'3'" in e, "'10'" in e)
+    assert shape(iters) == shape(trials), (
+        f"ITERATIONS and NUM_TRIALS disagree on precedence/defaults:\n  {iters}\n  {trials}")
+    # Smoke's default must survive a blank dispatch: 3, not 10.
+    assert "'3'" in iters and "smoke" in iters, (
+        f"smoke's 3-iteration default was dropped rather than made overridable: {iters}")
+
+
+def test_the_iterations_input_defaults_to_blank_so_the_tier_default_can_win():
+    """A non-empty input default re-breaks the fix, silently, for every tier."""
+    src = WORKFLOW.read_text(encoding="utf-8")
+    block = src[src.index("      iterations:"):src.index("      trials:")]
+    assert 'default: ""' in block, (
+        "the `iterations` input must default to blank so a tier default is distinguishable "
+        f"from a deliberate choice — otherwise smoke silently gets the input's number: {block}")
+    assert "BLANK" in block or "blank" in block, (
+        f"the input description must tell the operator blank means the tier default: {block}")
