@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -112,9 +113,27 @@ def load_env() -> None:
         break
 
 
+#: Marker that identifies a cap-evolve checkout, as opposed to a skills INSTALL dir.
+_REPO_MARKERS = ("core/cap_evolve", "skills/_registry")
+
+
 def repo_root() -> Path:
-    """The cap-evolve checkout this skill lives in (…/skills/runtimes/spa/scripts)."""
-    return Path(__file__).resolve().parents[4]
+    """The cap-evolve checkout this skill lives in, or the cwd when it is not in one.
+
+    Found by walking UP for a marker rather than counting parents. A fixed
+    ``parents[4]`` is only correct in the repo layout
+    (``<root>/skills/runtimes/spa/scripts``): ``install.sh`` copies each skill to
+    ``$DEST/<name>``, so an installed tree puts this file at
+    ``$DEST/spa/scripts/spa_env.py`` and ``parents[4]`` resolves to ``$HOME`` — which
+    would silently point ``vendor/`` at the home directory and clone gigabytes there.
+    Falling back to the cwd keeps that blast radius inside the project being run;
+    ``SPA_VENDOR_DIR`` remains the explicit override for any layout.
+    """
+    here = Path(__file__).resolve()
+    for cand in here.parents:
+        if all((cand / m).is_dir() for m in _REPO_MARKERS):
+            return cand
+    return Path.cwd()
 
 
 def vendor_dir() -> Path:
@@ -548,7 +567,17 @@ def docker_bridge_ip() -> str:
     """
     rc, out = _run(["docker", "network", "inspect", "bridge", "--format",
                     "{{range .IPAM.Config}}{{.Gateway}}{{end}}"], timeout=15)
-    ip = out.strip().splitlines()[-1].strip() if (rc == 0 and out.strip()) else ""
+    # _run merges stdout and stderr, so the last line can be a docker WARNING rather
+    # than the gateway. Taking it verbatim produced URLs like
+    # "http://WARNING: ...:7000", which fail from inside a container in a way that
+    # looks like a networking problem. Accept only a line that IS an IPv4 address.
+    ip = ""
+    if rc == 0:
+        for line in reversed(out.splitlines()):
+            cand = line.strip()
+            if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", cand):
+                ip = cand
+                break
     return ip or "172.17.0.1"
 
 

@@ -671,7 +671,12 @@ def _cmd_run(argv):
             runtime_rec = {"runtime": _runtime.declared(spec)}
         else:
             runtime_rec = _runtime.preflight(spec, skills, skills_dir)
-    except _runtime.RuntimeError_ as e:
+    except RuntimeError as e:
+        # RuntimeError, not just runtime.RuntimeError_ (a subclass of it): the runtime
+        # SKILL raises plain RuntimeError for "port held by something else" and "health
+        # check timed out". Catching only the subclass let those escape as a traceback
+        # with NO JSON on stdout, which breaks the one-document contract every caller
+        # parses — and the operator loses the diagnostic that says which service is wrong.
         err = {"error": str(e), "step": "runtime-preflight"}
         print(json.dumps(err))
         print(f"runtime preflight failed: {e}", file=sys.stderr)

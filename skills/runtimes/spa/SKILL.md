@@ -2,7 +2,7 @@
 name: spa
 description: The Skillberry proxy runtime — put the optimized capability in the Skillberry Store and let the Skillberry Proxy-Agent (SPA) inject it into the agent's LLM calls, so the benchmark never sees skill files. Use when a capevolve.yaml sets `runtime: spa`, or when you need to provision, start, deploy to, stop or clean that stack.
 component: runtime
-argument-hint: "up | status | deploy | down | clean"
+argument-hint: "[--json]   # run.py reports status; lifecycle is driven from spa_env"
 allowed-tools: Read, Write, Edit, Bash
 provides: []
 needs: []
@@ -32,16 +32,33 @@ the shape Skillberry actually ships, so optimizing here optimizes the real thing
 
 ## The commands
 
+`run.py` reports STATUS and nothing else — there is no `up`/`deploy`/`down`/`clean`
+subcommand:
+
 ```bash
-python skills/runtimes/spa/scripts/run.py up --skill-name <name> [--skill-dir DIR]
-python skills/runtimes/spa/scripts/run.py status [--json]
-python skills/runtimes/spa/scripts/run.py deploy --skill-dir DIR --skill-name <name>
-python skills/runtimes/spa/scripts/run.py down
-python skills/runtimes/spa/scripts/run.py clean [--keep-clones]
+python skills/runtimes/spa/scripts/run.py [--json]   # per-service: provisioned, running, healthy
+python skills/runtimes/spa/scripts/check.py          # offline contract check, no services needed
 ```
 
-`up` is idempotent: a healthy service is reported, never restarted — restarting SPA
-mid-evaluation would swap the skill under a running rollout.
+Everything else is a call into the library, which is what an adapter and an onboarding
+step use anyway — one place to change, no CLI surface to keep in sync:
+
+```python
+import sys; sys.path.insert(0, "skills/runtimes/spa/scripts")
+import spa_env
+
+spa_env.provision()                       # clone + venv + install both services (idempotent)
+spa_env.start_store()                     # EXECUTE_PYTHON_LOCALLY=True, health-checked
+spa_env.import_standalone_tools(mod, tags=("primitive-tool",))
+spa_env.upload_skill(skill_dir)           # primitives FIRST, then the skill
+spa_env.start_spa("my_skill")             # SPA binds ONE skill at start
+spa_env.status()                          # what run.py prints
+spa_env.stop_spa(); spa_env.stop_store()
+spa_env.clean()                           # drops clones/venvs/logs under vendor/
+```
+
+`start_store` / `start_spa` are idempotent: a healthy service is reported, never
+restarted — restarting SPA mid-evaluation would swap the skill under a running rollout.
 
 ## Using it from an adapter
 
