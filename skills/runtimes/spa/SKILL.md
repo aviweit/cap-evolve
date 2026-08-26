@@ -122,6 +122,16 @@ infrastructure noise and not a verdict on the capability.
 * **SPA reports no token usage.** Rollout `cost_usd`/`tokens` are 0 and any `max_usd`
   ceiling is inert — only optimizer budgets bind. A 0 in the cost panel means *not
   measured*, not free.
+* **Never put an API key in the `llm_args` you hand a runner.** A runner may record the
+  config it was given — tau2 writes `llm_args` verbatim into its results file under
+  `info.agent_info.llm_args` / `info.user_info.llm_args`. That file is the one adapters
+  persist and expose via `trajectories()`, which cap-evolve copies VERBATIM into the
+  optimizer's workdir each iteration and `store: git` COMMITS. So a key passed that way
+  becomes a committed secret that was also shipped to the optimizer. `upstream_llm_args()`
+  therefore returns **no** `api_key` by default (litellm reads `OPENAI_API_KEY` from the
+  environment on the `openai/` route); it still validates the key so a missing credential
+  fails at config time instead of as a wall of 401s. Observed for real on a tau2 airline
+  baseline. Scrub defensively too — persisted traces are the last place to discover this.
 
 ## Pinned versions
 

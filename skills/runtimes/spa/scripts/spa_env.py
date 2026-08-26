@@ -597,12 +597,31 @@ def spa_base_url(*, from_container: bool = False) -> str:
     return f"http://{host}:{SPA_PORT}"
 
 
-def upstream_llm_args() -> dict:
+def upstream_llm_args(*, include_api_key: bool = False) -> dict:
     """litellm args for talking DIRECTLY to the provider — the call paths that must
     never be proxied (a user simulator, an LLM judge, a verifier).
 
     Routing those through SPA would inject the capability into the simulated user or
     let it influence its own score, so this is a correctness boundary, not a detail.
+
+    **The API KEY IS NOT IN THE RETURNED DICT BY DEFAULT — deliberately.** These args get
+    handed to a benchmark runner, and a runner is entitled to record the config it was
+    given: tau2, for one, writes ``llm_args`` verbatim into its results file under
+    ``info.agent_info.llm_args`` / ``info.user_info.llm_args``. That file is exactly what
+    the runtime asks adapters to persist and expose through ``trajectories()``, and
+    cap-evolve then copies it VERBATIM into the optimizer's working dir every iteration
+    while ``store: git`` commits it. A key placed in this dict therefore becomes a
+    committed secret that was also shipped to the optimizer. This was observed for real on
+    a tau2 airline baseline, not theorised.
+
+    Omitting it costs nothing on the normal path: litellm resolves the credential from
+    ``OPENAI_API_KEY`` in the environment for the ``openai/`` route, and ``load_env()``
+    has already put it there. The key is still VALIDATED here, so a missing credential
+    fails loudly at config time rather than as a wall of 401s mid-run.
+
+    Pass ``include_api_key=True`` only for a client that cannot read the environment
+    (a raw HTTP call, a non-litellm SDK) AND whose args are never persisted. If you do,
+    you own redacting whatever they end up inside.
     """
     load_env()
     base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
@@ -611,7 +630,13 @@ def upstream_llm_args() -> dict:
         raise RuntimeError("OPENAI_BASE_URL (or OPENAI_API_BASE) not set — put it in .env")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set — put it in .env")
-    return {"api_base": base_url, "api_key": api_key}
+    # Make the env-var path litellm actually reads explicit, so a caller that relies on
+    # the key NOT being in the dict still authenticates when .env was the only source.
+    os.environ.setdefault("OPENAI_API_KEY", api_key)
+    args = {"api_base": base_url}
+    if include_api_key:
+        args["api_key"] = api_key
+    return args
 
 
 # ---------------------------------------------------------------------------
