@@ -111,9 +111,14 @@ python3 "$SRC/_registry/build_manifest.py" "$DEST"
 # only surfaces later as an optimizer that quietly keeps the seed and reports 0.0.
 missing=()
 for comp in "${COMPONENTS[@]}"; do
-  for skill in "$SRC/$comp"/*/; do
-    [[ -f "$DEST/$(basename "$skill")/SKILL.md" ]] || missing+=("$(basename "$skill")/SKILL.md")
-  done
+  # Same discovery rule as the copy loop above: a skill is a dir that HOLDS a
+  # meta.yaml, at any depth. A fixed */ glob made this verify step expect the GROUP
+  # dir (interventions/llm-proxies) to be an installed skill, so a correct install
+  # failed on a file that was never supposed to exist.
+  while IFS= read -r meta; do
+    name="$(basename "$(dirname "$meta")")"
+    [[ -f "$DEST/$name/SKILL.md" ]] || missing+=("$name/SKILL.md")
+  done < <(find "$SRC/$comp" -name meta.yaml -type f 2>/dev/null | sort)
   for f in "$SRC/$comp"/*; do
     [[ -f "$f" ]] || continue
     [[ -e "$DEST/$comp/$(basename "$f")" ]] || missing+=("$comp/$(basename "$f")")
