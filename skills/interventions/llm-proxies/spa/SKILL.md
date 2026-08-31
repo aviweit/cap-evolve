@@ -1,19 +1,19 @@
 ---
 name: spa
-description: The Skillberry proxy runtime — put the optimized capability in the Skillberry Store and let the Skillberry Proxy-Agent (SPA) inject it into the agent's LLM calls, so the benchmark never sees skill files. Use when a capevolve.yaml sets `runtime: spa`, or when you need to provision, start, deploy to, stop or clean that stack.
-component: runtime
+description: The Skillberry proxy intervention — put the optimized capability in the Skillberry Store and let the Skillberry Proxy-Agent (SPA) inject it into the agent's LLM calls, so the benchmark never sees skill files. Use when a capevolve.yaml sets `intervention: spa`, or when you need to provision, start, deploy to, stop or clean that stack.
+component: intervention
 argument-hint: "[--json]   # run.py reports status; lifecycle is driven from spa_env"
 allowed-tools: Read, Write, Edit, Bash
 provides: []
 needs: []
 ---
 
-# Runtime: SPA (the Skillberry proxy)
+# Intervention: SPA (the Skillberry proxy)
 
-A **runtime** answers *how a candidate reaches the model under test* — as opposed to a
+An **intervention** answers *how a candidate reaches the model under test* — as opposed to a
 **capability**, which is *what gets edited*. The two are independent: the same
 `skill-package` capability can be delivered by writing files where a runner reads them
-(`runtime: direct`) or by this runtime.
+(`intervention: direct`) or by this intervention.
 
 In SPA mode:
 
@@ -30,28 +30,48 @@ benchmark runner
 The agent gets no skill files, no mounted directory, no visible prompt edit — which is
 the shape Skillberry actually ships, so optimizing here optimizes the real thing.
 
-## The commands
+## Requirements from the benchmark
+
+Two things must already be true of the runner, and this intervention checks rather than
+supplies them. Onboard a runner that lacks either and the data is wrong, not missing.
+
+* **The runner must be SPA-aware.** Three integrations have to be present for SPA mode to
+  produce correct data: Skillberry context headers on the agent's LLM calls, a merge of the
+  proxy-side trajectory into the runner's own, and a `disconnect` at session end. A
+  Skillberry-aware build carries them; a stock runner does not.
+* **The benchmark must front its environment over HTTP.** Store-hosted tools execute in the
+  store's process, not where the benchmark's state lives, so the skill's tools can only reach
+  that state through a service the benchmark provides. This intervention only health-checks it,
+  via `SPA_REMOTE_ENV_URL`.
+
+## Inputs / outputs (manifest tokens)
+
+`needs: []`, `provides: []` — deliberately. An intervention owns an out-of-process delivery
+stack, not a step in the run DAG, so it neither consumes nor produces a pipeline token. It is
+selected by the spec (`intervention: spa`), not sequenced by `orchestrate`.
+
+## How to run
 
 `run.py` reports STATUS and nothing else — there is no `up`/`deploy`/`down`/`clean`
 subcommand:
 
 ```bash
-python skills/runtimes/spa/scripts/run.py [--json]   # per-service: provisioned, running, healthy
-python skills/runtimes/spa/scripts/check.py          # offline contract check, no services needed
+python skills/interventions/llm-proxies/spa/scripts/run.py [--json]   # per-service: provisioned, running, healthy
+python skills/interventions/llm-proxies/spa/scripts/check.py          # offline contract check, no services needed
 ```
 
 Everything else is a call into the library, which is what an adapter and an onboarding
 step use anyway — one place to change, no CLI surface to keep in sync:
 
 ```python
-import sys; sys.path.insert(0, "skills/runtimes/spa/scripts")
+import sys; sys.path.insert(0, "skills/interventions/llm-proxies/spa/scripts")
 import spa_env
 
 spa_env.provision()                       # clone + venv + install both services (idempotent)
 spa_env.start_store()                     # EXECUTE_PYTHON_LOCALLY=True, health-checked
-spa_env.import_standalone_tools(mod, tags=("primitive-tool",))
+spa_env.import_standalone_tools(mod, tags=(FROZEN_TAG,))   # the project's own tag
 spa_env.upload_skill(skill_dir)           # primitives FIRST, then the skill
-spa_env.start_spa("my_skill")             # SPA binds ONE skill at start
+spa_env.start_spa(SKILL_NAME)             # SPA binds ONE skill at start
 spa_env.status()                          # what run.py prints
 spa_env.stop_spa(); spa_env.stop_store()
 spa_env.clean()                           # drops clones/venvs/logs under vendor/
@@ -65,7 +85,7 @@ restarted — restarting SPA mid-evaluation would swap the skill under a running
 ```python
 from spa_env import Protection, reset_store_to_skill, restart_spa
 
-PROTECT = Protection(tags=("primitive-tool",))     # the benchmark's frozen substrate
+PROTECT = Protection(tags=(FROZEN_TAG,))           # the frozen substrate, by tag
 
 def apply(self, candidate_dir, edits=None):
     if edits:
@@ -87,18 +107,6 @@ the whole run with the budget half spent over one flaky restart. Record the fail
 let `run_batch`/`run_trials` return errored rollouts: the harness then *excludes* the
 candidate instead of scoring it 0.0, which is correct, because a failed deployment is
 infrastructure noise and not a verdict on the capability.
-
-## What this runtime does not do (yet)
-
-* **Tailor a benchmark.** A runner needs three things installed in it for SPA mode to
-  produce correct data — Skillberry context headers on the agent's LLM calls, a merge of
-  the proxy-side trajectory into its own, and a `disconnect` at session end. This phase
-  assumes the benchmark **already has them** (as the `skillberry-benchmarks` fork of
-  tau2 does). Onboarding a runner that does not is the next phase.
-* **Host the environment.** Store-hosted tools execute in the store's process, not where
-  the benchmark's state lives, so a benchmark needs an HTTP service fronting its
-  environment. This phase expects the benchmark to provide one (tau2 ships an environment
-  manager) and only health-checks it via `SPA_REMOTE_ENV_URL`.
 
 ## Facts that cost someone a debugging session
 
@@ -123,14 +131,14 @@ infrastructure noise and not a verdict on the capability.
   ceiling is inert — only optimizer budgets bind. A 0 in the cost panel means *not
   measured*, not free.
 * **Never put an API key in the `llm_args` you hand a runner.** A runner may record the
-  config it was given — tau2 writes `llm_args` verbatim into its results file under
-  `info.agent_info.llm_args` / `info.user_info.llm_args`. That file is the one adapters
+  config it was given — a runner may write `llm_args` verbatim into its results file
+  (e.g. under `info.agent_info.llm_args` / `info.user_info.llm_args`). That file is the one adapters
   persist and expose via `trajectories()`, which cap-evolve copies VERBATIM into the
   optimizer's workdir each iteration and `store: git` COMMITS. So a key passed that way
   becomes a committed secret that was also shipped to the optimizer. `upstream_llm_args()`
   therefore returns **no** `api_key` by default (litellm reads `OPENAI_API_KEY` from the
   environment on the `openai/` route); it still validates the key so a missing credential
-  fails at config time instead of as a wall of 401s. Observed for real on a tau2 airline
+  fails at config time instead of as a wall of 401s. Observed for real on a benchmark
   baseline. Scrub defensively too — persisted traces are the last place to discover this.
 
 ## Pinned versions
@@ -138,3 +146,23 @@ infrastructure noise and not a verdict on the capability.
 `scripts/spa_env.py` holds the pins (store tag `0.2.1`, agent commit `e359494`), each
 env-overridable (`SKILLBERRY_STORE_REF`, `SKILLBERRY_AGENT_REF`) for a bisect. Both
 services need their own Python 3.11 venv, created with `uv`.
+
+## What good vs bad looks like
+
+* **Good:** the stack is provisioned once at onboarding and only STARTED by a run; every
+  candidate's deploy resets the store to that candidate's single skill and restarts SPA; the
+  frozen substrate survives each reset; the agent's calls go through SPA while the user
+  simulator and any judge go straight upstream.
+* **Bad:** a run that provisions on the operator's behalf; a deploy whose failure raises out
+  of `apply()` and aborts the run instead of erroring the candidate's rollouts; a restart that
+  silently keeps serving the previous candidate's skill; a simulator or judge routed through
+  SPA, which injects the capability into the very thing measuring it.
+
+## References
+
+* `scripts/spa_env.py` — the library: provisioning, service lifecycle, store deployment,
+  agent routing. Read it before adding a command; everything else here calls into it.
+* `scripts/check.py` — the offline contract check (pins, vendor layout), runnable with no
+  services up.
+* `core/cap_evolve/intervention.py` — the `intervention:` spec field: validation by name,
+  preflight, and the refusal to provision.

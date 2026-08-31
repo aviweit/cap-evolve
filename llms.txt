@@ -34,10 +34,10 @@ except at finalize; gate acceptance on val with a paired significance gate.
 ## Skills (21)
 Counting rule: one skill = one skills/<component>/<name>/SKILL.md, i.e. every row of
 skills/_registry/manifest.json — phases + capabilities + algorithms + optimizers +
-runtimes + orchestrate.
+interventions + orchestrate.
 - phases: intake, implement-and-check, baseline, evaluate, diagnose, gate, finalize, report
 - capabilities: system-prompt, skill-package, tools, mcp-tool
-- runtimes: spa (how a candidate is DELIVERED to the model under test, vs what is edited)
+- interventions: spa (how a candidate is DELIVERED to the model under test, vs what is edited)
 - algorithms (5): 3 run-executable + 2 agent-mode. Run-executable via `cap-evolve run`:
   hill-climb (--focus all|cyclic|hardest-first), gepa, skillopt (gepa & skillopt are the
   sample-efficient flagships). Agent-mode only (orchestration_mode: agent; their

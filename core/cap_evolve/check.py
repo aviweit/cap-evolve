@@ -38,16 +38,16 @@ class CheckReport:
         return {"ok": self.ok, "stubs": self.stubs, "problems": self.problems, "notes": self.notes}
 
 
-def _check_runtime(rep, project_dir: Path) -> None:
-    """Validate the spec's ``runtime:`` value. OFFLINE — starts nothing, probes nothing.
+def _check_intervention(rep, project_dir: Path) -> None:
+    """Validate the spec's ``intervention:`` value. OFFLINE — starts nothing, probes nothing.
 
     Only the declaration is checked here (an unknown value is a hard problem, since the
     spec reader would otherwise ignore it and deliver candidates the ``direct`` way).
-    Whether the runtime's services are actually UP is a run-time question, answered by
-    ``runtime.preflight`` — ``check`` must stay runnable on a machine with no stack.
+    Whether the intervention's services are actually UP is a run-time question, answered by
+    ``intervention.preflight`` — ``check`` must stay runnable on a machine with no stack.
     """
     from .specfile import read_yaml
-    from . import runtime as _runtime
+    from . import intervention as _intervention
 
     spec_path = Path(project_dir) / "capevolve.yaml"
     if not spec_path.exists():
@@ -57,12 +57,12 @@ def _check_runtime(rep, project_dir: Path) -> None:
     except Exception:  # a broken spec is reported by other checks
         return
     try:
-        rt = _runtime.declared(spec)
-    except _runtime.RuntimeError_ as e:
+        rt = _intervention.declared(spec)
+    except _intervention.InterventionError as e:
         rep.problems.append(str(e))
         return
-    if rt != _runtime.DIRECT:
-        rep.notes.append(f"runtime: {rt} (candidate delivered out-of-process; "
+    if rt != _intervention.DIRECT:
+        rep.notes.append(f"intervention: {rt} (candidate delivered out-of-process; "
                          "readiness is checked at run time, not here)")
 
 
@@ -219,7 +219,7 @@ def run_check(project_dir: Path, *, tolerance: float = 1e-6) -> CheckReport:
         except Exception as e:  # noqa: BLE001
             rep.notes.append(f"degenerate-trials probe skipped: {e}")
 
-    _check_runtime(rep, Path(project_dir))
+    _check_intervention(rep, Path(project_dir))
 
     rep.ok = not rep.problems
     return rep

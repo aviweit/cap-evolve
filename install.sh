@@ -67,10 +67,13 @@ echo "  from: $SRC"
 echo "  to:   $DEST"
 
 shopt -s nullglob
-COMPONENTS=(orchestrate phases capabilities algorithms optimizers runtimes)
+COMPONENTS=(orchestrate phases capabilities algorithms optimizers interventions)
 for comp in "${COMPONENTS[@]}"; do
-  for skill in "$SRC/$comp"/*/; do
-    [[ -d "$skill" ]] || continue
+  # A skill dir is one that HOLDS a meta.yaml — found at any depth, because a component
+  # may group its skills in sub-directories (interventions/llm-proxies/spa). A fixed
+  # */ glob would copy the GROUP dir as if it were a skill and lose the skill itself.
+  while IFS= read -r meta; do
+    skill="$(dirname "$meta")/"
     name="$(basename "$skill")"
     target="$DEST/$name"
     rm -rf "$target"
@@ -80,7 +83,7 @@ for comp in "${COMPONENTS[@]}"; do
       cp -R "$skill" "$target"
     fi
     echo "  + $comp/$name"
-  done
+  done < <(find "$SRC/$comp" -name meta.yaml -type f 2>/dev/null | sort)
   # Component-level plain files, not just skill dirs. `optimizers/registry.yaml` is
   # one, and without it every install is unable to run an optimizer at all — the
   # directory-only glob above silently dropped it. Copy the whole class, keeping the

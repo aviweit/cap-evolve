@@ -91,7 +91,7 @@ the core. Extending is one folder or one registry row — see [`EXTENDING.md`](E
 
 **How the counts are defined.** A *skill* is one `skills/<component>/<name>/SKILL.md`, i.e.
 one row of the generated [`skills/_registry/manifest.json`](../skills/_registry/manifest.json)
-— phases, capabilities, algorithms, optimizers, runtimes and orchestrate all count. An *algorithm* is a
+— phases, capabilities, algorithms, optimizers, interventions and orchestrate all count. An *algorithm* is a
 skill whose `meta.yaml` `component: algorithm`; agent-mode-only algorithms count too. An
 algorithm is *run-executable* when `cap-evolve run` drives its deterministic loop; it is
 *agent-mode* when its `meta.yaml` declares agent-mode only, in which case `cap-evolve run`

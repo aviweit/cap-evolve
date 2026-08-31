@@ -122,7 +122,7 @@ def repo_root() -> Path:
 
     Found by walking UP for a marker rather than counting parents. A fixed
     ``parents[4]`` is only correct in the repo layout
-    (``<root>/skills/runtimes/spa/scripts``): ``install.sh`` copies each skill to
+    (``<root>/skills/interventions/llm-proxies/spa/scripts``): ``install.sh`` copies each skill to
     ``$DEST/<name>``, so an installed tree puts this file at
     ``$DEST/spa/scripts/spa_env.py`` and ``parents[4]`` resolves to ``$HOME`` — which
     would silently point ``vendor/`` at the home directory and clone gigabytes there.
@@ -162,7 +162,7 @@ def store_port() -> str:
 def remote_env_url() -> str:
     """The benchmark's own environment service, if it has one.
 
-    In this phase the benchmark owns that service (tau2 ships an environment manager);
+    In this phase the benchmark owns that service (some runners ship an environment manager);
     core only health-checks it when a URL is configured.
     """
     load_env()
@@ -205,7 +205,7 @@ def wait_for_health(port: str, timeout: int = 60, *, interval: float = 2.0) -> b
 
 
 # Liveness paths, in probe order. Services in and around this stack do not agree on
-# which they expose: the store and SPA answer /health, tau2's environment manager
+# which they expose: the store and SPA answer /health, a benchmark's environment manager
 # answers /status and 404s on both /health and / — which made a perfectly healthy
 # service look like a failed start. Probing a list, rather than assuming one path, is
 # the difference between "not up" and "up, different surface".
@@ -606,13 +606,13 @@ def upstream_llm_args(*, include_api_key: bool = False) -> dict:
 
     **The API KEY IS NOT IN THE RETURNED DICT BY DEFAULT — deliberately.** These args get
     handed to a benchmark runner, and a runner is entitled to record the config it was
-    given: tau2, for one, writes ``llm_args`` verbatim into its results file under
+    given: a runner may write ``llm_args`` verbatim into its results file, e.g. under
     ``info.agent_info.llm_args`` / ``info.user_info.llm_args``. That file is exactly what
     the runtime asks adapters to persist and expose through ``trajectories()``, and
     cap-evolve then copies it VERBATIM into the optimizer's working dir every iteration
     while ``store: git`` commits it. A key placed in this dict therefore becomes a
     committed secret that was also shipped to the optimizer. This was observed for real on
-    a tau2 airline baseline, not theorised.
+    a benchmark baseline, not theorised.
 
     Omitting it costs nothing on the normal path: litellm resolves the credential from
     ``OPENAI_API_KEY`` in the environment for the ``openai/`` route, and ``load_env()``
@@ -694,7 +694,7 @@ class Protection:
     """Which store tools must survive a redeploy — the benchmark's frozen substrate.
 
     A benchmark may keep standalone tools in the store that its skill's tools call by
-    name (tau2's 14 primitives). Those belong to no skill manifest and must never be
+    name (the benchmark's frozen primitives). Those belong to no skill manifest and must never be
     deleted when the skill is replaced. Protection is declared by the caller, by any
     of three independent markers; ANY match spares a tool.
     """

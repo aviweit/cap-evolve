@@ -39,7 +39,7 @@ def _expect_refusal(fn, label: str, problems: list[str]) -> None:
 
 
 def main() -> int:
-    report = {"skill": "spa", "component": "runtime", "ok": False, "problems": [], "notes": []}
+    report = {"skill": "spa", "component": "intervention", "ok": False, "problems": [], "notes": []}
     problems: list[str] = report["problems"]
     repo = spa_env.repo_root()
 
@@ -70,11 +70,11 @@ def main() -> int:
     _expect_refusal(lambda: spa_env.start_spa(""), "start_spa('')", problems)
 
     # 3. Protection ---------------------------------------------------------
-    p = spa_env.Protection(tags=("primitive-tool",), names=("calculate",), modules=("functions.py",))
+    p = spa_env.Protection(tags=("frozen",), names=("keep_me",), modules=("substrate.py",))
     cases = [
-        ({"name": "x", "tags": ["primitive-tool"]}, True, "tag match"),
-        ({"name": "calculate", "tags": []}, True, "name match"),
-        ({"name": "y", "module_name": "functions.py"}, True, "module match"),
+        ({"name": "x", "tags": ["frozen"]}, True, "tag match"),
+        ({"name": "keep_me", "tags": []}, True, "name match"),
+        ({"name": "y", "module_name": "substrate.py"}, True, "module match"),
         ({"name": "wrapper", "tags": ["other"], "module_name": "w.py"}, False, "no match"),
         ({}, False, "empty row"),
     ]

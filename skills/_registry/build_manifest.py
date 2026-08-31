@@ -23,10 +23,10 @@ from pathlib import Path
 # had plurals that matched nothing, so validation was dead. The directory layout
 # uses the plural (skills/<plural>/<skill>/) but the meta `component` is singular.
 #
-# `runtime` names HOW a candidate is delivered to the model under test, as opposed to
-# WHAT is optimized (`capability`). A runtime skill owns an out-of-process delivery
+# `intervention` names HOW a candidate is delivered to the model under test, as opposed to
+# WHAT is optimized (`capability`). An intervention skill owns an out-of-process delivery
 # stack rather than a step in the run DAG, so it declares no needs/provides tokens.
-COMPONENTS = {"phase", "capability", "algorithm", "optimizer", "orchestrate", "runtime"}
+COMPONENTS = {"phase", "capability", "algorithm", "optimizer", "orchestrate", "intervention"}
 
 # The needs/provides token vocabulary. Every needs/provides entry must be one of
 # these; a misspelling ("score" for "scores") fails the build instead of silently

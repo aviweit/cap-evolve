@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Report the state of the SPA runtime stack. Read-only.
+"""Report the state of the SPA intervention stack. Read-only.
 
 This is the skill's registry ``entry`` (see meta.yaml) and deliberately does nothing
-else: the runtime is a LIBRARY. Provisioning, starting, deploying and cleaning are
+else: the intervention is a LIBRARY. Provisioning, starting, deploying and cleaning are
 ``spa_env`` calls, made by the adapter that needs them or by an example's own
 setup/teardown script — not by a command layer wrapping them.
 
-    python skills/runtimes/spa/scripts/run.py [--json]
+    python skills/interventions/llm-proxies/spa/scripts/run.py [--json]
 
 Exit code 0 when store and SPA are both healthy, 1 otherwise, so a shell caller can
 gate on it.
