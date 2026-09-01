@@ -96,9 +96,15 @@ def _round_gate_numbers(run_dir: RunDir, candidate_id: str) -> dict:
     parent = table.get("parent") or {}
     out = {
         "parent_val": parent.get("reward"),
+        # No ``gate_stderr``: the published ``stderr`` column is the SE of the PAIRED per-task
+        # deltas (``threshold == k_se * SE`` in every deterministic gate's own reason string),
+        # and NEITHER table records it — ``parent.stderr`` (round table) is the SE of the
+        # parent's MEAN over tasks and ``entry["stderr"]`` is the candidate's/pooled mean SE,
+        # both typically much larger. Publishing one there put "±0.144" beside a threshold of
+        # 0.044 in a single row, the same self-contradiction this function exists to remove, so
+        # it stays null like ``k_se``.
         # The parent block is the round table's; a grow table has no parent, so fall back to the
-        # candidate entry's own pooled SE and paired n — which is what the gate actually used.
-        "gate_stderr": parent.get("stderr", entry.get("stderr")),
+        # candidate entry's own paired n — which IS what the gate used.
         "gate_n": parent.get("n_tasks", entry.get("n")),
         "gate_delta": entry.get("gate_delta"),
         "gate_threshold": entry.get("gate_threshold"),
@@ -372,7 +378,11 @@ def main(argv=None) -> int:
     # every round of runs 32971129203 and 33046360451 recorded, because nothing asked the agent
     # for one. Read it BEFORE booking, and report the answer so a forgotten handover is
     # correctable while rounds remain rather than discovered when the run is over.
-    handover = bool(harness._journal_tail(src).strip())
+    # ``pending_handover``, not ``_journal_tail``: a working copy cloned from the last round
+    # still holds THAT round's entry, and _reconcile_journal's dedup guard books the placeholder
+    # rather than the same entry twice — so the plain tail reports "recorded" for exactly the
+    # round whose handover went missing.
+    handover = bool(harness.pending_handover(src, run_dir))
     reason = args.note or args.decision
     if indecisive:
         reason = f"indecisive (gate): {reason}"

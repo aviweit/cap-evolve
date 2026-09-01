@@ -1054,6 +1054,22 @@ def _journal_tail(workdir: Path) -> str:
     return tail.replace(_JOURNAL_MARK, "").strip()
 
 
+def pending_handover(workdir: Path, run_dir: RunDir) -> str:
+    """The optimizer's handover entry ``_reconcile_journal`` would actually book — "" if none.
+
+    Asking "is there a ## block in the workdir journal?" is not the same question: an agent
+    whose next working copy is a COPY of the last one carries the previous round's entry along,
+    and ``_reconcile_journal``'s dedup guard correctly refuses to book it twice — so a round
+    that wrote no new handover can hold a stale one. Callers that report the answer back to the
+    optimizer (``agent-optimize``'s ``commit.py``) must agree with what was booked, or the
+    round most in need of the warning is the one that does not get it.
+    """
+    tail = _journal_tail(workdir).strip()
+    run_journal = run_dir.root / "JOURNAL.md"
+    base = (run_journal.read_text(encoding="utf-8") if run_journal.exists() else _JOURNAL_SEED)
+    return "" if not tail or tail in base else tail
+
+
 def _build_ledger(workdir: Path, run_dir: RunDir) -> None:
     """Write the FACTUAL, framework-owned LEDGER.md: one row per prior iteration with
     its outcome + the exact tasks it broke/fixed. Deterministic — the objective record;
@@ -1167,7 +1183,10 @@ def _reconcile_journal(workdir: Path, run_dir: RunDir, cid: str, *,
     substitute for the optimizer's own reflection — it does not fire when the
     optimizer already wrote a real entry.
     """
-    tail = _journal_tail(workdir)
+    # ``pending_handover``, not ``_journal_tail``: ONE place decides whether this round has a
+    # bookable handover, so what ``commit.py`` reports back to the optimizer cannot drift from
+    # what is actually booked here.
+    tail = pending_handover(workdir, run_dir)
     run_journal = run_dir.root / "JOURNAL.md"
     base = run_journal.read_text(encoding="utf-8") if run_journal.exists() else _JOURNAL_SEED
     # Run-level file is pure accumulated entries — strip any marker before appending.
@@ -1217,7 +1236,14 @@ def _reconcile_journal(workdir: Path, run_dir: RunDir, cid: str, *,
              f"{'unresolved' if indecisive else 'ACCEPTED' if accepted else 'rejected'} "
              f"val={vs} Δ={ds} -->")
     tail = tail.strip()
-    if not tail:
+    if not tail and _journal_tail(workdir).strip():
+        # Dedup guard: the optimizer dropped the marker without appending (so the tail
+        # fallback returned an entry already recorded in the run-level journal — typically a
+        # working copy CLONED from the last round). Do NOT re-append it — that would
+        # duplicate a prior iteration's entry under this cid. Not the empty-handover
+        # escalation below either: an entry was written, just not by this round.
+        tail = f"## Iteration {cid} — (duplicate handover; optimizer re-appended a prior entry unchanged)"
+    elif not tail:
         # Confirmed data-loss bug (#400): the optimizer wrote no handover at all, and
         # this used to be accepted with no trace anywhere. Escalate — log it AND make
         # the journal entry itself unmissable — instead of a placeholder that reads
@@ -1234,11 +1260,6 @@ def _reconcile_journal(workdir: Path, run_dir: RunDir, cid: str, *,
                 "reason was available to synthesize one from. This is a bug in the "
                 "optimizer/session, not a normal outcome — see the "
                 "`optimizer_context_warning` event in events.jsonl.")
-    elif tail in base:
-        # Dedup guard: the optimizer dropped the marker without appending (so the tail
-        # fallback returned an entry already recorded in the run-level journal). Do NOT
-        # re-append it — that would duplicate a prior iteration's entry under this cid.
-        tail = f"## Iteration {cid} — (duplicate handover; optimizer re-appended a prior entry unchanged)"
     new = base + "\n\n" + tail + stamp + "\n"
     try:
         run_journal.write_text(new, encoding="utf-8")
