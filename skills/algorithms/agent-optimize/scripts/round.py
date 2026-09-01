@@ -270,6 +270,18 @@ def main(argv=None) -> int:
         print(json.dumps({"error": f"tags not found under {work}: {missing}"}, indent=2))
         return 2
 
+    # Compliance instrumentation (issue #401): log, per candidate, whether screen.py was
+    # invoked for it BEFORE this full-val eval — a distinct, auditable event rather than
+    # something only inferable (or not) from SKILL.md prose. `screen.py` writes
+    # `<run_dir>/screens/<tag>__screenN.json`; its absence means this candidate skipped
+    # straight to full-val, which the dashboard can now show as its own event kind.
+    screens_dir = run_dir.root / "screens"
+    for t in tags:
+        screened = screens_dir.is_dir() and any(screens_dir.glob(f"{t}__screen*.json"))
+        run_dir.log_event("agent_optimize_compliance", tag=t,
+                          screened_before_fullval=screened,
+                          iteration=int(run_dir.spent.iterations))
+
     # The null control is built here, not by the driver, so it cannot silently be skipped
     # or accidentally differ from the parent.
     # Derive the round's identity ONCE: the table name and the control tags are two halves of
@@ -338,6 +350,14 @@ def main(argv=None) -> int:
                                              - gate_res.reward, 4)),
             "gate_delta": (g.get("gate") or {}).get("delta"),
             "gate_threshold": (g.get("gate") or {}).get("threshold"),
+            # Structured numeric fields from gate_check.py's own JSON, kept alongside
+            # gate_delta/gate_threshold above so commit.py can attach them to the events it
+            # writes, rather than only a hand-typed prose note (dashboard.py's gate_decisions
+            # previously had to regex-parse these back out of that note — see commit.py).
+            "stderr": (g.get("candidate") or {}).get("stderr"),
+            "n": g.get("paired_n"),
+            "k_se": args.k_se,
+            "resolvable_effect_size": (g.get("gate") or {}).get("resolvable_effect_size"),
             "verdict": g.get("verdict"),
             "regressions": g.get("regressions"),
             "eval_rc": ev.get("rc"),
@@ -378,7 +398,14 @@ def main(argv=None) -> int:
     # where against the other replicate it is +0.05 and rejects. The table said nothing about the
     # verdict resting on that choice. Re-gating costs no rollouts, so there is no reason not to
     # check; a verdict that flips is not evidence, whatever the picked replicate showed.
-    if args.gate_against == "control" and len(ctl_tags) > 1:
+    #
+    # MANDATORY two-seed-block sign agreement: this used to run only under
+    # --gate-against control, so a parent-gated round (the default) never checked whether its
+    # accept survived the choice of control replicate — measured on a real run to have called a
+    # null result positive exactly that way, unchecked because the round gated against the stored
+    # parent. With --control-replicates 2 the default, this check now always runs whenever there
+    # is more than one control block, in EITHER gate mode.
+    if len(ctl_tags) > 1:
         for r in rows:
             if r["tag"] in ctl_tags or r.get("reward") is None:
                 continue

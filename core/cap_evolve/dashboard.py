@@ -333,7 +333,8 @@ _ALGO_MARKERS = (
     # real agent-optimize run that logs only screen/accept/reject — the shape every
     # actual run has, since the agent drives the loop and emits no "agent_round" —
     # matched nothing and rendered as "algorithm not recorded" with no agent panels.
-    ("agent-optimize", ("agent_round", "agent_subset", "agent_optimize_step", "screen")),
+    ("agent-optimize", ("agent_round", "agent_subset", "agent_optimize_step", "screen",
+                        "agent_optimize_compliance")),
     ("hill-climb", ("convergence", "step")),
 )
 
@@ -350,7 +351,7 @@ _ALGO_MARKERS = (
 #: ``skillopt_step`` is the one kind deliberately absent, and for a different reason —
 #: it is not a legacy record but epoch DETAIL logged alongside a ``step`` for the same
 #: candidate on the same (current) runs, so it never carried a graph anyone needs.
-_STEP_KINDS = ("step", "gepa_val_gate", "accept", "reject")
+_STEP_KINDS = ("step", "gepa_val_gate", "accept", "reject", "provisional")
 
 #: Kinds whose presence means "this candidate was accepted" without an ``accept`` field.
 _ACCEPT_KINDS = ("accept",)
@@ -999,7 +1000,14 @@ def reduce_run(run_dir) -> dict:
         # not a rejection and not a failure: the gate declined to judge, so the edit's
         # quality is unknown. Collapsing it into "rejected" (the old behaviour) told
         # the reader a measured verdict existed when none did.
-        if cid in indecisive_ids:
+        if kind == "provisional":
+            # Directionally positive (Δ>0) but not yet gate-significant, and the driver
+            # chose to buy more trials on this SAME candidate (scripts/grow.py) instead of
+            # a final accept/reject — neither "accepted" nor "rejected" describes that, and
+            # falling through to the accepted/rejected branch below would misreport it as
+            # one or the other while it is still pending.
+            status = "provisional"
+        elif cid in indecisive_ids:
             status = "indecisive"
         elif val is None and not per and kind not in ("accept", "reject"):
             # ``failed`` means NO VERDICT AND NO MEASUREMENT — a step that produced
@@ -1277,15 +1285,18 @@ def reduce_run(run_dir) -> dict:
         })
 
     # --- gate decisions (accept / reject / INDECISIVE, with Δ̄, SE, n) -----
-    # The reason string the gate wrote is the audit record; Δ̄/SE/n are parsed back out
-    # of it so the UI can show the uncertainty next to the mean instead of a bare Δ.
-    # A number that isn't in the reason stays None — never a fabricated 0.
+    # Regex-parsing the reason string is the FALLBACK, not the source: it was the prior sole
+    # source and is fragile because it depends on the prose matching the deterministic gate's
+    # own wording. Any structured ``gate_*`` field the algorithm recorded (agent-optimize's
+    # commit.py reads them back from round.py's persisted table, which in turn takes them from
+    # gate_check.py's own JSON) overrides it below.
     gate_decisions: list[dict] = []
     for n in sorted((x for x in nodes.values() if x["id"] != "seed"),
                     key=lambda x: x.get("iteration") or 0):
         reason = str(n.get("reason") or "")
         verdict = ("accept" if n["status"] == "accepted"
                    else "indecisive" if n["status"] == "indecisive"
+                   else "provisional" if n["status"] == "provisional"
                    else "reject" if n["status"] == "rejected" else "no measurement")
         m_delta = re.search(r"Δ̄?\s*=\s*([+-]?\d*\.?\d+)", reason)
         # The bar `0.2·SE=0.0062` comes FIRST in the reason and also matches `SE=`, so an
@@ -1512,6 +1523,18 @@ def reduce_run(run_dir) -> dict:
         })
     if screens:
         algo_extra["screens"] = screens
+
+    # Compliance instrumentation (issue #401): whether screen.py ran on a candidate
+    # BEFORE its full-val eval this round — round.py logs one of these per candidate per
+    # round.py invocation. Surfaced as its own distinct dashboard entry so a real run's
+    # screen-then-full-val discipline (or the lack of it) is visible, not just inferable
+    # from SKILL.md prose.
+    compliance = [{"candidate": e.get("tag"), "iteration": e.get("iteration"),
+                   "screened_before_fullval": bool(e.get("screened_before_fullval")),
+                   "t": e.get("t")}
+                  for e in events if e.get("kind") == "agent_optimize_compliance"]
+    if compliance:
+        algo_extra["compliance"] = compliance
 
     # --- null-control replicates: the noise-floor check, kept OUT of the candidate graph ---
     # A control replicate (a byte-identical re-measurement, run to bound run-to-run noise)
@@ -2383,7 +2406,7 @@ function dsecs(v){v=Math.max(0,Math.round(v||0));if(v<60)return v+'s';
     $('th',{class:'r',text:'val'}),$('th',{class:'r',text:'parent val'}),$('th',{class:'r',text:'Δ̄'}),
     $('th',{class:'r',text:'SE'}),$('th',{class:'r',text:'n'}),$('th',{class:'r',text:'bar (k·SE)'}),
     $('th',{class:'r',text:'resolvable ±'})));
-  const BADGE={accept:'b-accepted',reject:'b-rejected',indecisive:'b-indecisive'};
+  const BADGE={accept:'b-accepted',reject:'b-rejected',indecisive:'b-indecisive',provisional:'b-indecisive'};
   const n4=v=>v==null?'—':(+v).toFixed(4);
   D.forEach(d=>{
     t2.append($('tr',{},
