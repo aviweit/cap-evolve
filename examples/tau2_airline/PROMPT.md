@@ -29,7 +29,7 @@ exists). Here is everything intake needs:
 # 2. BENCHMARK / DATASET  (the eval) — INSTALL IT DURING INTAKE
 - benchmark:    tau2-bench, airline domain
 - repo:         https://github.com/sierra-research/tau2-bench   (latest main; record the resolved commit)
-- install:      git clone as a sibling dir ../tau2-bench, then `pip install -e ../tau2-bench`
+- install:      git clone into vendor/tau2-bench, then `pip install -e vendor/tau2-bench`
 - tasks:        "adapter" — the adapter loads all 50 airline tasks from tau2
                 (tau2.domains.airline.environment.get_tasks)
 - splits:       all 50 tasks as train = val = test  (no-holdout fit metric; the engine
@@ -92,7 +92,7 @@ exists). Here is everything intake needs:
 - optimizer:    claude-code
 - model:        claude-opus-4-6
 - credentials:  a logged-in Claude Code session (or ANTHROPIC_API_KEY)
-- runner_repo_path:  ../tau2-bench  (the cloned checkout — surfaced to the optimizer as
+- runner_repo_path:  ../../vendor/tau2-bench  (the cloned checkout — surfaced to the optimizer as
                 read-only context so it can consult tau2's tools/scoring/task structure)
 - optimizer instructions: author .capevolve/project/optimizer/INSTRUCTIONS.md from the scaffolded
                 template (keep its {{...}} placeholders intact — the harness fills them per
@@ -132,7 +132,7 @@ exists). Here is everything intake needs:
                 (./trajectories/, ./guidance/<cap>/SKILL.md for EACH selected capability,
                 ./guidance/diagnose/SKILL.md, ./guidance/optimizer/claude-code.md, ./guidance/sources/
                 [the data model], ./LEDGER.md, ./JOURNAL.md, ./RUNMAP.md + ./prior_iterations/,
-                ./PROCESS.md, ../tau2-bench).
+                ./PROCESS.md, ../../vendor/tau2-bench).
 - (vi) the CROSS-ITERATION FILE CONTRACT + NEW-TOOLS-FIRST-CLASS mandate — the authored
                 INSTRUCTIONS must tell the optimizer to READ all four cross-iteration files first
                 (LEDGER facts, the whole JOURNAL handover, RUNMAP + prior_iterations diffs/PROCESS),
