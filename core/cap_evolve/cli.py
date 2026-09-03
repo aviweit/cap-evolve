@@ -573,6 +573,9 @@ def _cmd_run(argv):
     p.add_argument("--max-usd", type=float, default=None)
     p.add_argument("--max-optimizer-usd", type=float, default=None)
     p.add_argument("--stall", type=int, default=None)
+    p.add_argument("--stop-at-reward", type=float, default=None,
+                   help="stop the optimizer loop as soon as the best val reward reaches this "
+                        "(0 = off, the default); still finalizes on the sealed test split")
     p.add_argument("--optimizer-max-turns", type=int, default=None,
                    help="per-iteration cap passed to the optimizer agent CLI (e.g. claude --max-turns)")
     p.add_argument("--follow", action="store_true",
@@ -604,7 +607,8 @@ def _cmd_run(argv):
     # CLI budget flags override the spec (None = "not passed", leave spec value).
     for flag, key in (("max_iterations", "max_iterations"), ("max_metric_calls", "max_metric_calls"),
                       ("max_usd", "max_usd"), ("max_optimizer_usd", "max_optimizer_usd"),
-                      ("stall", "stall"), ("optimizer_max_turns", "optimizer_max_turns")):
+                      ("stall", "stall"), ("stop_at_reward", "stop_at_reward"),
+                      ("optimizer_max_turns", "optimizer_max_turns")):
         v = getattr(args, flag)
         if v is not None:
             spec[key] = v
@@ -814,6 +818,7 @@ def _cmd_run(argv):
                 "--max-metric-calls", str(spec.get("max_metric_calls", 0)),
                 "--max-usd", str(spec.get("max_usd", 0.0)),
                 "--max-optimizer-usd", str(spec.get("max_optimizer_usd", 0.0)),
+                "--stop-at-reward", str(spec.get("stop_at_reward", 0.0)),
                 "--spec", str(spec_path)]
     if spec.get("split_ids_file"):
         base_cmd += ["--split-ids", str(spec["split_ids_file"])]
@@ -845,7 +850,8 @@ def _cmd_run(argv):
     # keep climbing past the original cap). Without an override the frozen budget stands.
     if args.resume:
         overrides = {k: getattr(args, k) for k in
-                     ("max_iterations", "max_metric_calls", "max_usd", "max_optimizer_usd", "stall")
+                     ("max_iterations", "max_metric_calls", "max_usd", "max_optimizer_usd", "stall",
+                      "stop_at_reward")
                      if getattr(args, k) is not None}
         if overrides:
             _RunDir.open(workdir / run_dir).update_budget(**overrides)

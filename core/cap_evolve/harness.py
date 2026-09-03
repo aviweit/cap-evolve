@@ -566,6 +566,7 @@ def baseline(adapter, seed_dir: Path, *, run_dir: RunDir, n_trials: int = 1, ks=
         json.dumps({"val": result.to_dict(), "best_id": "seed"}, indent=2), encoding="utf-8")
     run_dir.log_event("baseline", val=result.reward, stderr=result.stderr,
                       n_scored=result.n_scored, n_tasks=result.n_tasks)
+    run_dir.update_spent(best_val=result.reward)
     # The baseline is the number every later delta is measured against, so a
     # partially-evaluated one poisons the whole run rather than a single iteration.
     # Nothing downstream can detect this after the fact — baseline.json looks like a
@@ -633,6 +634,7 @@ def reuse_baseline(prior_run_dir: Path, *, run_dir: RunDir) -> SplitResult:
     result = SplitResult.from_dict(baseline_data["val"])
     run_dir.log_event("baseline_reused", prior_run_dir=str(prior),
                       val=result.reward, stderr=result.stderr)
+    run_dir.update_spent(best_val=result.reward)
     return result
 
 
@@ -1455,7 +1457,8 @@ def record_iteration(run_dir: RunDir, workdir: Path, cid: str, *,
     gepa only accepted ones) and they are not silently-droppable the way the three
     above were.
     """
-    run_dir.update_spent(iterations=1, accepted=None if indecisive else accepted)
+    run_dir.update_spent(iterations=1, accepted=None if indecisive else accepted,
+                         best_val=val if accepted and val is not None else None)
     run_dir.log_event("step", candidate=cid, accept=accepted, reason=reason,
                       val=val, parent=parent_id, parent_val=parent_val, **extra)
     delta = (val - parent_val if isinstance(val, (int, float))

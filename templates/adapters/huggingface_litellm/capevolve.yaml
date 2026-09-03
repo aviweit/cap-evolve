@@ -26,4 +26,8 @@ gate_mode:          paired
 gate_k_se:          1.0
 max_iterations:     10
 stall:              2
+stop_at_reward:     0.0                   # 0 = off; stop as soon as best val reward reaches this.
+                                          # Off here: num_trials=1 means best_val's stderr is 0
+                                          # without being statistically meaningful — raise
+                                          # num_trials before relying on this ceiling.
 store:              git
