@@ -83,6 +83,12 @@ def normalize(model: str) -> str:
     return f"openai/{m}" if m.startswith(_GATEWAY_PREFIXES) else m
 
 
+def _bare(model: str) -> str:
+    """Strip the litellm route prefix. litellm's cost lookup uses the UNPREFIXED id."""
+    m = (model or "").strip()
+    return m[len("openai/"):] if m.startswith("openai/") else m
+
+
 def agent_model() -> str:
     """The AGENT under test — a gateway catalog model."""
     load_env()
@@ -125,13 +131,19 @@ def llm_args() -> dict:
     return {"api_base": base, "temperature": 0.0}
 
 
-def llm_args_for(model: str) -> dict:  # noqa: ARG001 — the adapter passes the model in
+def llm_args_for(model: str) -> dict:
     """Per-model form of :func:`llm_args`.
 
     Every catalog id reaches the same OpenAI-compatible endpoint, so the model does not
     change the args. It exists so the adapter can stay explicit about which call class it
     is configuring, and so a split (a judge on a different endpoint) has a seam.
+
+    It also registers ``model``'s zero cost, because this is the one function the runner
+    calls per call class before the rollouts start. Without it litellm has no price entry
+    and tau2 logs "This model isn't mapped yet" at ERROR level on EVERY completion, which
+    buries real failures in the run log.
     """
+    register_zero_cost(model, _bare(model))
     return llm_args()
 
 
@@ -189,4 +201,11 @@ if __name__ == "__main__":  # self-check: routing is a credential path
     os.environ["OPENAI_API_KEY"] = "not-a-real-key"
     assert "api_key" not in llm_args(), "an api_key in llm_args gets committed by store: git"
     assert llm_args_for("aws/gpt-oss-120b") == llm_args()
+    assert _bare("openai/aws/gpt-oss-120b") == "aws/gpt-oss-120b"
+    assert _bare("aws/gpt-oss-120b") == "aws/gpt-oss-120b"
+    # the price entry must exist under the id litellm actually looks up
+    import litellm
+    llm_args_for("openai/aws/gpt-oss-120b")
+    assert "aws/gpt-oss-120b" in litellm.model_cost, \
+        "unmapped model -> tau2 logs an ERROR on every completion"
     print("gateway.py self-check OK")
