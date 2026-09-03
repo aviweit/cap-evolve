@@ -88,8 +88,8 @@ def test_maybe_launch_reports_error_when_every_port_in_range_is_taken(monkeypatc
     fall back to the first (also-taken) port — that fallback used to print a URL
     that actually served a stale, unrelated dashboard."""
     monkeypatch.setattr(dl, "is_available", lambda: True)
-    monkeypatch.setattr(dl, "_free_port", lambda start, tries=25: (_ for _ in ()).throw(
-        RuntimeError(f"no free port in [{start}, {start + tries})")))
+    monkeypatch.setattr(dl, "_free_port", lambda start, tries=25, host=dl.DEFAULT_HOST: (
+        _ for _ in ()).throw(RuntimeError(f"no free port in [{start}, {start + tries})")))
     out = dl.maybe_launch("/runs", mode="auto")
     assert out["dashboard"] == "error"
     assert "no free port" in out["reason"]
@@ -142,3 +142,61 @@ def test_report_records_a_given_url_instead_of_launching_a_second_server(tmp_pat
     with socket.socket() as probe:
         probe.settimeout(0.5)
         assert probe.connect_ex(("127.0.0.1", free)) != 0, "a second server was launched"
+
+
+def test_resolve_host_precedence(monkeypatch):
+    monkeypatch.delenv("CAPEVOLVE_DASHBOARD_HOST", raising=False)
+    assert dl.resolve_host() == "127.0.0.1"          # loopback-only by default
+    monkeypatch.setenv("CAPEVOLVE_DASHBOARD_HOST", "0.0.0.0")
+    assert dl.resolve_host() == "0.0.0.0"            # env opts in
+    assert dl.resolve_host("192.0.2.7") == "192.0.2.7"  # explicit arg wins over env
+    monkeypatch.setenv("CAPEVOLVE_DASHBOARD_HOST", "  ")
+    assert dl.resolve_host() == "127.0.0.1"          # blank is not a bind address
+
+
+def test_browsable_host_maps_wildcard_binds_to_loopback():
+    # A 0.0.0.0 bind is not a dialable address; the URL a human clicks stays loopback.
+    assert dl.browsable_host("0.0.0.0") == "127.0.0.1"
+    assert dl.browsable_host("::") == "127.0.0.1"
+    assert dl.browsable_host("192.0.2.7") == "192.0.2.7"
+
+
+def test_launch_command_carries_the_bind_host():
+    cmd = dl.launch_command("/runs", port=7999, host="0.0.0.0")
+    assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
+
+
+def test_maybe_launch_binds_wildcard_but_prints_loopback(monkeypatch):
+    """Off-box case: only a 0.0.0.0 listener is reachable from another machine, but the
+    URL we print must still be one a browser accepts."""
+    calls = {}
+    _fake_spawn(monkeypatch, calls)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    out = dl.maybe_launch("/runs", mode="auto", port=free, host="0.0.0.0")
+    assert out["dashboard"] == f"http://127.0.0.1:{free}"
+    assert calls["cmd"][calls["cmd"].index("--host") + 1] == "0.0.0.0"
+
+
+def test_maybe_launch_reads_host_from_env(monkeypatch):
+    """``cap-evolve run`` exports the host so the report phase's own re-launch agrees."""
+    calls = {}
+    _fake_spawn(monkeypatch, calls)
+    monkeypatch.setenv("CAPEVOLVE_DASHBOARD_HOST", "0.0.0.0")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    dl.maybe_launch("/runs", mode="auto", port=free)
+    assert calls["cmd"][calls["cmd"].index("--host") + 1] == "0.0.0.0"
+
+
+def test_free_port_probes_the_host_it_will_bind():
+    """A port free on 0.0.0.0 must be probed there: on Linux a 127.0.0.1-only listener
+    still blocks a later 0.0.0.0 bind of the same port, so probing loopback alone could
+    hand back a port uvicorn then fails to take."""
+    with socket.socket() as squatter:
+        squatter.bind(("127.0.0.1", 0))
+        squatter.listen(1)
+        taken = squatter.getsockname()[1]
+        assert dl._free_port(taken, host="0.0.0.0") != taken

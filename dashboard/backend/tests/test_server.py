@@ -39,6 +39,26 @@ def test_url_for():
     assert server.url_for(7878) == "http://127.0.0.1:7878"
 
 
+def test_url_for_wildcard_bind_is_browsable_as_loopback():
+    from capevolve_dashboard import server
+    # A 0.0.0.0 bind must never be printed as "http://0.0.0.0:7878" — no browser
+    # dials that. The reachable URL on this machine is still loopback.
+    assert server.url_for(7878, "0.0.0.0") == "http://127.0.0.1:7878"
+    assert server.url_for(7878, "::") == "http://127.0.0.1:7878"
+    assert server.url_for(7878, "192.0.2.7") == "http://192.0.2.7:7878"
+
+
+def test_resolve_host_precedence(monkeypatch):
+    from capevolve_dashboard import server
+    monkeypatch.delenv("CAPEVOLVE_DASHBOARD_HOST", raising=False)
+    assert server.resolve_host() == "127.0.0.1"
+    monkeypatch.setenv("CAPEVOLVE_DASHBOARD_HOST", "0.0.0.0")
+    assert server.resolve_host() == "0.0.0.0"
+    assert server.resolve_host("192.0.2.7") == "192.0.2.7"  # explicit flag wins
+    monkeypatch.setenv("CAPEVOLVE_DASHBOARD_HOST", "   ")
+    assert server.resolve_host() == "127.0.0.1"  # blank env is not a bind address
+
+
 def test_asgi_auto_detects_static_dir_when_env_unset(monkeypatch):
     from capevolve_dashboard import server
 

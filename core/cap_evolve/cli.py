@@ -587,6 +587,10 @@ def _cmd_run(argv):
     p.add_argument("--dashboard", choices=("auto", "report-only", "off"), default=None,
                    help="live dashboard: auto (default, launch at run start), report-only, or off")
     p.add_argument("--dashboard-port", type=int, default=None, help="dashboard server port (default 7878)")
+    p.add_argument("--dashboard-host", default=None,
+                   help="dashboard bind address (default 127.0.0.1, or "
+                        "$CAPEVOLVE_DASHBOARD_HOST); use 0.0.0.0 to open the dashboard "
+                        "from another machine")
     args = p.parse_args(argv)
 
     skills_dir = Path(args.skills_dir) if args.skills_dir else _find_skills_dir()
@@ -618,6 +622,11 @@ def _cmd_run(argv):
     from . import dashboard_launch
     dash_mode = dashboard_launch.resolve_mode(args.dashboard, spec.get("dashboard"))
     dash_port = args.dashboard_port or int(spec.get("dashboard_port") or dashboard_launch.DEFAULT_PORT)
+    # Exported rather than threaded as a flag: the report phase re-launches the server in
+    # its own subprocess (see report_extra below), and every child inherits this env.
+    dash_host = args.dashboard_host or spec.get("dashboard_host")
+    if dash_host:
+        os.environ["CAPEVOLVE_DASHBOARD_HOST"] = str(dash_host)
 
     def skill_run(name: str) -> str:
         s = skills.get(name)
@@ -1031,11 +1040,15 @@ def _cmd_dashboard(argv):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base", default=".capevolve", help="dir containing run_* dirs")
     p.add_argument("--port", type=int, default=dashboard_launch.DEFAULT_PORT)
+    p.add_argument("--host", default=None,
+                   help="bind address (default 127.0.0.1, or $CAPEVOLVE_DASHBOARD_HOST); "
+                        "use 0.0.0.0 to open the dashboard from another machine")
     p.add_argument("--no-open", action="store_true", help="don't open a browser")
     args = p.parse_args(argv)
 
     status = dashboard_launch.maybe_launch(
-        args.base, mode="auto", port=args.port, open_browser=not args.no_open
+        args.base, mode="auto", port=args.port, open_browser=not args.no_open,
+        host=args.host,
     )
     print(json.dumps(status))
     return 0 if status.get("dashboard") not in (None, "error", "skipped") else 1

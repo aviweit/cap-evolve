@@ -71,3 +71,21 @@ gains it cannot distinguish from noise.
 `cap-evolve dashboard --base .capevolve --port 7878`. No backend? Open the static
 `dashboard.html` written into any run dir, or serve a committed export:
 `cd examples/tau2_airline/run_full/ui && python3 -m http.server 8000`.
+
+**`http://127.0.0.1:7878` won't open from another machine** — the dashboard binds loopback
+only, so it is reachable from the machine that runs it and nowhere else. That is deliberate:
+a run's artifacts are not published by default. To reach it from elsewhere — a remote box, a
+container, a VM, a different OS sharing the host — bind all interfaces:
+
+```bash
+export CAPEVOLVE_DASHBOARD_HOST=0.0.0.0      # or: cap-evolve run --dashboard-host 0.0.0.0
+cap-evolve dashboard --base .capevolve --port 7878 --host 0.0.0.0
+```
+
+Then open `http://<host-ip>:7878` (`hostname -I` gives the address). Some environments also
+forward the port to their host automatically once the listener is on `0.0.0.0`, in which case
+plain `http://127.0.0.1:7878` starts working from outside too.
+
+This makes the dashboard reachable from anything that can route to the machine, so prefer it
+on a trusted network only. To keep the loopback-only bind, forward the port instead:
+`ssh -L 7878:127.0.0.1:7878 <user>@<host>`.

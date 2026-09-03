@@ -304,9 +304,13 @@ COMMANDS: dict[str, dict] = {
     "dashboard": {
         "group": "inspect",
         "summary": "launch the web dashboard over a base dir of runs",
-        "usage": "cap-evolve dashboard [--base DIR] [--port N] [--no-open]",
-        "long": "Needs the optional dashboard backend: pip install -e dashboard/backend.",
-        "examples": ["cap-evolve dashboard", "cap-evolve dashboard --port 8080 --no-open"],
+        "usage": "cap-evolve dashboard [--base DIR] [--port N] [--host ADDR] [--no-open]",
+        "long": "Needs the optional dashboard backend: pip install -e dashboard/backend.\n"
+                "Binds 127.0.0.1 by default, so the dashboard is reachable only from the\n"
+                "machine running it. Pass --host 0.0.0.0 (or set CAPEVOLVE_DASHBOARD_HOST)\n"
+                "to open it from elsewhere — a remote box, a container, a VM.",
+        "examples": ["cap-evolve dashboard", "cap-evolve dashboard --port 8080 --no-open",
+                     "cap-evolve dashboard --host 0.0.0.0   # reachable off-box"],
     },
     "version": {
         "group": "inspect",
