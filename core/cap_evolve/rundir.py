@@ -94,6 +94,7 @@ class Budget:
     max_usd: float = 0.0          # 0 = unlimited (total: runner + optimizer + intake)
     stall: int = 0                # consecutive no-accepts before stop; 0 = off
     max_optimizer_usd: float = 0.0  # 0 = off; separate cap on optimizer spend alone
+    stop_at_reward: float = 0.0   # 0 = off; stop as soon as best val reward reaches this
 
     def to_dict(self) -> dict:
         return {
@@ -102,6 +103,7 @@ class Budget:
             "max_usd": self.max_usd,
             "stall": self.stall,
             "max_optimizer_usd": self.max_optimizer_usd,
+            "stop_at_reward": self.stop_at_reward,
         }
 
     @classmethod
@@ -113,6 +115,7 @@ class Budget:
             max_usd=float(d.get("max_usd") or 0.0),
             stall=int(d.get("stall") or 0),
             max_optimizer_usd=float(d.get("max_optimizer_usd") or 0.0),
+            stop_at_reward=float(d.get("stop_at_reward") or 0.0),
         )
 
 
@@ -130,6 +133,7 @@ class Spent:
     intake_usd: float = 0.0          # INTAKE cost (best-effort; interview phase)
     intake_tokens: int = 0           # INTAKE tokens (best-effort)
     intake_seconds: float = 0.0      # INTAKE wall time (best-effort)
+    best_val: float = 0.0            # best val reward seen so far (seed or accepted candidate)
 
     @property
     def total_usd(self) -> float:
@@ -142,7 +146,7 @@ class Spent:
                 "runner_seconds": self.runner_seconds, "optimizer_seconds": self.optimizer_seconds,
                 "optimizer_usd": self.optimizer_usd, "optimizer_tokens": self.optimizer_tokens,
                 "intake_usd": self.intake_usd, "intake_tokens": self.intake_tokens,
-                "intake_seconds": self.intake_seconds}
+                "intake_seconds": self.intake_seconds, "best_val": self.best_val}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Spent":
@@ -153,7 +157,7 @@ class Spent:
                    float(d.get("optimizer_seconds") or 0.0),
                    float(d.get("optimizer_usd") or 0.0), int(d.get("optimizer_tokens") or 0),
                    float(d.get("intake_usd") or 0.0), int(d.get("intake_tokens") or 0),
-                   float(d.get("intake_seconds") or 0.0))
+                   float(d.get("intake_seconds") or 0.0), float(d.get("best_val") or 0.0))
 
 
 def _allow_test_rescore() -> bool:
@@ -256,7 +260,7 @@ class RunDir:
     def update_spent(self, *, iterations=0, metric_calls=0, usd=0.0, runner_tokens=0,
                      runner_seconds=0.0, optimizer_seconds=0.0, optimizer_usd=0.0,
                      optimizer_tokens=0, intake_usd=0.0, intake_tokens=0, intake_seconds=0.0,
-                     accepted: bool | None = None) -> Spent:
+                     accepted: bool | None = None, best_val: float | None = None) -> Spent:
         with _file_lock(self._state_lock):
             st = self._read_state()
             sp = Spent.from_dict(st.get("spent"))
@@ -275,6 +279,8 @@ class RunDir:
                 sp.stall = 0
             elif accepted is False:
                 sp.stall += 1
+            if best_val is not None:
+                sp.best_val = max(sp.best_val, best_val)
             st["spent"] = sp.to_dict()
             self._write_state(st)
             return sp
@@ -286,7 +292,8 @@ class RunDir:
         climbing past the original cap); everything else — and all ``spent`` — is
         preserved. Unknown keys are ignored so a stray CLI flag can't corrupt state.
         """
-        allowed = {"max_iterations", "max_metric_calls", "max_usd", "stall", "max_optimizer_usd"}
+        allowed = {"max_iterations", "max_metric_calls", "max_usd", "stall", "max_optimizer_usd",
+                   "stop_at_reward"}
         with _file_lock(self._state_lock):
             st = self._read_state()
             b = Budget.from_dict(st.get("budget")).to_dict()
@@ -299,6 +306,8 @@ class RunDir:
 
     def budget_exhausted(self) -> tuple[bool, str]:
         b, s = self.budget, self.spent
+        if b.stop_at_reward and s.best_val >= b.stop_at_reward - 1e-9:
+            return True, f"reward ceiling reached (best val {s.best_val:.4f} >= {b.stop_at_reward:.4f})"
         if b.max_iterations and s.iterations >= b.max_iterations:
             return True, f"max_iterations reached ({s.iterations}/{b.max_iterations})"
         if b.max_metric_calls and s.metric_calls >= b.max_metric_calls:

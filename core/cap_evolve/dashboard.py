@@ -464,6 +464,8 @@ def _budget_exhausted(budget, spent) -> str | None:
     """Which budget limit is spent out, or None. Mirrors RunDir.budget_exhausted."""
     if budget is None or spent is None:
         return None
+    if budget.stop_at_reward and spent.best_val >= budget.stop_at_reward - 1e-9:
+        return f"reward ceiling reached (best val {spent.best_val:.4f} >= {budget.stop_at_reward:.4f})"
     checks = (
         ("max_iterations", budget.max_iterations, spent.iterations),
         ("max_metric_calls", budget.max_metric_calls, spent.metric_calls),

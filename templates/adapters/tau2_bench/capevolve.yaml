@@ -21,4 +21,7 @@ gate_mode:          paired
 gate_k_se:          1.0
 max_iterations:     20
 stall:              5
+stop_at_reward:     1.0                   # 0 = off; stop as soon as best val reward reaches this.
+                                          # On here: num_trials=5 gives best_val a real stderr,
+                                          # unlike the num_trials=1 templates.
 store:              git

@@ -88,6 +88,9 @@ stall: 2                    # stop after N consecutive rejects
 max_metric_calls: 0         # 0 = unlimited; else stop after N runner evals
 max_usd: 0.0                # 0 = unlimited; total $ cap (runner + optimizer + intake)
 max_optimizer_usd: 0.0      # 0 = off; separate cap on optimizer spend alone
+stop_at_reward: 0.0         # 0 = off; stop as soon as the best val reward reaches this (still finalizes
+                            # on test). Off by default: with num_trials=1, best_val's stderr is 0
+                            # without being statistically meaningful — raise num_trials first.
 
 # --- anti-reward-hacking: seal the evaluation surface (optional, OFF by default)
 # Globs, relative to the candidate dir, that the optimizer may NOT change. They are

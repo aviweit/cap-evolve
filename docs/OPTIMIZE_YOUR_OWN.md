@@ -106,6 +106,13 @@ you want intake to ask):
                         # tasks. The bar is Δ > k·SE and not Δ > 0 because search amplifies noise — with
                         # enough candidates the best-looking one is best by luck. See docs/HONEST_EVAL.md.
 - stall:                <stop after N consecutive rejects; 0 = run all max_iterations>
+- stop_at_reward:       <stop as soon as the best val reward reaches this; 0 = off. Fires
+                        # before iteration 1 if the seed is already saturated. The sealed
+                        # test split is still scored at finalize, so the held-out number
+                        # is never lost. Trusts a single raw val measurement with no
+                        # regard for num_trials, so templates with num_trials=1 (best_val's
+                        # stderr is 0 without being meaningful) ship this at 0.0; only the
+                        # multi-trial tau2_bench template ships it at 1.0.>
 - store:                git          # versions every iteration as a commit for an inspectable process
 ```
 

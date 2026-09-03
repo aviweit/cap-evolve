@@ -65,6 +65,8 @@ def main(argv=None) -> int:
                    help="0 = unlimited; total spend cap (runner + optimizer + intake)")
     p.add_argument("--max-optimizer-usd", type=float, default=0.0,
                    help="0 = off; separate cap on optimizer spend alone")
+    p.add_argument("--stop-at-reward", type=float, default=0.0,
+                   help="0 = off; stop the loop as soon as the best val reward reaches this")
     p.add_argument("--run-ts", default=None, help="fixed timestamp for reproducible run dirs")
     p.add_argument("--resume", action="store_true",
                    help="reopen an existing run dir instead of failing; skip the baseline "
@@ -88,7 +90,7 @@ def main(argv=None) -> int:
     Path(args.base).mkdir(parents=True, exist_ok=True)
     budget = Budget(max_iterations=args.max_iterations, stall=args.stall,
                     max_metric_calls=args.max_metric_calls, max_usd=args.max_usd,
-                    max_optimizer_usd=args.max_optimizer_usd)
+                    max_optimizer_usd=args.max_optimizer_usd, stop_at_reward=args.stop_at_reward)
     run_dir = RunDir.create(Path(args.base), ts=args.run_ts, budget=budget, exist_ok=args.resume)
 
     try:
