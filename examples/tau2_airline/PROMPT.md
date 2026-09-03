@@ -2,7 +2,7 @@
 
 Paste this to your coding agent (Claude Code) at the cap-evolve repo root and say
 **"follow RUN.md."** Intake treats this as a brand-new benchmark: the integration
-step **clones + installs tau2-bench**, wires RITS, writes the adapter, runs the
+step **clones + installs tau2-bench**, wires the ETE gateway, writes the adapter, runs the
 `cap-evolve check` gate, then the full optimize → gate → sealed-test → report loop
 with a live dashboard. Everything below is the input intake needs.
 
@@ -45,10 +45,10 @@ exists). Here is everything intake needs:
                 instead of looping run_batch per trial; per-trial persistence
                 (rollouts/<split>/<task>__<tag>__t<k>.json) is UNCHANGED so pass^k / SE / resume
                 keep working. This collapses N sequential eval passes into one batched run.
-- agent AND user simulator:  openai/gpt-oss-120b  via IBM RITS
-- RITS wiring:  litellm model "hosted_vllm/openai/gpt-oss-120b" + per-call api_base +
-                extra_headers {"RITS_API_KEY": ...}  (NO litellm monkeypatch, NO tau2 fork)
-- credentials:  RITS_API_KEY (+ RITS_API_URL) in the repo-root .env
+- agent AND user simulator:  aws/gpt-oss-120b  via the internal ETE LiteLLM gateway
+- gateway wiring:  OpenAI-compatible endpoint, standard bearer auth, catalog ids normalized
+                once to `openai/<alias>`  (NO litellm monkeypatch, NO tau2 fork)
+- credentials:  OPENAI_BASE_URL (or OPENAI_API_BASE) + OPENAI_API_KEY in the repo-root .env
 - concurrency:  TAU2_MAX_CONCURRENCY=125
 
 # 4. SCORER  (what to optimize against) — and WHERE the metric comes from
@@ -182,7 +182,7 @@ exists). Here is everything intake needs:
 ```
 
 > The bundled `examples/tau2_airline/` is the **result** of following this prompt:
-> the adapter (`adapters/adapter.py`), the RITS shim (`adapters/rits.py`), the seed
+> the adapter (`adapters/adapter.py`), the gateway shim (`adapters/gateway.py`), the seed
 > capability (`seed_capability/`), and the optimizer instructions
 > (`.capevolve/project/optimizer/INSTRUCTIONS.md`) are what the intake/implement-and-check
 > flow produced — including `adapter.trajectories()` (native tau2 traces) and `score()`

@@ -42,7 +42,7 @@ fi
 "$PY" -c "import tau2" >/dev/null 2>&1 || die "tau2 import failed after install"
 
 say "2/4  Credentials (IBM Anthropic-compatible gateway)"
-# The adapter (rits.py) and the claude-code optimizer read these from the environment;
+# The adapter (gateway.py) and the claude-code optimizer read these from the environment;
 # we deliberately do NOT write them to a .env file (a self-hosted runner's workspace
 # may persist, so this test never leaves the token on disk). An existing .env is honored.
 if { [ -z "${ANTHROPIC_BASE_URL:-}" ] || [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; } && [ ! -f "$REPO/.env" ]; then
@@ -53,7 +53,7 @@ say "3/4  Wire the project (adapter + seed + spec) + hard gate"
 "$PY" "$REPO/skills/phases/intake/scripts/run.py" --base "$REPO/.capevolve" --workdir "$REPO" --force >/dev/null \
   || die "intake scaffold failed"
 mkdir -p "$PROJECT/adapters"
-cp "$EX_DIR/adapters/adapter.py" "$EX_DIR/adapters/rits.py" "$PROJECT/adapters/"
+cp "$EX_DIR/adapters/adapter.py" "$EX_DIR/adapters/gateway.py" "$PROJECT/adapters/"
 rm -rf "$PROJECT/seed_capability"; cp -R "$EX_DIR/seed_capability" "$PROJECT/seed_capability"
 cp "$EX_DIR/capevolve.itest.yaml" "$EX_DIR/itest_split.json" "$PROJECT/"
 PYTHONPATH="$PROJECT/adapters" "$VENV/bin/cap-evolve" check "$PROJECT" || die "cap-evolve check did not pass"
