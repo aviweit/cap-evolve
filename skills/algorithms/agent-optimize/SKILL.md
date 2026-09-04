@@ -289,19 +289,19 @@ No finalize, no result.
 ## Honesty invariants that are yours by hand
 
 Core enforces the split seal, the val-only gate and the tamper guard whether you cooperate or not
-(`skills/phases/{evaluate,gate,finalize}` document them). Two are yours, because no script can do them
-for you: **never hand a subset result to `gate_check.py`** — its `coverage` reads 1.0 because its
-denominator *is* the subset; and **a round that produced no run-dir artifacts is a bug**, so fix it
-rather than driving around the primitives.
+(`skills/phases/{evaluate,gate,finalize}` document them). Two are yours: **never hand a subset result
+to `gate_check.py`** — its `coverage` reads 1.0 because its denominator *is* the subset; and **a round
+with no run-dir artifacts is a bug**, so fix it rather than drive around the primitives.
+
+**Report a broken framework file, don't hand-work around it.** `references/algorithm.md` §honesty.
 
 ## References
 
 One level deep — each is read on its own, and none points at another.
 
-- [`references/algorithm.md`](references/algorithm.md) — why free-form, how the honesty invariants
-  survive full autonomy, the screening break-even (incl. targeted-cluster holdouts), which steps
-  parallelise safely, the constraint surface, provisional candidates. **Load** before relying on a
-  screen, growing a candidate, or skipping a rule.
+- [`references/algorithm.md`](references/algorithm.md) — why free-form, how honesty survives full
+  autonomy, the screening break-even, parallel-safe steps, the constraint surface, provisional
+  candidates. **Load** before relying on a screen, growing a candidate, or skipping a rule.
 - [`references/measured-lessons.md`](references/measured-lessons.md) — every measurement rule with the
   number that bought it: binomial floor, full val vs a hard subset, the load-vs-noise tables, the sign
   test, the across-runs estimator. **Load** before your first gate decision on a new benchmark, or
