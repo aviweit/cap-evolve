@@ -80,8 +80,12 @@ exists). Here is everything intake needs:
 # 4b. TRAJECTORIES  (the FULL traces the optimizer reads) — PATH IS AN INPUT
 - where:        tau2's batch runner can persist its native per-task simulation results
                 (full message transcript + reward_info) to a directory via run_tasks(save_path=...).
-                Point run_batch's save_path at a per-eval dir UNDER THE RUN, e.g.
-                <run_dir>/trajectories/val/  (any structure/format tau2 writes is fine).
+                Point run_batch's save_path at a per-eval dir UNDER THE RUN, at the ONE
+                path format every tau2 adapter in this repo shares:
+                <run_dir>/native_sims/<tag>/<split>/results_<YYYYmmdd_HHMMSS>_<pid>.json
+                (<tag> is the candidate dir from ctx; <split> stands in for the phase, which
+                no adapter is told. The timestamp+pid matters: tau2 reads an existing results
+                file as a run to RESUME and prompts on stdin, which an eval does not have.)
 - expose:       implement adapter.trajectories(split) to return that directory. cap-evolve copies
                 it VERBATIM into the optimizer's working dir as ./trajectories/ each iteration, so
                 the optimizer reads the complete, unmodified traces (not a lossy summary).

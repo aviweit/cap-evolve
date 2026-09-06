@@ -25,6 +25,7 @@ import importlib.util
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 # Make sibling helper modules (gateway.py) importable regardless of caller cwd.
@@ -238,6 +239,28 @@ def _read_candidate_policy(candidate_dir: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _native_sims_enabled() -> bool:
+    """Whether to keep tau2's OWN results.json for this eval (default: yes).
+
+    These are the traces `tau2 view` reads, and reading them is how you learn WHY a
+    candidate scored what it scored. A flag you must set to get the feature is a flag
+    nobody sets, so the default is ON.
+
+    ``CAPEVOLVE_NATIVE_SIMS=0`` (also false/no/off, case- and whitespace-insensitive) turns
+    it off for callers that never read the files and do pay for the bytes. CI is exactly
+    that caller: its uploaded artifact is ``$OUT/**`` while the run dir is a separate tree,
+    so the sims reach no upload, and a full tier writes 500 simulations per eval (~74 KB
+    each, measured) across baseline + every candidate + finalize. This runner has lost a
+    50-task pilot to a full disk before. Off costs the optimizer nothing that matters: the
+    harness already PREFERS its own per-tag rollout JSON, which carries the same messages
+    plus the ``tau2_reward_info`` breakdown this adapter stashes in metadata.
+
+    The prefix is the generic ``CAPEVOLVE_``, not ``TAU2_``: ONE switch for every tau2
+    adapter rather than each inventing its own.
+    """
+    return str(os.environ.get("CAPEVOLVE_NATIVE_SIMS", "")).strip().lower() not in {
+        "0", "false", "no", "off"}
+
 class Adapter(CapabilityAdapter):
 
     # Snapshot of the pristine airline env constructor (set on first apply).
@@ -272,54 +295,86 @@ class Adapter(CapabilityAdapter):
 
         return {str(t.id): t for t in airline_get_tasks(None)}
 
-    def _sim_save_path(self, ctx):
-        """``<run_ts>/native_sims/<tag>/results.json`` — tau2's OWN trajectories, kept
-        next to the run and tied to the phase that produced them.
+    # ---- tau2's OWN simulation records -----------------------------------
+    # ONE path format, byte-identical in EVERY tau2 adapter in this repo (this one, the
+    # skillberry_benchmarks direct + spa arms, and templates/adapters/tau2_bench):
+    #
+    #     <run_dir>/native_sims/<tag>/<split>/results_<YYYYmmdd_HHMMSS>_<pid>.json
+    #
+    # Identical on purpose: `tau2 view --dir` takes the same shape whatever arm produced
+    # the run, and a trace is attributable without knowing which adapter wrote it. The
+    # duplication is deliberate — each adapter ships as ONE self-contained file copied
+    # into a project's adapters/, so a shared import would break that.
 
-        Without a ``save_path`` tau2 builds ``SimulationResults`` in memory, we convert
-        each sim to a ``Rollout``, and the native object is dropped — so `tau2 view` has
-        nothing to show even though tau2's closing line unconditionally recommends it.
+    def _split_of(self, ctx, task_ids: list[str]) -> str:
+        """Which split this batch is, read from the run's own ``splits.json``.
 
-        The TAG comes free from ``ctx``: the harness passes the candidate dir
-        (``<run>/candidates/<tag>``), so the phase is ``seed`` for the baseline and
-        ``candidate_NNN`` for an iteration.
-
-        The path MUST be one tau2 has never written. tau2 treats an existing results
-        file (or its ``simulations/`` sibling) as a run to RESUME: it prompts on stdin
-        and raises ``FileExistsError`` when the answer is not "y"
-        (``tau2/runner/checkpoint.py``). ``auto_resume`` is off by default, and an eval
-        has no stdin, so a collision would hang or kill the run — and a silent resume
-        would be worse, returning a previous split's sims as if they were this one's.
-        Hence the ``-2``, ``-3`` suffixes: the same tag IS evaluated more than once (the
-        seed on ``val`` at baseline, then on ``test`` at finalize). Which is which is
-        answerable from the config + task ids tau2 records inside results.json.
-
-        Returns ``None`` on any surprise (unexpected layout, unreadable ctx) — saving
-        native traces is a convenience and must never be the thing that breaks a run.
-        tau2 creates the parent dirs itself, so there is nothing to mkdir here.
-
-        ``CAPEVOLVE_NATIVE_SIMS=0`` (also false/no/off) turns saving OFF for callers that
-        never read these files and do pay for the bytes. CI is exactly that caller: its
-        artifact is ``$OUT/**`` and the run dir is a different tree, so native sims reach
-        no upload, while a full tier writes 500 sims per eval (~74 KB each, measured) over
-        baseline + every candidate + finalize. The runner has failed a whole 50-task
-        pilot to a full disk before, so the default there is off; locally it stays on,
-        because reading the traces is the point.
+        ``run_batch``/``run_trials`` are not told the split, and the sims of one split
+        must not land in another's directory. With a pinned no-holdout split every split
+        holds the same ids, so ties resolve in val's favour — val is the split the
+        optimizer reads.
         """
-        if str(os.environ.get("CAPEVOLVE_NATIVE_SIMS", "")).strip().lower() in {
-                "0", "false", "no", "off"}:
+        try:
+            import json  # noqa: PLC0415
+
+            c = Path(ctx)
+            splits = json.loads((c.parent.parent / "splits.json").read_text(encoding="utf-8"))
+            want = set(task_ids)
+            for name in ("val", "train", "test"):
+                ids = {str(i) for i in (splits.get(name) or [])}
+                if ids and want <= ids:
+                    return name
+        except Exception:  # noqa: BLE001 — an unreadable splits.json must not break the eval
+            pass
+        return "eval"
+
+    def _sim_save_path(self, ctx, split: str):
+        """``<run_dir>/native_sims/<tag>/<split>/results_<ts>_<pid>.json``, or ``None``.
+
+        Without a save path tau2 builds ``SimulationResults`` in memory, we convert each
+        sim to a ``Rollout``, and the native object is dropped — so `tau2 view` has
+        nothing to show even though tau2 closes every run by recommending it.
+
+        The TAG comes free from ``ctx``, the dir the harness passes — under EITHER of the
+        two names it uses: ``<run_dir>/candidates/<tag>`` for the baseline and the finalize
+        (tag ``seed``, or the winning ``cand_NNNN``), and ``<run_dir>/work/<tag>`` for an
+        iteration eval (tag ``cand_0001``). Accepting only ``candidates`` is why candidate
+        evals used to write nothing at all — the run dir is ``parent.parent`` either way,
+        so one name in the guard is the whole difference. The PHASE ITSELF is not available — no
+        argument or env var tells an adapter whether this is the baseline, an iteration or
+        the finalize — so ``<split>`` stands in for it: the baseline is the seed on val,
+        the finalize is the seed on test.
+
+        WHY the timestamp+pid rather than a bare ``results.json``: the same
+        ``<tag>/<split>`` pair IS written more than once. The seed is evaluated on val at
+        baseline and on test at finalize, and under a no-holdout split ``_split_of``
+        cannot tell those apart (it resolves both to val). A path tau2 has already
+        written is a path tau2 tries to RESUME: it treats an existing results file, or its
+        ``simulations/`` sibling, as a run to continue, prompts on stdin, and raises
+        ``FileExistsError`` when the answer is not "y" (``tau2/runner/checkpoint.py``).
+        ``auto_resume`` is off by default and an eval has no stdin, so a collision would
+        hang or kill the run — and a silent resume would be worse, returning a previous
+        split's sims as if they were this one's. The stamp is unique per (second, process),
+        which is enough: two evals of the SAME tag and split cannot both start inside one
+        second (each runs a full set of LLM rollouts), and the pid covers concurrent
+        candidate processes. So no suffix loop, and no path tau2 might try to resume.
+
+        Returns ``None`` when saving is off or the layout is neither ``candidates/<tag>``
+        nor ``work/<tag>`` — native traces are a convenience and must never be the thing
+        that breaks a run. tau2 creates the parent dirs itself, so nothing is created here.
+        """
+        if not _native_sims_enabled():
             return None
         try:
             cand = Path(ctx)
-            if cand.parent.name != "candidates":
+            if cand.parent.name not in ("candidates", "work"):
                 return None
-            base = cand.parent.parent / "native_sims" / cand.name
-            d, n = base, 2
-            while d.exists():
-                d, n = base.with_name(f"{base.name}-{n}"), n + 1
-            return d / "results.json"
+            stamp = f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+            return (cand.parent.parent / "native_sims" / cand.name / str(split)
+                    / f"results_{stamp}.json")
         except Exception:  # noqa: BLE001 — never let an optional artifact break the eval
             return None
+
 
     def run_batch(self, tasks: list[Task], ctx, *, seed: int = 0) -> dict:
         """Run a batch of airline tasks through tau2's own batch runner.
@@ -372,7 +427,8 @@ class Adapter(CapabilityAdapter):
         import contextlib
         import sys
         with contextlib.redirect_stdout(sys.stderr):
-            sim_save = self._sim_save_path(ctx)
+            sim_save = self._sim_save_path(
+                ctx, self._split_of(ctx, [t.id for t in tasks]))
             sim_results = run_tasks(
                 config,
                 tau2_tasks,
@@ -520,7 +576,8 @@ class Adapter(CapabilityAdapter):
         import contextlib
         import sys
         with contextlib.redirect_stdout(sys.stderr):
-            sim_save = self._sim_save_path(ctx)
+            sim_save = self._sim_save_path(
+                ctx, self._split_of(ctx, [t.id for t in tasks]))
             sim_results = run_tasks(
                 config,
                 tau2_tasks,
