@@ -48,6 +48,28 @@ import _bootstrap  # noqa: F401  # side-effect import, see above
 from cap_evolve import RunDir, harness
 
 
+def _memory_skill_from_spec(run_dir: RunDir) -> str | None:
+    """``memory_skill`` from the sibling project spec, or ``None``.
+
+    Agent mode invokes this script standalone with only ``--run-dir`` — no ``--project``,
+    no spec object — so the choice has to be read off disk the same zero-dependency way
+    ``dashboard.py``'s ``_algorithm_from_spec`` reads ``algorithm_skill``: flat ``key: value``
+    lines only, from ``<base>/project/capevolve.yaml`` next to the run dir. Best-effort — a
+    missing/unreadable spec just means the default (``md-files``) applies, same as today.
+    """
+    spec_path = run_dir.root.parent / "project" / "capevolve.yaml"
+    if not spec_path.is_file():
+        return None
+    try:
+        for line in spec_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("memory_skill:"):
+                val = line.split(":", 1)[1].split("#", 1)[0].strip().strip("'\"")
+                return val or None
+    except OSError:
+        pass
+    return None
+
+
 def _round_gate_numbers(run_dir: RunDir, candidate_id: str) -> dict:
     """The gate's NUMBERS for ``candidate_id``, read back from ``round.py``'s own table.
 
@@ -237,6 +259,19 @@ def _gate_verdict(run_dir: RunDir, candidate_id: str) -> str | None:
     return row.get("verdict") if row else None
 
 
+def _has_grown(run_dir: RunDir, candidate_id: str) -> bool:
+    """Has ``scripts/grow.py`` already bought this candidate at least one extra round of
+    trials? True iff a ``work/grow_<candidate_id>_r*.json`` table exists.
+
+    On run 33492876620 round 3 a candidate landed exactly on ``grow.py``'s reason for
+    existing — Δ>0, below the significance bar, verdict flipping between control
+    replicates — and was booked ``inconclusive`` and left there. The transcript shows the
+    agent had read ``grow.py --help``, so this was not a discovery gap: the tool was
+    optional, so it went unused. See ``main``'s guard below.
+    """
+    return any((run_dir.root / "work").glob(f"grow_{candidate_id}_r*.json"))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="commit")
     p.add_argument("--run-dir", required=True)
@@ -273,11 +308,13 @@ def main(argv=None) -> int:
     # that asserts a full-val paired gate actually ran.
     p.add_argument("--reject-basis", default=None,
                    choices=["gate", "screen_kill", "ceiling", "budget", "infra",
-                            "driver_judgement"],
+                            "micro_test_fail", "driver_judgement"],
                    help="what evidence the reject rests on: gate=full-val paired gate ran AND "
                         "rejected; screen_kill=screen proved harm; ceiling=arithmetic proof no "
                         "accept was reachable, so full val was never paid; budget=screen "
                         "evidence plus a budget call; infra=missing data, not a judgement; "
+                        "micro_test_fail=microcase.py proved the candidate's own targeted "
+                        "mechanism does not fire, before any rollout was spent (#436); "
                         "driver_judgement=the gate ACCEPTED and you are overriding it (say why "
                         "in --note)")
     p.add_argument("--optimizer-usd", type=float, default=0.0)
@@ -285,7 +322,18 @@ def main(argv=None) -> int:
     p.add_argument("--optimizer-seconds", type=float, default=0.0)
     p.add_argument("--force", action="store_true",
                    help="commit even though this candidate id already has a decision "
-                        "(audit/repair only — it overwrites the earlier snapshot)")
+                        "(audit/repair only — it overwrites the earlier snapshot); also "
+                        "overrides the inconclusive-without-growth guard below")
+    # graph.jsonl (#435): a MERGE candidate (integrate.py/funcmerge.py/merge_taskopt.py)
+    # has 2+ parents this script has no other way to learn — those scripts produce a
+    # merged artifact dir, not a commit. An ordinary edit's single parent is already
+    # known (best_id at gate time, below) and needs no flag.
+    p.add_argument("--parents", default=None,
+                   help="comma-separated parent candidate ids, for a MERGE candidate "
+                        "(2+ parents). Omit for an ordinary edit.")
+    p.add_argument("--edit-kind", default=None, choices=["prompt", "code", "merge"],
+                   help="graph.jsonl node kind; defaults to 'merge' when --parents has "
+                        "2+ ids, else 'code'.")
     args = p.parse_args(argv)
 
     run_dir = RunDir.open(Path(args.run_dir))
@@ -314,6 +362,27 @@ def main(argv=None) -> int:
     accepted = args.decision == "accept"
     indecisive = args.decision == "inconclusive"
     provisional = args.decision == "provisional"
+
+    # An inconclusive round is UNRESOLVED, not refuted — ``grow.py`` exists precisely to
+    # resolve it by buying more trials on this same candidate, and issue #420 item 3 found
+    # it had never run once across two real runs that hit this exact case. Making it
+    # optional is why: the fix is a guard here, not a third restatement in SKILL.md prose
+    # (the same argument round.py's own concurrency guard already makes). ``--force`` is
+    # the deliberate override, for a candidate growth genuinely cannot help (e.g. Δ<=0).
+    if indecisive and not args.force and not _has_grown(run_dir, args.candidate_id):
+        print(json.dumps({
+            "error": f"--decision inconclusive for {args.candidate_id!r}, but scripts/grow.py "
+                     "has not bought it any extra trials yet",
+            "why": "an inconclusive verdict means the measurement could not resolve the edit, "
+                   "not that the edit was refuted. grow.py exists to buy more trials on this "
+                   "SAME candidate and re-gate at the pooled n before it is left unresolved.",
+            "fix": f"run scripts/grow.py --candidate {args.candidate_id} --growth-round 1 "
+                   "--add-trials <n> first (it recommends promote/grow_again/abandon), then "
+                   "commit its recommendation; or pass --force here if growth genuinely "
+                   "cannot help this candidate (e.g. its delta is <= 0) and say why in --note.",
+        }, indent=2))
+        return 2
+
     if args.decision != "reject" and args.reject_basis:
         print(json.dumps({
             "error": f"--reject-basis is meaningless on an {args.decision}",
@@ -353,6 +422,8 @@ def main(argv=None) -> int:
     # The parent this candidate was gated against — ``gate_check --current`` defaults to
     # ``best_id``, so read it BEFORE ``set_best`` moves it.
     parent_id = run_dir.best_id or "seed"
+    parents = ([p.strip() for p in args.parents.split(",") if p.strip()]
+               if args.parents else [parent_id])
     run_dir.snapshot(args.candidate_id, src)
     if accepted:
         run_dir.set_best(args.candidate_id)
@@ -389,7 +460,7 @@ def main(argv=None) -> int:
     # still holds THAT round's entry, and _reconcile_journal's dedup guard books the placeholder
     # rather than the same entry twice — so the plain tail reports "recorded" for exactly the
     # round whose handover went missing.
-    handover = bool(harness.pending_handover(src, run_dir))
+    handover = bool(harness.pending_handover(src, run_dir, args.candidate_id))
     reason = args.note or args.decision
     if indecisive:
         reason = f"indecisive (gate): {reason}"
@@ -401,6 +472,7 @@ def main(argv=None) -> int:
     # bookkeeping on a decision that has not actually been made yet. It files no memory record
     # either, for the same reason `inconclusive` does not: nothing has been refuted.
     if not provisional:
+        memory_skill = _memory_skill_from_spec(run_dir)
         # The shared iteration step: charges iterations/stall, writes the canonical ``step``
         # record, reconciles the run-level JOURNAL.md. The gate's numbers ride along so the
         # dashboard's ``gate_decisions[]`` does not have to regex them out of an agent's prose.
@@ -408,7 +480,8 @@ def main(argv=None) -> int:
                                  accepted=accepted, reason=reason,
                                  val=args.val,
                                  parent_val=parent_val,
-                                 indecisive=indecisive,
+                                 indecisive=indecisive, memory_skill=memory_skill,
+                                 parents=parents, edit_kind=args.edit_kind,
                                  opt_cost_usd=args.optimizer_usd or None,
                                  opt_tokens=args.optimizer_tokens or None,
                                  optimizer_seconds=args.optimizer_seconds or None,
@@ -427,7 +500,7 @@ def main(argv=None) -> int:
         # (a run with no baseline) — that dir always exists (``run_dir.snapshot`` above just
         # created it) — and is best-effort: losing the re-seed must not fail the commit.
         try:
-            harness.seed_framework_memory(
+            harness.resolve_memory(memory_skill).seed(
                 run_dir.candidate_dir(run_dir.best_id or args.candidate_id), run_dir)
         except Exception as exc:  # noqa: BLE001
             run_dir.log_event("optimizer_context_warning", what="framework_memory",

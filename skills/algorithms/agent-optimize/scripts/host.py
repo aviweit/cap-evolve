@@ -83,6 +83,43 @@ SKILLS = SKILL_DIR.parents[1]
 RUN_OPTIMIZER = SKILLS / "optimizers" / "run-optimizer" / "scripts" / "run.py"
 REGISTRY = SKILLS / "optimizers" / "registry.yaml"
 
+#: `terminal_reason` values that name a TRANSIENT infra failure (network/DNS/rate-limit),
+#: not a genuine stop. Deliberately narrow — see #430's non-goal: `error_max_turns` and any
+#: other real stop condition must never be retried, only this small allow-list.
+_RETRYABLE_TERMINAL_REASONS = {"api_error"}
+
+#: #431: ``permission_denials`` entries whose ``tool_input`` shape says the driver tried to
+#: DETACH a wait rather than stay in the foreground — a persistent ``Monitor``, or a
+#: ``tail -f`` / ``nohup`` / backgrounding-shaped Bash command. ``registry.yaml``'s
+#: ``--disallowedTools Monitor`` now makes the Monitor case structurally impossible for
+#: claude-code specifically, but ``permission_denials`` is read from the CLI's own payload
+#: regardless of agent or registry row, so a near-miss on any other tool/CLI is still flagged
+#: instead of only visible in a raw transcript nobody was going to read.
+_DETACH_COMMAND_PATTERNS = ("tail -f", "nohup ", "disown", "setsid ")
+
+
+def _looks_like_a_detach_attempt(denial) -> bool:
+    if not isinstance(denial, dict):
+        return False
+    if str(denial.get("tool_name") or "") == "Monitor":
+        return True
+    tool_input = denial.get("tool_input")
+    if isinstance(tool_input, dict):
+        if tool_input.get("persistent") is True:
+            return True
+        command = str(tool_input.get("command") or "")
+        if any(pat in command for pat in _DETACH_COMMAND_PATTERNS):
+            return True
+    return False
+
+
+def _backgrounding_near_misses(permission_denials) -> list[dict]:
+    """``permission_denials`` entries shaped like a detached-wait attempt, not a plain denial."""
+    if not isinstance(permission_denials, list):
+        return []
+    return [d for d in permission_denials if _looks_like_a_detach_attempt(d)]
+
+
 # 4h. Long enough for a full-val eval on the slowest benchmark in this repo
 # (spreadsheetbench full: one Docker container per task x trials), while still bounding a
 # genuinely hung command instead of waiting forever.
@@ -446,12 +483,13 @@ accepted or returned inconclusive, because that field is the run's record of wha
 `spend.py` parses that text into checkable predicates; run it before each round and act on
 its single `recommendation` (`stop` | `narrow_scope` | `continue`), as SKILL.md describes.
 
-## Files in your working directory that belong to the OTHER loop
+## `LEDGER.md`, `RUNMAP.md`, `prior_iterations/`
 
-Your always-on instructions mention `LEDGER.md`, `RUNMAP.md` and `prior_iterations/`. Those are
-built by the *deterministic* loop, which calls one optimizer per iteration; you are driving the
-whole search yourself, so they will not exist here and their absence is not a problem — do not
-go looking for them or try to recreate them.
+Your always-on instructions mention these. They are real here too — `seed_framework_memory`
+builds them for this loop the same as for the deterministic one, so read them; do not assume
+they're a deterministic-loop-only artifact. `rejected.jsonl` and `history.jsonl` sit next to
+them and are worth reading as well — they hold every prior candidate's real outcome, not just
+what made it into `JOURNAL.md`'s prose.
 
 `JOURNAL.md` is different, and it has TWO halves — one of them is yours to write.
 
@@ -666,7 +704,7 @@ def _stage_context(*, run_dir: Path, project: Path, workdir: Path, spec: dict,
         # prior_iterations/ are named by the staged CLAUDE.md pointer AND by JOURNAL.md's own
         # seed text, and seeding only the journal is what left them absent for a whole run.
         try:
-            harness.seed_framework_memory(rd.candidate_dir(rd.best_id or "seed"), rd)
+            harness.resolve_memory(ctx.memory_skill).seed(rd.candidate_dir(rd.best_id or "seed"), rd)
         except Exception as exc:  # noqa: BLE001
             rd.log_event("optimizer_context_warning", what="framework_memory",
                          error=str(exc)[:300])
@@ -772,6 +810,11 @@ def main(argv=None) -> int:
     p.add_argument("--run-optimizer", default=None,
                    help="path to the run-optimizer script (test seam; defaults to the "
                         "sibling optimizers/run-optimizer)")
+    p.add_argument("--max-retries", type=int, default=2,
+                   help="bounded retries of the optimizer CLI on a transient crash "
+                        "(terminal_reason in %s), so a single DNS/network blip does not "
+                        "forfeit the rest of the run's budget (default: 2)"
+                        % sorted(_RETRYABLE_TERMINAL_REASONS))
     args = p.parse_args(argv)
 
     run_dir = Path(args.run_dir).resolve()
@@ -897,92 +940,128 @@ def main(argv=None) -> int:
     if args.usd_budget:
         cmd += ["--usd-budget", str(float(args.usd_budget))]
 
-    # What the run had already booked as optimizer spend BEFORE this agent started. The agent
-    # books its own proposal cost per round through commit.py --optimizer-usd (the skill asks it
-    # to), and that is the SAME money this subprocess meters — so the host must book the
-    # RESIDUAL, not the total, or a compliant agent makes the run report roughly twice the
-    # optimizer spend it actually used. Snapshotted rather than read at the end because a
-    # `--resume` run carries a PREVIOUS host invocation's spend in the same counter, and that is
-    # not this agent's attribution to net out.
-    booked_before = {"usd": 0.0, "tokens": 0, "seconds": 0.0}
-    try:
-        from cap_evolve import RunDir as _RunDir
-
-        _sp = _RunDir.open(run_dir).spent
-        booked_before = {"usd": float(_sp.optimizer_usd or 0.0),
-                         "tokens": int(_sp.optimizer_tokens or 0),
-                         "seconds": float(_sp.optimizer_seconds or 0.0)}
-    except Exception:  # noqa: BLE001 — a missing snapshot must not stop the run
-        pass
-
-    started = time.time()
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout,
-                              env={**_child_env(), **agent_env})
-        timed_out = False
-    except subprocess.TimeoutExpired:
-        proc = None
-        timed_out = True
-    seconds = time.time() - started
-
-    payload: dict = {}
-    if proc is not None:
+    # Retry loop: one attempt, plus up to --max-retries more when the CLI's OWN payload
+    # says it died on a transient infra error (#430). Each attempt re-invokes the SAME cmd
+    # against the SAME run_dir — commit.py refuses to double-book a candidate that already
+    # has an accept/reject event, so a retry can never re-decide a round the first attempt
+    # already committed; it can only pick up where that attempt died.
+    attempt = 0
+    while True:
+        # What the run had already booked as optimizer spend BEFORE *this* attempt. The agent
+        # books its own proposal cost per round through commit.py --optimizer-usd (the skill
+        # asks it to), and that is the SAME money this subprocess meters — so the host must
+        # book the RESIDUAL, not the total, or a compliant agent makes the run report roughly
+        # twice the optimizer spend it actually used. Snapshotted per attempt because a retried
+        # invocation is its own bracket, same as a `--resume` run's previous host invocation.
+        booked_before = {"usd": 0.0, "tokens": 0, "seconds": 0.0}
         try:
-            payload = json.loads(proc.stdout)
-        except Exception:  # noqa: BLE001 — a non-JSON tail is reported, not fatal
-            payload = {"stdout_tail": (proc.stdout or "")[-1200:]}
+            from cap_evolve import RunDir as _RunDir
 
-    # run-optimizer nests the figure under `cost.total_cost_usd` (see its `result["cost"]`).
-    # Reading a flat `cost_usd`/`usd` booked 0.0 for every run: on run 32733635494 the payload
-    # carried 8.370 USD / 68,432 tokens and the run recorded $0.00, which is indistinguishable
-    # from the genuinely-unmetered case the skill warns about — so the wrong conclusion was
-    # drawn twice. The flat keys stay as fallbacks for any optimizer row that reports that way.
-    cost = payload.get("cost") or {}
-    usd = float(cost.get("total_cost_usd") or payload.get("cost_usd")
-                or payload.get("usd") or 0.0)
-    tokens = int(cost.get("tokens") or payload.get("tokens") or 0)
-    # Why the agent stopped. Reconstructing this from a truncated stdout tail is what the
-    # previous version forced, and the answer (turns exhausted mid-round, with a better
-    # candidate evaluated but never committed) mattered more than anything else in the payload.
-    stop = payload.get("stop") or {}
-    stop_reason = str(stop.get("subtype") or "") or None
-    # Two different fields, and the discriminator is the SECOND one. Claude Code reports the
-    # harness-level outcome in `subtype` and the model's own reason in `stop_reason`; on run
-    # 32814848187 those were "success" and "end_turn". Reading only `subtype` sees a clean
-    # finish and cannot tell a voluntary stop from a completed run.
-    agent_stop = str(stop.get("stop_reason") or "") or None
-    num_turns = stop.get("num_turns")
+            _sp = _RunDir.open(run_dir).spent
+            booked_before = {"usd": float(_sp.optimizer_usd or 0.0),
+                             "tokens": int(_sp.optimizer_tokens or 0),
+                             "seconds": float(_sp.optimizer_seconds or 0.0)}
+        except Exception:  # noqa: BLE001 — a missing snapshot must not stop the run
+            pass
 
-    # Book the host's own spend. The agent books per-round costs it knows about through
-    # commit.py --optimizer-usd; it cannot know its own process cost, and the host can.
-    try:
-        from cap_evolve import RunDir
+        started = time.time()
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout,
+                                  env={**_child_env(), **agent_env})
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            proc = None
+            timed_out = True
+        seconds = time.time() - started
 
-        rd = RunDir.open(run_dir)
-        rd.log_event("host", agent=args.agent, model=args.model or "",
-                     usd=usd, tokens=tokens, seconds=round(seconds, 3),
-                     returncode=(None if proc is None else proc.returncode),
-                     timed_out=timed_out, stop_reason=stop_reason, num_turns=num_turns)
-        # Book only what the agent did not already attribute to a round during THIS invocation.
-        # `seconds` is booked too: without it the run recorded `optimizer_seconds: 0.0` for a
-        # loop that ran for hours, so metrics.py's whole-loop total rendered a dash and every
-        # per-hour cost figure was undefined.
-        now = rd.spent
-        book = optimizer_spend_to_book(
-            {"usd": usd, "tokens": tokens, "seconds": seconds},
-            booked_before,
-            {"usd": float(now.optimizer_usd or 0.0), "tokens": int(now.optimizer_tokens or 0),
-             "seconds": float(now.optimizer_seconds or 0.0)})
-        if book["usd"] or book["tokens"] or book["seconds"]:
-            rd.update_spent(optimizer_usd=book["usd"], optimizer_tokens=book["tokens"],
-                            optimizer_seconds=book["seconds"])
-        # The run dir's budget, not the spec's: baseline freezes it there, `--resume` can
-        # extend it, and it is what `budget_exhausted()` actually judges against.
-        rounds_done = int(rd.spent.iterations or 0)
-        rounds_budget = int(rd.budget.max_iterations or 0)
-    except Exception as exc:  # noqa: BLE001 — spend accounting must not lose the run
-        payload.setdefault("warnings", []).append(f"could not book host spend: {exc}")
+        payload: dict = {}
+        if proc is not None:
+            try:
+                payload = json.loads(proc.stdout)
+            except Exception:  # noqa: BLE001 — a non-JSON tail is reported, not fatal
+                payload = {"stdout_tail": (proc.stdout or "")[-1200:]}
+
+        # run-optimizer nests the figure under `cost.total_cost_usd` (see its `result["cost"]`).
+        # Reading a flat `cost_usd`/`usd` booked 0.0 for every run: on run 32733635494 the
+        # payload carried 8.370 USD / 68,432 tokens and the run recorded $0.00, which is
+        # indistinguishable from the genuinely-unmetered case the skill warns about — so the
+        # wrong conclusion was drawn twice. The flat keys stay as fallbacks for any optimizer
+        # row that reports that way.
+        cost = payload.get("cost") or {}
+        usd = float(cost.get("total_cost_usd") or payload.get("cost_usd")
+                    or payload.get("usd") or 0.0)
+        tokens = int(cost.get("tokens") or payload.get("tokens") or 0)
+        # Why the agent stopped. Reconstructing this from a truncated stdout tail is what the
+        # previous version forced, and the answer (turns exhausted mid-round, with a better
+        # candidate evaluated but never committed) mattered more than anything else in the
+        # payload.
+        stop = payload.get("stop") or {}
+        stop_reason = str(stop.get("subtype") or "") or None
+        # Two different fields, and the discriminator is the SECOND one. Claude Code reports
+        # the harness-level outcome in `subtype` and the model's own reason in `stop_reason`;
+        # on run 32814848187 those were "success" and "end_turn". Reading only `subtype` sees
+        # a clean finish and cannot tell a voluntary stop from a completed run.
+        agent_stop = str(stop.get("stop_reason") or "") or None
+        num_turns = stop.get("num_turns")
+        # #428: `subtype` alone is not enough to call a run a clean success — run_e2e_run3's
+        # final payload carried `subtype: "success"` AND `is_error: true` /
+        # `terminal_reason: "api_error"` in the same object. Read those explicitly rather than
+        # trusting `subtype`, and fold a nonzero exit code into the same signal so it can never
+        # be silently absorbed into a "success"-shaped `stop_reason`.
+        is_error = bool(stop.get("is_error"))
+        terminal_reason = stop.get("terminal_reason")
+        permission_denials = stop.get("permission_denials")
+        crashed = (not timed_out) and (is_error or (proc is not None and proc.returncode != 0))
+
+        # Book the host's own spend. The agent books per-round costs it knows about through
+        # commit.py --optimizer-usd; it cannot know its own process cost, and the host can.
         rounds_done, rounds_budget = -1, 0
+        rd = None
+        try:
+            from cap_evolve import RunDir
+
+            rd = RunDir.open(run_dir)
+            rd.log_event("host", agent=args.agent, model=args.model or "",
+                         usd=usd, tokens=tokens, seconds=round(seconds, 3),
+                         returncode=(None if proc is None else proc.returncode),
+                         timed_out=timed_out, stop_reason=stop_reason, num_turns=num_turns,
+                         is_error=is_error, terminal_reason=terminal_reason,
+                         permission_denials=permission_denials, attempt=attempt)
+            # Book only what the agent did not already attribute to a round during THIS
+            # invocation. `seconds` is booked too: without it the run recorded
+            # `optimizer_seconds: 0.0` for a loop that ran for hours, so metrics.py's
+            # whole-loop total rendered a dash and every per-hour cost figure was undefined.
+            now = rd.spent
+            book = optimizer_spend_to_book(
+                {"usd": usd, "tokens": tokens, "seconds": seconds},
+                booked_before,
+                {"usd": float(now.optimizer_usd or 0.0),
+                 "tokens": int(now.optimizer_tokens or 0),
+                 "seconds": float(now.optimizer_seconds or 0.0)})
+            if book["usd"] or book["tokens"] or book["seconds"]:
+                rd.update_spent(optimizer_usd=book["usd"], optimizer_tokens=book["tokens"],
+                                optimizer_seconds=book["seconds"])
+            # The run dir's budget, not the spec's: baseline freezes it there, `--resume` can
+            # extend it, and it is what `budget_exhausted()` actually judges against.
+            rounds_done = int(rd.spent.iterations or 0)
+            rounds_budget = int(rd.budget.max_iterations or 0)
+        except Exception as exc:  # noqa: BLE001 — spend accounting must not lose the run
+            payload.setdefault("warnings", []).append(f"could not book host spend: {exc}")
+
+        # Retry only a small allow-list of TRANSIENT reasons (#430's non-goal: a real stop
+        # like `error_max_turns` must never be retried — #428's classification above is what
+        # tells the two apart), only while rounds/budget remain, and only up to the bound.
+        exhausted, _ = rd.budget_exhausted() if rd is not None else (True, "")
+        retryable = crashed and terminal_reason in _RETRYABLE_TERMINAL_REASONS
+        if retryable and attempt < args.max_retries and not exhausted:
+            if rd is not None:
+                rd.log_event("host_retry", agent=args.agent, attempt=attempt + 1,
+                             max_retries=args.max_retries, terminal_reason=terminal_reason,
+                             is_error=is_error,
+                             returncode=(None if proc is None else proc.returncode))
+            attempt += 1
+            continue
+        break
 
     seal = _seal(run_dir, project, spec, timeout=args.timeout)
 
@@ -1017,7 +1096,20 @@ def main(argv=None) -> int:
         # for is how a warning stops being read.
         finished_itself = (seal.get("seal") == "agent" and not unbooked)
 
-        if turn_limited:
+        # #428: a crash (`is_error`/nonzero exit) takes priority over every other diagnosis —
+        # `subtype: "success"` on the SAME payload as `is_error: true` must never read as a
+        # voluntary stop or a finished run. Checked first, so it cannot be shadowed by
+        # `turn_limited`/`voluntary`/`finished_itself` matching on `subtype` text alone.
+        if crashed:
+            retried_note = (f" after {attempt} retr{'y' if attempt == 1 else 'ies'}"
+                            if attempt else "")
+            fix = (f"the optimizer CLI hit an error termination (terminal_reason="
+                   f"{terminal_reason!r}, is_error={is_error}, returncode="
+                   f"{proc.returncode if proc is not None else None}){retried_note} and "
+                   "exited before finishing its budget — this is an INFRA FAILURE, not a "
+                   "completed search; re-run host.py against the same run_dir rather than "
+                   "trusting this as a completed search")
+        elif turn_limited:
             fix = ("raise the turn budget (optimizer_max_turns) or lower the round count")
         elif finished_itself:
             fix = ("it sealed the run itself and left nothing unbooked, so this is UNSPENT "
@@ -1078,6 +1170,7 @@ def main(argv=None) -> int:
         "instructions_warning": arm_warning,
         "context": context,
         "optimizer": payload,
+        "backgrounding_near_misses": _backgrounding_near_misses(permission_denials),
         **seal,
     }
     if proc is not None and proc.returncode != 0:
@@ -1085,6 +1178,16 @@ def main(argv=None) -> int:
     print(json.dumps(out, indent=2))
     if incomplete:
         print(f"::warning::agent-optimize: {incomplete}", file=sys.stderr)
+    if out["backgrounding_near_misses"]:
+        # A near-miss, not the incomplete-run diagnosis above: the permission system already
+        # denied it, so the run may have finished cleanly regardless. Reported anyway — #431's
+        # run_e2e_run3 was exactly this shape, and it was only recoverable by hand-reading
+        # host/transcript.jsonl before this.
+        print("::warning::agent-optimize: the driver attempted to background/detach a wait "
+              f"({len(out['backgrounding_near_misses'])} denial(s): "
+              f"{[d.get('tool_name') for d in out['backgrounding_near_misses']]}) and was "
+              "denied by the permission system — see backgrounding_near_misses in this run's "
+              "output and the briefing's Unattended section", file=sys.stderr)
     # The run's worth is its sealed number, so that — not the agent's exit code — decides
     # ours. An agent that ran out of turns after three honest rounds produced a result; one
     # that exited 0 without sealing did not.

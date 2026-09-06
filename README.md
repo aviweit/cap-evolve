@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="python">
   <img src="https://img.shields.io/badge/runtime%20deps-0%20(stdlib)-success" alt="deps">
   <img src="https://img.shields.io/badge/license-Apache--2.0-informational" alt="license">
-  <img src="https://img.shields.io/badge/agent%20skills-21-7c5cff" alt="skills">
+  <img src="https://img.shields.io/badge/agent%20skills-22-7c5cff" alt="skills">
 </p>
 
 **cap-evolve improves an AI agent's prompts, tools, and skills by learning from failed
@@ -275,7 +275,7 @@ SkillsBench) and switch providers with a one-line env change:
 | Example | What it shows | Needs | Run |
 |---|---|---|---|
 | [`toy_calc`](examples/toy_calc) | The full loop, deterministically | nothing | `bash examples/toy_calc/run.sh` |
-| [`tau2_airline`](examples/tau2_airline) | Onboard a real benchmark from one prompt; optimize policy **+ tool code** | RITS creds, Claude Code | `bash examples/tau2_airline/setup.sh && bash examples/tau2_airline/run.sh` |
+| [`tau2_airline`](examples/tau2_airline) | Onboard a real benchmark from one prompt; optimize policy **+ tool code** | gateway creds, Claude Code | `bash examples/tau2_airline/setup.sh && bash examples/tau2_airline/run.sh` |
 | [`skillsbench`](examples/skillsbench) | Optimize a **skill package**; agent runs in Docker | Docker, `uv`, Claude creds | `bash examples/skillsbench/setup.sh && bash examples/skillsbench/run.sh` |
 
 Each example's paste-to-agent brief is its `PROMPT.md`, its narrative is `DEMO.md`, and its
