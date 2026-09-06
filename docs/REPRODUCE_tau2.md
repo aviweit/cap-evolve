@@ -2,13 +2,13 @@
 
 This reproduces the bundled [`examples/tau2_airline`](../examples/tau2_airline) end to
 end: onboard **tau2-bench airline as a brand-new benchmark** (intake clones + installs
-it), wire IBM RITS, build the adapter, pass the `cap-evolve check` hard gate, then run
+it), wire the ETE gateway, build the adapter, pass the `cap-evolve check` hard gate, then run
 the full **optimize → significance-gate → sealed-test → report** loop with a live
 dashboard. Zero assumptions — nothing is expected to pre-exist except the credentials.
 
 The capability under optimization is the airline **policy + tools, jointly**; the runner
-is `openai/gpt-oss-120b` via IBM RITS as **both agent and user simulator**; the optimizer
-is `claude-code @ claude-opus-4-6`.
+is `aws/gpt-oss-120b` via the internal ETE LiteLLM gateway as **both agent and user
+simulator**; the optimizer is `claude-code @ claude-opus-4-6`.
 
 ## Result of the committed run
 
@@ -40,11 +40,11 @@ http://localhost:8000), or host it on GitHub Pages / any static host; read the c
 ## 1. Prerequisites (the only things you provide)
 
 - **Python 3.10+** and **git**.
-- **RITS credentials** in a repo-root `.env` (one level above nothing — the repo root
-  itself), read automatically by the adapter's RITS shim:
+- **Gateway credentials** in a repo-root `.env` (one level above nothing — the repo root
+  itself), read automatically by the adapter's gateway shim:
   ```
-  RITS_API_KEY=...
-  RITS_API_URL=...
+  OPENAI_BASE_URL=...        # or OPENAI_API_BASE
+  OPENAI_API_KEY=...
   ```
 - **An optimizer**: a logged-in Claude Code session (or `ANTHROPIC_API_KEY`) for
   `claude-code @ claude-opus-4-6`.
@@ -58,7 +58,7 @@ The onboarding is driven by [`examples/tau2_airline/PROMPT.md`](../examples/tau2
 paste it to Claude Code at the repo root and say **"follow RUN.md."** It is the exact
 intake input — capability `[system-prompt, tools]`, benchmark tau2-bench airline
 (`https://github.com/sierra-research/tau2-bench`, installed via `pip install -e`), runner
-`openai/gpt-oss-120b` via RITS (agent **and** user simulator), scorer = tau2's task
+`aws/gpt-oss-120b` via the ETE gateway (agent **and** user simulator), scorer = tau2's task
 reward in `[0,1]`, optimizer `claude-code @ claude-opus-4-6`, algorithm `hill-climb`
 (`--focus all`), all 50 tasks (no-holdout fit), `num_trials 10`, a per-iteration `$40`
 cap (`--max-budget-usd`) and `$400` total.
@@ -70,7 +70,7 @@ the same steps a coding agent following the prompt performs.
 
 ```bash
 git clone <repo> cap-evolve && cd cap-evolve
-# put RITS creds in ./.env (RITS_API_KEY, RITS_API_URL); be logged into Claude Code
+# put gateway creds in ./.env (OPENAI_BASE_URL, OPENAI_API_KEY); be logged into Claude Code
 
 bash examples/tau2_airline/setup.sh    # intake onboarding (see step 4)
 bash examples/tau2_airline/run.sh      # full run + live capybara dashboard (see step 5)
@@ -89,7 +89,7 @@ bash examples/tau2_airline/run.sh      # full run + live capybara dashboard (see
    `.capevolve/project`, then copy in the authored integration: the adapter
    (`adapters/adapter.py` — `tasks` + `run_batch` → tau2's runner, the batched
    `run_trials` fast path, `trajectories()` returning tau2's native trace dir, and
-   `score()` reading `reward_info`), the RITS shim (`adapters/rits.py`), the editable
+   `score()` reading `reward_info`), the gateway shim (`adapters/gateway.py`), the editable
    seed capability (`seed_capability/` = `policy/` + `tools/` +
    `reference/data_model.py`), the capability-scoped `optimizer/INSTRUCTIONS.md`, and
    the spec (`capevolve.yaml`, which sets `capability_sources` to the data model so it
@@ -162,7 +162,7 @@ any static host — `report.md`, `events.jsonl`, `TAU2_COMMIT.txt`). See
 - **No-holdout** (train = val = test = all 50) means the headline test number is reported
   as a **fit metric** — the engine logs a `splits_warning` and the report flags it. For a
   held-out result, pin a 30/10/10 split via `split_ids.json`.
-- **RITS is internal/free**, so the runner `$` is honestly `$0`; the `$400` total /
+- **The ETE gateway does not meter cost**, so the runner `$` is honestly `$0`; the `$400` total /
   `$40`-per-iteration budget governs the Claude optimizer, and the per-iteration cap is
   enforced by the Claude CLI itself (`--max-budget-usd`).
 - On a small held-out val the paired gate will correctly refuse gains it cannot
@@ -173,11 +173,11 @@ any static host — `report.md`, `events.jsonl`, `TAU2_COMMIT.txt`). See
 
 The same benchmark, run in **agent orchestration mode** with the `agent-optimize` algorithm —
 the conversational agent drives the loop itself (see [`AGENT_ORCHESTRATION.md`](AGENT_ORCHESTRATION.md)).
-This uses the generic litellm-proxy model wiring (`adapters/model_config.py`), not RITS, so it
-works with any `aws/gpt-oss-120b`-behind-a-proxy endpoint.
+This uses the generic litellm-proxy model wiring (`adapters/model_config.py`), not the ETE
+gateway wiring, so it works with any `aws/gpt-oss-120b`-behind-a-proxy endpoint.
 
 Project: a litellm-proxy-wired tau2 project (the local `e2e/tau2/.capevolve/project` harness — the
-same adapter as `examples/tau2_airline` but importing `model_config.py` instead of `rits.py`; set it
+same adapter as `examples/tau2_airline` but importing `model_config.py` instead of `gateway.py`; set it
 up once alongside your proxy creds). Split: `inputs/split_ids.json` pins **30 train == 30 val**
 and a disjoint **20 test** (held out). Model: `aws/gpt-oss-120b` (agent + user simulator) via the
 proxy; the optimizer is the conversational agent itself (`optimizer_skill: mock`, never invoked).
