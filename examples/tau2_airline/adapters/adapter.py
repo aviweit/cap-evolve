@@ -22,6 +22,7 @@ network-free, and gateway credential resolution is lazy (only on a real ``run_ba
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -223,7 +224,18 @@ class Adapter(CapabilityAdapter):
         Returns ``None`` on any surprise (unexpected layout, unreadable ctx) — saving
         native traces is a convenience and must never be the thing that breaks a run.
         tau2 creates the parent dirs itself, so there is nothing to mkdir here.
+
+        ``CAPEVOLVE_NATIVE_SIMS=0`` (also false/no/off) turns saving OFF for callers that
+        never read these files and do pay for the bytes. CI is exactly that caller: its
+        artifact is ``$OUT/**`` and the run dir is a different tree, so native sims reach
+        no upload, while a full tier writes 500 sims per eval (~74 KB each, measured) over
+        baseline + every candidate + finalize. The runner has failed a whole 50-task
+        pilot to a full disk before, so the default there is off; locally it stays on,
+        because reading the traces is the point.
         """
+        if str(os.environ.get("CAPEVOLVE_NATIVE_SIMS", "")).strip().lower() in {
+                "0", "false", "no", "off"}:
+            return None
         try:
             cand = Path(ctx)
             if cand.parent.name != "candidates":

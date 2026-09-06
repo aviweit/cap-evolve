@@ -17,12 +17,18 @@ FileExistsError when the answer is not "y" (tau2/runner/checkpoint.py), and ``au
 is off by default. An eval has no stdin, so a collision would hang or kill the run — and a
 silent resume would be worse, returning a previous split's sims as if they were this
 one's. The same tag IS evaluated twice (seed on val at baseline, seed on test at finalize).
+
+Saving is opt-OUT via CAPEVOLVE_NATIVE_SIMS=0, which is what CI sets: its uploaded artifact
+is $OUT/** and the run dir is a separate tree, so these files reach no upload, while a full
+tier writes one sim per task x trial per eval over baseline, every candidate and finalize.
 """
 
 import importlib.util
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 ADAPTER = REPO / "templates" / "adapters" / "tau2_bench" / "adapter.py"
@@ -48,6 +54,12 @@ def _load_adapter_module():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(autouse=True)
+def _clean_flag(monkeypatch):
+    """Neutralize an ambient CAPEVOLVE_NATIVE_SIMS (CI exports 0) — these tests own it."""
+    monkeypatch.delenv("CAPEVOLVE_NATIVE_SIMS", raising=False)
 
 
 def _adapter():
@@ -95,6 +107,26 @@ def test_a_bare_simulations_sibling_also_counts_as_taken(tmp_path):
     ctx = _candidate_dir(tmp_path, "seed")
     (a._sim_save_path(ctx).parent / "simulations").mkdir(parents=True)
     assert a._sim_save_path(ctx).parent.name == "seed-2"
+
+
+def test_the_flag_turns_saving_off(monkeypatch, tmp_path):
+    """CI sets CAPEVOLVE_NATIVE_SIMS=0: it never reads these files and does pay the disk."""
+    a = _adapter()
+    ctx = _candidate_dir(tmp_path, "seed")
+    for off in ("0", "false", "no", "off", "OFF", " 0 "):
+        monkeypatch.setenv("CAPEVOLVE_NATIVE_SIMS", off)
+        assert a._sim_save_path(ctx) is None, f"{off!r} must disable saving"
+
+
+def test_saving_is_on_by_default_and_for_any_other_value(monkeypatch, tmp_path):
+    """Default ON: a human working a run locally is the reader these files exist for."""
+    a = _adapter()
+    ctx = _candidate_dir(tmp_path, "seed")
+    monkeypatch.delenv("CAPEVOLVE_NATIVE_SIMS", raising=False)
+    assert a._sim_save_path(ctx) is not None, "absent env must not disable saving"
+    for on in ("1", "true", "yes", "on", ""):
+        monkeypatch.setenv("CAPEVOLVE_NATIVE_SIMS", on)
+        assert a._sim_save_path(ctx) is not None, f"{on!r} must leave saving on"
 
 
 def test_unexpected_layout_disables_saving_instead_of_raising(tmp_path):
