@@ -198,6 +198,44 @@ class Adapter(CapabilityAdapter):
 
         return {str(t.id): t for t in airline_get_tasks(None)}
 
+    def _sim_save_path(self, ctx):
+        """``<run_ts>/native_sims/<tag>/results.json`` — tau2's OWN trajectories, kept
+        next to the run and tied to the phase that produced them.
+
+        Without a ``save_path`` tau2 builds ``SimulationResults`` in memory, we convert
+        each sim to a ``Rollout``, and the native object is dropped — so `tau2 view` has
+        nothing to show even though tau2's closing line unconditionally recommends it.
+
+        The TAG comes free from ``ctx``: the harness passes the candidate dir
+        (``<run>/candidates/<tag>``), so the phase is ``seed`` for the baseline and
+        ``candidate_NNN`` for an iteration.
+
+        The path MUST be one tau2 has never written. tau2 treats an existing results
+        file (or its ``simulations/`` sibling) as a run to RESUME: it prompts on stdin
+        and raises ``FileExistsError`` when the answer is not "y"
+        (``tau2/runner/checkpoint.py``). ``auto_resume`` is off by default, and an eval
+        has no stdin, so a collision would hang or kill the run — and a silent resume
+        would be worse, returning a previous split's sims as if they were this one's.
+        Hence the ``-2``, ``-3`` suffixes: the same tag IS evaluated more than once (the
+        seed on ``val`` at baseline, then on ``test`` at finalize). Which is which is
+        answerable from the config + task ids tau2 records inside results.json.
+
+        Returns ``None`` on any surprise (unexpected layout, unreadable ctx) — saving
+        native traces is a convenience and must never be the thing that breaks a run.
+        tau2 creates the parent dirs itself, so there is nothing to mkdir here.
+        """
+        try:
+            cand = Path(ctx)
+            if cand.parent.name != "candidates":
+                return None
+            base = cand.parent.parent / "native_sims" / cand.name
+            d, n = base, 2
+            while d.exists():
+                d, n = base.with_name(f"{base.name}-{n}"), n + 1
+            return d / "results.json"
+        except Exception:  # noqa: BLE001 — never let an optional artifact break the eval
+            return None
+
     def run_batch(self, tasks: list[Task], ctx, *, seed: int = 0) -> dict:
         """Run a batch of airline tasks through tau2's own batch runner.
 
@@ -249,12 +287,17 @@ class Adapter(CapabilityAdapter):
         import contextlib
         import sys
         with contextlib.redirect_stdout(sys.stderr):
+            sim_save = self._sim_save_path(ctx)
             sim_results = run_tasks(
                 config,
                 tau2_tasks,
-                save_path=None,
+                save_path=sim_save,
                 console_display=False,
             )
+            if sim_save is not None:
+                # tau2 closes with a bare "run: tau2 view", which looks in
+                # data/simulations and finds nothing — these sims live in the run dir.
+                print(f"tau2 view --dir {sim_save.parent}", file=sys.stderr)
 
         for sim in sim_results.simulations:
             rollout = self._sim_to_rollout(sim)
@@ -392,12 +435,17 @@ class Adapter(CapabilityAdapter):
         import contextlib
         import sys
         with contextlib.redirect_stdout(sys.stderr):
+            sim_save = self._sim_save_path(ctx)
             sim_results = run_tasks(
                 config,
                 tau2_tasks,
-                save_path=None,
+                save_path=sim_save,
                 console_display=False,
             )
+            if sim_save is not None:
+                # tau2 closes with a bare "run: tau2 view", which looks in
+                # data/simulations and finds nothing — these sims live in the run dir.
+                print(f"tau2 view --dir {sim_save.parent}", file=sys.stderr)
 
         # Group each SimulationRun into its task's per-trial slot by sim.trial.
         for sim in sim_results.simulations:
