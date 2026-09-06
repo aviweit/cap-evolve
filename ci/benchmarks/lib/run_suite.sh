@@ -32,12 +32,7 @@ OPTIMIZER_MODEL="${OPTIMIZER_MODEL:-claude-opus-4-8}"
 GATE_K_SE="${GATE_K_SE:-1.0}"
 # Raw native trajectories (today: tau2's own results.json, via adapter._sim_save_path) are
 # OFF here. They are a reading aid for a human working a run locally, and CI is not that
-# reader: the uploaded artifact is $OUT/**, while the run dir is a separate tree that only
-# reaches an artifact through the UI export. So the bytes buy nothing and are not free — a
-# full tier writes one sim per task x trial per eval (~74 KB each) across baseline, every
-# candidate accepted or rejected, and finalize, and this runner has already lost a 50-task
-# pilot to a 100%-full disk (see the harbor job-dir note below). Exported, not assigned, so
-# a dispatch debugging a specific run can set CAPEVOLVE_NATIVE_SIMS=1 and get them back.
+# reader.
 export CAPEVOLVE_NATIVE_SIMS="${CAPEVOLVE_NATIVE_SIMS:-0}"
 
 # ---- algorithm selection ----------------------------------------------------

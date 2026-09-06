@@ -247,18 +247,6 @@ def _native_sims_enabled() -> bool:
     These are the traces `tau2 view` reads, and reading them is how you learn WHY a
     candidate scored what it scored. A flag you must set to get the feature is a flag
     nobody sets, so the default is ON.
-
-    ``CAPEVOLVE_NATIVE_SIMS=0`` (also false/no/off, case- and whitespace-insensitive) turns
-    it off for callers that never read the files and do pay for the bytes. CI is exactly
-    that caller: its uploaded artifact is ``$OUT/**`` while the run dir is a separate tree,
-    so the sims reach no upload, and a full tier writes 500 simulations per eval (~74 KB
-    each, measured) across baseline + every candidate + finalize. This runner has lost a
-    50-task pilot to a full disk before. Off costs the optimizer nothing that matters: the
-    harness already PREFERS its own per-tag rollout JSON, which carries the same messages
-    plus the ``tau2_reward_info`` breakdown this adapter stashes in metadata.
-
-    The prefix is the generic ``CAPEVOLVE_``, not ``TAU2_``: ONE switch for every tau2
-    adapter rather than each inventing its own.
     """
     return str(os.environ.get("CAPEVOLVE_NATIVE_SIMS", "")).strip().lower() not in {
         "0", "false", "no", "off"}
@@ -340,19 +328,11 @@ class Adapter(CapabilityAdapter):
         the finalize — so ``<split>`` stands in for it: the baseline is the seed on val,
         the finalize is the seed on test.
 
-        WHY the timestamp+pid rather than a bare ``results.json``: the same
-        ``<tag>/<split>`` pair IS written more than once. The seed is evaluated on val at
-        baseline and on test at finalize, and under a no-holdout split ``_split_of``
-        cannot tell those apart (it resolves both to val). A path tau2 has already
-        written is a path tau2 tries to RESUME: it treats an existing results file, or its
-        ``simulations/`` sibling, as a run to continue, prompts on stdin, and raises
-        ``FileExistsError`` when the answer is not "y" (``tau2/runner/checkpoint.py``).
-        ``auto_resume`` is off by default and an eval has no stdin, so a collision would
-        hang or kill the run — and a silent resume would be worse, returning a previous
-        split's sims as if they were this one's. The stamp is unique per (second, process),
-        which is enough: two evals of the SAME tag and split cannot both start inside one
-        second (each runs a full set of LLM rollouts), and the pid covers concurrent
-        candidate processes. So no suffix loop, and no path tau2 might try to resume.
+        WHY the timestamp+pid and not a bare ``results.json``: the same ``<tag>/<split>``
+        pair IS written more than once (the seed at baseline and again at finalize), and a
+        path tau2 has already written is one it tries to RESUME — it prompts on stdin,
+        which an eval does not have. The stamp is unique per (second, process), so there is
+        no collision and no suffix walk.
 
         Returns ``None`` when saving is off or the layout is neither ``candidates/<tag>``
         nor ``work/<tag>`` — native traces are a convenience and must never be the thing
