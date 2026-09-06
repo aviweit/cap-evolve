@@ -162,7 +162,13 @@ def test_split_separates_the_baseline_eval_from_the_finalize_eval(tmp_path):
     assert test.parent.name == "test"
     assert val.parent != test.parent
     for p in (val, test):
-        assert "-2" not in str(p), "the stamp replaced the suffix walk; nothing should walk"
+        # Scope the no-suffix check to the part the ADAPTER built. Against the ABSOLUTE
+        # path it also matches pytest's own tmpdir — `/tmp/pytest-of-<user>/pytest-21/`
+        # contains "-2" — so the assertion passed or failed on a tmpdir counter rather
+        # than on the code, and flipped with collection order.
+        built = p.relative_to(tmp_path)
+        assert "-2" not in str(built), "the stamp replaced the suffix walk; nothing should walk"
+        assert p.parent.parent.name == "seed", "the tag dir is the bare tag, never suffixed"
 
 
 def test_an_already_written_path_is_never_reused(tmp_path):
