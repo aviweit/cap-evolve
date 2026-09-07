@@ -48,6 +48,17 @@ N_PRIMITIVES = 14
 DOMAIN = "airline_skillberry"     # tau2's SPA-aware airline domain (env fronted over HTTP)
 
 
+def _native_sims_enabled() -> bool:
+    """Whether to keep tau2's OWN results.json for this eval (default: yes).
+
+    These are the traces `tau2 view` reads, and reading them is how you learn WHY a
+    candidate scored what it scored. A flag you must set to get the feature is a flag
+    nobody sets, so the default is ON.
+    """
+    return str(os.environ.get("CAPEVOLVE_NATIVE_SIMS", "")).strip().lower() not in {
+        "0", "false", "no", "off"}
+
+
 def _spa_env():
     """Import the SPA intervention's library from the skills tree. Lazy: no import-time
     cost for ``check``, and the path is resolved from this project's location."""
@@ -138,33 +149,27 @@ class Adapter(CapabilityAdapter):
 
     # ---- trajectories ----------------------------------------------------
 
-    def _traj_dir(self, ctx, split: str) -> Path:
-        """``<run_dir>/trajectories/<split>/`` — derived from the candidate dir the
-        harness yields (``<run_dir>/candidates/<id>``), so the traces live under the run
-        that produced them. Falls back to a project-local dir off-run."""
-        d = None
-        try:
-            c = Path(ctx)
-            if c.parent.name == "candidates":
-                d = c.parent.parent / "trajectories" / split
-        except Exception:  # noqa: BLE001
-            d = None
-        if d is None:
-            d = Path(__file__).resolve().parents[1] / "trajectories" / split
-        d.mkdir(parents=True, exist_ok=True)
-        self._traj_dirs[split] = d
-        return d
+    # ---- tau2's OWN simulation records -----------------------------------
+    # ONE path format, byte-identical in EVERY tau2 adapter in this repo (this one, the
+    # skillberry_benchmarks direct + spa arms, and templates/adapters/tau2_bench):
+    #
+    #     <run_dir>/native_sims/<tag>/<split>/results_<YYYYmmdd_HHMMSS>_<pid>.json
+    #
+    # Identical on purpose: `tau2 view --dir` takes the same shape whatever arm produced
+    # the run, and a trace is attributable without knowing which adapter wrote it. The
+    # duplication is deliberate — each adapter ships as ONE self-contained file copied
+    # into a project's adapters/, so a shared import would break that.
 
     def _split_of(self, ctx, task_ids: list[str]) -> str:
         """Which split this batch is, read from the run's own ``splits.json``.
 
-        ``run_batch``/``run_trials`` are not told the split, and the trajectory directory
-        must not mix them. Matching the requested ids against the frozen split is exact
-        for the pinned no-holdout case only when the sets differ, so ties resolve in
-        val's favour — val is the split the optimizer reads.
+        ``run_batch``/``run_trials`` are not told the split, and the sims of one split
+        must not land in another's directory. With a pinned no-holdout split every split
+        holds the same ids, so ties resolve in val's favour — val is the split the
+        optimizer reads.
         """
         try:
-            import json
+            import json  # noqa: PLC0415
 
             c = Path(ctx)
             splits = json.loads((c.parent.parent / "splits.json").read_text(encoding="utf-8"))
@@ -173,16 +178,59 @@ class Adapter(CapabilityAdapter):
                 ids = {str(i) for i in (splits.get(name) or [])}
                 if ids and want <= ids:
                     return name
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — an unreadable splits.json must not break the eval
             pass
         return "eval"
 
-    def trajectories(self, split: str, ctx=None):
-        """tau2's native per-eval results dir for ``split`` (full transcript + reward_info).
+    def _sim_save_path(self, ctx, split: str):
+        """``<run_dir>/native_sims/<tag>/<split>/results_<ts>_<pid>.json``, or ``None``.
 
-        cap-evolve prefers its own per-tag rollout JSON (which carries the same messages
-        and the reward_info this adapter stashes) and uses this as the native-dir
-        fallback; either way the optimizer reads unmodified traces.
+        Without a save path tau2 builds ``SimulationResults`` in memory, we convert each
+        sim to a ``Rollout``, and the native object is dropped — so `tau2 view` has
+        nothing to show even though tau2 closes every run by recommending it.
+
+        The TAG comes free from ``ctx``, the dir the harness passes — under EITHER of the
+        two names it uses: ``<run_dir>/candidates/<tag>`` for the baseline and the finalize
+        (tag ``seed``, or the winning ``cand_NNNN``), and ``<run_dir>/work/<tag>`` for an
+        iteration eval (tag ``cand_0001``). Accepting only ``candidates`` is why candidate
+        evals used to write nothing at all — the run dir is ``parent.parent`` either way,
+        so one name in the guard is the whole difference. The PHASE ITSELF is not available — no
+        argument or env var tells an adapter whether this is the baseline, an iteration or
+        the finalize — so ``<split>`` stands in for it: the baseline is the seed on val,
+        the finalize is the seed on test.
+
+        WHY the timestamp+pid and not a bare ``results.json``: the same ``<tag>/<split>``
+        pair IS written more than once (the seed at baseline and again at finalize), and a
+        path tau2 has already written is one it tries to RESUME — it prompts on stdin,
+        which an eval does not have. The stamp is unique per (second, process), so there is
+        no collision and no suffix walk.
+
+        Returns ``None`` when saving is off or the layout is neither ``candidates/<tag>``
+        nor ``work/<tag>`` — native traces are a convenience and must never be the thing
+        that breaks a run. tau2 creates the parent dirs itself, so nothing is created here.
+        """
+        if not _native_sims_enabled():
+            return None
+        try:
+            cand = Path(ctx)
+            if cand.parent.name not in ("candidates", "work"):
+                return None
+            stamp = f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+            return (cand.parent.parent / "native_sims" / cand.name / str(split)
+                    / f"results_{stamp}.json")
+        except Exception:  # noqa: BLE001 — never let an optional artifact break the eval
+            return None
+
+
+    def trajectories(self, split: str, ctx=None):
+        """tau2's native results dir for ``split`` (full transcript + reward_info).
+
+        The last dir ``_sim_save_path`` produced for this split, so it is already scoped to
+        ONE candidate and ONE split. The harness still PREFERS its own per-tag rollout JSON
+        for ``./trajectories/`` and uses this as the native-dir fallback; either way the
+        optimizer reads unmodified traces, since that JSON carries the same ``messages``
+        plus the ``tau2_reward_info`` breakdown this adapter stashes in ``metadata``.
+        Returns ``None`` when native sims are off (``CAPEVOLVE_NATIVE_SIMS=0``).
         """
         d = self._traj_dirs.get(split)
         return d if d and Path(d).is_dir() else None
@@ -218,7 +266,12 @@ class Adapter(CapabilityAdapter):
             return results
 
         split = self._split_of(ctx, [t.id for t in tasks])
-        save_to = self._traj_dir(ctx, split) / f"results_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}.json"
+        # None => tau2 builds SimulationResults in memory only; _sim_to_rollout still gets
+        # every sim, so the rollouts and the score are IDENTICAL either way. Registering the
+        # parent is what makes trajectories() able to hand this dir to the optimizer.
+        save_to = self._sim_save_path(ctx, split)
+        if save_to is not None:
+            self._traj_dirs[split] = save_to.parent
 
         agent_m, user_m = gateway.agent_model(), gateway.user_model()
         # Validates the gateway credentials at CONFIG time (loudly) rather than as a wall
@@ -254,6 +307,10 @@ class Adapter(CapabilityAdapter):
                 console_display=False,
                 log_level=os.environ.get("TAU2_LOG_LEVEL", "WARNING"),
             )
+            if save_to is not None:
+                # tau2 closes with a bare "run: tau2 view", which looks in
+                # data/simulations and finds nothing — these sims live in the run dir.
+                print(f"tau2 view --dir {save_to.parent}", file=sys.stderr)
 
         for sim in sim_results.simulations:
             slot = results.setdefault(str(sim.task_id), [None] * n_trials)

@@ -205,8 +205,14 @@ exists). Here is everything intake needs:
 
 # 4b. TRAJECTORIES  (the FULL traces the optimizer reads) — PATH IS AN INPUT
 - where:        persist tau2's native per-task results (full transcript + reward_info) via
-                run_tasks(save_path=...) into a per-eval dir UNDER THE RUN, e.g.
-                <run_dir>/trajectories/val/. On the spa arm the Skillberry build already
+                run_tasks(save_path=...) into a per-eval dir UNDER THE RUN, at the ONE path
+                format every tau2 adapter in this repo shares:
+                <run_dir>/native_sims/<tag>/<split>/results_<YYYYmmdd_HHMMSS>_<pid>.json
+                (<tag> is the candidate dir from ctx, under EITHER name the harness uses —
+                candidates/<tag> for baseline and finalize, work/<tag> for an iteration eval;
+                <split> stands in for the phase, which no adapter is told. The timestamp+pid
+                matters: tau2 reads an existing results file as a run to RESUME and prompts on
+                stdin, which an eval does not have.) On the spa arm the Skillberry build already
                 merges the proxy-side trajectory into tau2's own, so one trace covers both.
 - expose:       adapter.trajectories(split) returns that directory; cap-evolve copies it
                 VERBATIM into the optimizer's workdir as ./trajectories/ each iteration

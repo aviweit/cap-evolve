@@ -22,14 +22,17 @@ say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mRUN FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
 SPEC="${SPEC:-capevolve.yaml}"
-# Remember whether the caller pinned a tag: otherwise the default below would already be
-# set by the time --smoke is parsed, and ${RUN_TS:-spa_smoke} would silently keep "spa" —
-# writing the smoke into the full run's dir.
+# The run dir is run_<tag>. TIMESTAMP it: a FIXED tag is a path cap-evolve has already
+# written, and RunDir treats an existing run_<tag> with a state.json as a RESUME — so a
+# second `bash run.sh` continued the previous run (its best_id, budget and spend) instead
+# of starting a fresh one. Remember whether the caller pinned a tag, otherwise the default
+# below is already set by the time --smoke is parsed and the smoke would land in it.
 RUN_TS_EXPLICIT="${RUN_TS:+1}"
-RUN_TS="${RUN_TS:-spa}"
+RUN_TS="${RUN_TS:-$(date +%Y%m%d_%H%M%S)}"
 for arg in "$@"; do
   case "$arg" in
-    --smoke) SPEC="capevolve.smoke.yaml"; [ -z "$RUN_TS_EXPLICIT" ] && RUN_TS="spa_smoke" ;;
+    --smoke) SPEC="capevolve.smoke.yaml"
+             [ -z "$RUN_TS_EXPLICIT" ] && RUN_TS="smoke_$(date +%Y%m%d_%H%M%S)" ;;
     -h|--help) echo "usage: run.sh [--smoke]   (or SPEC=<file> RUN_TS=<tag> bash run.sh)"; exit 0 ;;
     *) echo "unknown option: $arg  (use --smoke)" >&2; exit 2 ;;
   esac
