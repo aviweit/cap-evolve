@@ -1,6 +1,6 @@
-# SMOKE spec - 1 task, 1 trial, 1 iteration, offline mock optimizer. Proves a task
-# REALLY executes and returns a REAL reward with rollout.error null, BEFORE spending
-# anything: an instant all-zero baseline means the rollouts errored.
+# SMOKE spec - 2 tasks, 1 trial, 1 iteration, real claude-opus-4-6 optimizer with
+# per-iteration $ caps. Proves a task REALLY executes and returns a REAL reward with
+# rollout.error null: an instant all-zero baseline means the rollouts errored.
 # Kept flat (no inline maps) so the zero-dependency reader can parse it.
 
 # --- what to optimize -------------------------------------------------------
@@ -21,10 +21,10 @@ capability_sources: [seed_capability/reference/data_model.py]
 # numbers are NOT like-for-like and must never be averaged.
 
 # --- who proposes edits -----------------------------------------------------
-optimizer_skill: mock                    # SMOKE: offline, spends nothing on the optimizer
-optimizer_model: ""
-optimizer_max_turns: 400                 # generous; the real per-iteration ceiling is the $ cap
-optimizer_usd_per_iter: 0.0
+optimizer_skill: claude-code             # real optimizer; the per-iteration $ cap is the ceiling
+optimizer_model: claude-opus-4-6
+optimizer_max_turns: 40                  # generous; the real per-iteration ceiling is the $ cap
+optimizer_usd_per_iter: 3.0
 
 # --- consuming (runtime) LLM the capability is optimized FOR -----------------
 # The AGENT UNDER TEST reads these tools as aws/gpt-oss-120b via the gateway — a mid-tier
@@ -72,14 +72,14 @@ stop_condition: ""
 # --- acceptance gate --------------------------------------------------------
 gate_mode: paired            # per-task paired SE on the SAME tasks both sides -> a real
                              # 1-task gain banks instead of drowning in between-task variance
-gate_k_se: 0.2
+gate_k_se: 1.0
 
 # --- budget -----------------------------------------------------------------
 max_iterations: 1
-stall: 3
+stall: 0
 max_metric_calls: 0
-max_usd: 400.0
-max_optimizer_usd: 400.0
+max_usd: 10.0
+max_optimizer_usd: 8.0
 
 # --- iteration store (how each iteration is versioned for an inspectable process)
-store: copy                              # SMOKE: no commits for a throwaway
+store: git                               # every iteration committed for an inspectable process

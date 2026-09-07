@@ -20,7 +20,7 @@ capability_sources: [seed_capability/reference/data_model.py]
 
 # --- who proposes edits -----------------------------------------------------
 optimizer_skill: claude-code             # resolved by run-optimizer via optimizers/registry.yaml
-optimizer_model: claude-opus-4-8         # the optimizer's Claude model id
+optimizer_model: claude-opus-4-6         # the optimizer's Claude model id
 optimizer_max_turns: 400                 # generous; the real per-iteration ceiling is the $ cap
 optimizer_usd_per_iter: 40.0             # per-iteration $ cap (claude --max-budget-usd, CLI-enforced)
 
@@ -51,10 +51,10 @@ split_test: 0.25
 # engine logs a splits_warning and the report flags the test number as a FIT metric, not a
 # generalization estimate. split_ids.json in this directory pins the all-50 no-holdout
 # split for a full run.
-split_ids_file: split_ids_task9.json
+split_ids_file: split_ids.json
 
 # --- scoring ----------------------------------------------------------------
-num_trials: 5               # gpt-oss is stochastic; 5 trials -> mean + stderr + pass^k
+num_trials: 10              # gpt-oss is stochastic; 10 trials -> mean + stderr + pass^k
 
 # --- metrics (display) ------------------------------------------------------
 # The GATE uses the PRIMARY metric only (tau2's reward). db_match and cost_usd are
@@ -73,8 +73,8 @@ gate_mode: paired            # per-task paired SE on the SAME tasks both sides -
 gate_k_se: 0.2
 
 # --- budget -----------------------------------------------------------------
-max_iterations: 2
-stall: 3
+max_iterations: 10
+stall: 0
 max_metric_calls: 0
 max_usd: 400.0
 max_optimizer_usd: 400.0

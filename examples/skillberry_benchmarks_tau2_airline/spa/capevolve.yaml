@@ -29,7 +29,7 @@ protected_paths: ["primitive_tools/*", "my_skill/SKILL.md"]
 
 # --- who proposes edits -----------------------------------------------------
 optimizer_skill: claude-code
-optimizer_model: claude-opus-4-8
+optimizer_model: claude-opus-4-6
 optimizer_max_turns: 400                 # generous; the $ cap below is the real ceiling
 optimizer_usd_per_iter: 40.0             # per-iteration $ cap (claude --max-budget-usd)
 
@@ -47,8 +47,8 @@ orchestration_mode: deterministic
 optimizer_instructions_file: optimizer/INSTRUCTIONS.md
 # The pinned benchmark checkout, READ-ONLY: task definitions, the real tool
 # implementations, and the reward checks.
-# One level deeper than the live project (examples/<name>/spa/), hence ../../../.
-runner_repo_path: ../../../vendor/skillberry-benchmarks
+# Resolved PROJECT-relative (the DEPLOYED project dir, not this file's location).
+runner_repo_path: ../../vendor/skillberry-benchmarks
 
 # --- data + splits ----------------------------------------------------------
 dataset_source: adapter                  # the adapter's tasks() -> all 50 airline tasks
@@ -60,18 +60,18 @@ split_test: 0.25
 # a no-holdout FIT metric — the engine logs a splits_warning and the report flags the test
 # number as a fit metric. `split_ids.json` in this dir pins the same no-holdout shape over
 # ALL 50 tasks, for a later full run.
-split_ids_file: split_ids_task9.json
+split_ids_file: split_ids.json
 
 # --- scoring ----------------------------------------------------------------
-num_trials: 5                            # gpt-oss is stochastic: 5 trials -> mean + SE (+ pass^k)
+num_trials: 10                           # gpt-oss is stochastic; 10 trials -> mean + stderr + pass^k
 
 # --- acceptance gate --------------------------------------------------------
 gate_mode: paired                        # per-task paired SE — banks a real 1-task gain
 gate_k_se: 0.2
 
 # --- budget -----------------------------------------------------------------
-max_iterations: 2
-stall: 3
+max_iterations: 10
+stall: 0
 max_metric_calls: 0
 max_usd: 400.0
 max_optimizer_usd: 400.0

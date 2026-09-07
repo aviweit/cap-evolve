@@ -1,5 +1,6 @@
-# SMOKE spec — 1 task, 1 trial, 1 iteration, offline mock optimizer. Proves a task
-# really executes and returns a real reward with rollout.error null, before spending.
+# SMOKE spec — 2 tasks, 1 trial, 1 iteration, real claude-opus-4-6 optimizer with
+# per-iteration $ caps. Proves a task really executes and returns a real reward with
+# rollout.error null.
 # Kept flat (no inline maps) so the zero-dependency reader can parse it.
 
 # --- what to optimize -------------------------------------------------------
@@ -29,10 +30,10 @@ skill_name: my_skill
 protected_paths: ["primitive_tools/*", "my_skill/SKILL.md"]
 
 # --- who proposes edits -----------------------------------------------------
-optimizer_skill: mock
-optimizer_model: ""
-optimizer_max_turns: 400                 # generous; the $ cap below is the real ceiling
-optimizer_usd_per_iter: 40.0             # per-iteration $ cap (claude --max-budget-usd)
+optimizer_skill: claude-code
+optimizer_model: claude-opus-4-6
+optimizer_max_turns: 40                  # generous; the $ cap below is the real ceiling
+optimizer_usd_per_iter: 3.0              # per-iteration $ cap (claude --max-budget-usd)
 
 # The agent under test reads these tools as gpt-oss-120b (what SPA calls upstream) —
 # distinct from the opus optimizer that PROPOSES the edits.
@@ -48,8 +49,8 @@ orchestration_mode: deterministic
 optimizer_instructions_file: optimizer/INSTRUCTIONS.md
 # The pinned benchmark checkout, READ-ONLY: task definitions, the real tool
 # implementations, and the reward checks.
-# One level deeper than the live project (examples/<name>/spa/), hence ../../../.
-runner_repo_path: ../../../vendor/skillberry-benchmarks
+# Resolved PROJECT-relative (the DEPLOYED project dir, not this file's location).
+runner_repo_path: ../../vendor/skillberry-benchmarks
 
 # --- data + splits ----------------------------------------------------------
 dataset_source: adapter                  # the adapter's tasks() -> all 50 airline tasks
@@ -68,14 +69,14 @@ num_trials: 1                            # smoke: one draw is enough to prove a 
 
 # --- acceptance gate --------------------------------------------------------
 gate_mode: paired                        # per-task paired SE — banks a real 1-task gain
-gate_k_se: 0.2
+gate_k_se: 1.0
 
 # --- budget -----------------------------------------------------------------
 max_iterations: 1
-stall: 3
+stall: 0
 max_metric_calls: 0
-max_usd: 20.0
-max_optimizer_usd: 400.0
+max_usd: 10.0
+max_optimizer_usd: 8.0
 
 # --- iteration store --------------------------------------------------------
 store: git                               # every iteration committed for an inspectable process
