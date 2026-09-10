@@ -427,9 +427,55 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
 # ---------------------------------------------------------------------------
 
 
+#: Ceiling for a captured service log before it is rotated, and how many old generations to
+#: keep. 5MB x 3 puts a ~20MB lid on each service, which is enough history to debug a failed
+#: start without the file being the largest thing in the vendor dir.
+LOG_MAX_BYTES = int(os.environ.get("SPA_LOG_MAX_BYTES") or 5 * 1024 * 1024)
+LOG_BACKUPS = int(os.environ.get("SPA_LOG_BACKUPS") or 3)
+
+
+def _rotate_if_large(log: Path, max_bytes: int = LOG_MAX_BYTES,
+                     backups: int = LOG_BACKUPS) -> None:
+    """Rotate ``log`` to ``log.1`` (shifting older generations) once it exceeds ``max_bytes``.
+
+    WHY THIS EXISTS. Both services are captured with ``log.open("ab")`` below — append, never
+    truncated — and the vendor dir is shared and long-lived, so without this the two files grow
+    for as long as the machine does. Measured: proxy-agent.log passes 100MB routinely, because
+    the agent logs every request to stdout AND to its own file.
+
+    The two services are NOT equally at fault, which is why this belongs here rather than
+    upstream: skillberry-agent already caps its own file at 5MB x 10 via a RotatingFileHandler,
+    but that only covers the copy it writes itself — the duplicate it sends to stdout, which is
+    what we capture, is unbounded. skillberry-store has no file handler at all on its serving
+    path, so this capture is its only log and nothing else could bound it.
+
+    LIMIT, stated plainly: rotation happens at START, so this bounds growth ACROSS runs, not
+    WITHIN one. A single very long run still appends without limit — the process holds the
+    handle, so rotating under it would write into a deleted inode. Turning the level down
+    (``UVICORN_LOG_LEVEL`` for the store, debug off for the agent) is the lever for within-run
+    volume; this is the lever for "the runner has been up for a month".
+    """
+    try:
+        if not log.is_file() or log.stat().st_size <= max_bytes:
+            return
+        for i in range(backups, 0, -1):
+            src = log.with_suffix(log.suffix + f".{i}")
+            if i == backups:
+                src.unlink(missing_ok=True)          # oldest generation falls off the end
+                continue
+            if src.is_file():
+                src.replace(log.with_suffix(log.suffix + f".{i + 1}"))
+        log.replace(log.with_suffix(log.suffix + ".1"))
+    except OSError:
+        # Never let log housekeeping stop a service from starting: a full disk or a read-only
+        # mount is a reason to run degraded, not a reason to refuse to run.
+        pass
+
+
 def _start_detached(d: Path, env: dict, log: Path, *, extra: str = "") -> None:
     """Launch ``make run`` inside the service's venv, detached, logging to ``log``."""
     log.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_if_large(log)
     cmd = f"cd {d} && . .venv/bin/activate && {extra}make run"
     with log.open("ab") as fh:
         subprocess.Popen(["bash", "-c", cmd], env=env, stdout=fh, stderr=fh,
