@@ -56,6 +56,11 @@ export TAU2_USER_MODEL="${TAU2_USER_MODEL:-aws/gpt-oss-120b}"
 export SPA_REMOTE_ENV_URL="${SPA_REMOTE_ENV_URL:-http://127.0.0.1:8004}"
 ENV_PORT="${ENV_PORT:-8004}"
 
+# tau2's env manager is not a Skillberry service, so spa_env does not launch it — but its log is
+# ours to bound. /tmp, like the other three, and rotated by the same helper (never reimplemented
+# here) so there is one rotation implementation in the tree.
+ENV_LOG=/tmp/env_manager.log
+
 say "1/3  The benchmark's environment service (port $ENV_PORT)"
 # tau2's Environment Manager fronts the airline env over HTTP; the store's executor calls
 # it per rollout with an injected env_id. LITELLM_LOCAL_MODEL_COST_MAP=True skips litellm's
@@ -64,12 +69,16 @@ if curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/docs" \
    || curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/"; then
   echo "  already up"
 else
-  echo "  starting -> $REPO/env_manager.log"
+  echo "  starting -> $ENV_LOG"
+  # Rotate ONLY here, inside the "not already up" branch: rotating a log the running env manager
+  # holds open would leave it appending to a deleted inode (see rotate_if_large in spa_env).
+  "$PY" -c "import sys; sys.path.insert(0,'skills/interventions/llm-proxies/spa/scripts')
+import spa_env; spa_env.rotate_if_large('$ENV_LOG')" || true
   ( cd "$REPO" && LITELLM_LOCAL_MODEL_COST_MAP=True nohup "$PY" -c "
 import asyncio
 from tau2.orchestrator.environment_manager import EnvironmentManager
 asyncio.run(EnvironmentManager(host='127.0.0.1', port=$ENV_PORT).run())
-" > env_manager.log 2>&1 & )
+" > "$ENV_LOG" 2>&1 & )
   # POLL, never sleep a fixed amount: importing tau2 pulls in litellm, so first start is
   # ~10s, and a fixed sleep either wastes time or races the service.
   for _ in $(seq 1 60); do
@@ -79,7 +88,7 @@ asyncio.run(EnvironmentManager(host='127.0.0.1', port=$ENV_PORT).run())
   done
   curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/docs" \
     || curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/" \
-    || die "environment service did not come up on $ENV_PORT — see $REPO/env_manager.log"
+    || die "environment service did not come up on $ENV_PORT — see $ENV_LOG"
   echo "  healthy"
 fi
 

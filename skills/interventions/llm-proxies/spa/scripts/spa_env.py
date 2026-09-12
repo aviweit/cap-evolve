@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -45,6 +46,10 @@ from typing import Optional
 # can assert on offline. Every one is env-overridable for a bisect or a spike.
 # ---------------------------------------------------------------------------
 
+# CHANGING EITHER REF BELOW: provision() patches these clones to make each service rotate its own
+# log, and each patch matches an exact snippet of the pinned source. Bumping a ref means owning
+# that patch — see the ref contract in provision(), and _patch_store_logging /
+# _patch_agent_logging for the anchors to re-validate.
 STORE_REPO = "https://github.com/skillberry-ai/skillberry-store.git"
 STORE_REF = "0.2.1"                       # a tag: cloned with --branch
 AGENT_REPO = "https://github.com/skillberry-ai/skillberry-agent.git"
@@ -64,6 +69,19 @@ STORE_PORT_DEFAULT = "8000"
 SPA_PID_FILE = "/tmp/skillberry-agent-service.pid"
 STORE_PID_FILE = "/tmp/skillberry-store-service.pid"
 
+# Every log this stack produces lives in /tmp and nowhere else. These are also the vendored
+# defaults (skillberry-common/.mk/process.mk sets SERVICE_LOG=/tmp/$(SERVICE_NAME).log), but we
+# pass them EXPLICITLY on the `make run` line: rotation has to know the exact path it acts on, and
+# reading the default implicitly would turn a future process.mk change into a silent no-op that
+# rotates a file nothing writes.
+AGENT_LOG_FILE = "/tmp/skillberry-agent.log"
+STORE_LOG_FILE = "/tmp/skillberry-store.log"
+
+# The agent's OWN log, written by its RotatingFileHandler (main.py:82, 5MB x 10) — a different
+# file from the stdout we capture above, and the only one that rotates DURING a run. We rely on it,
+# so pin the path rather than trusting that repo's default to stay put.
+AGENT_TOOLS_LOG_FILE = "/tmp/tools-agent.log"
+
 # argv markers that identify each service, used before signalling anything.
 SPA_PROC_MARKERS = ("python", "-m main")
 STORE_PROC_MARKERS = ("skillberry_store.main",)
@@ -75,6 +93,13 @@ SPA_ENV_DEFAULTS = {
     "USE_AGENT_PROMPTS": "true",
     "MCP_PROMPTS_POSITION": "postfix",
 }
+
+#: When a log we own exceeds this at service start, rotate it; keep this many old generations.
+#: NOTE this ceiling is a TRIGGER, not a cap. We can only act at start (see rotate_if_large), so a
+#: file is whatever size the run left it at — measured 21.5MB for skillberry-agent.log against a
+#: 5MB ceiling. The real bound is (backups + 1) x one run's output, not (backups + 1) x max_bytes.
+LOG_MAX_BYTES = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES") or 5 * 1024 * 1024)
+LOG_BACKUPS = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS") or 3)
 
 _ENV_LOADED = False
 
@@ -384,6 +409,117 @@ def _clone_at(repo: str, ref: str, dest: Path, *, ref_is_tag: bool) -> None:
     print(f"  ✓ cloned {dest.name} @ {ref}")
 
 
+# Marker that makes every patch below idempotent and greppable in a provisioned clone.
+_PATCH_MARKER = "# capevolve: rotating log handler"
+
+#: Written by the services' OWN rotating handlers once patched. These rotate DURING a run, which is
+#: the whole point: a log can only be rotated safely by the process that holds its fd.
+STORE_TOOLS_LOG_FILE = "/tmp/tools-store.log"
+
+
+def _apply_patch(f: Path, anchor: str, replacement: str, *, ref: str, what: str) -> bool:
+    """Rewrite ``anchor`` to ``replacement`` in ``f``. True if applied, False if already present.
+
+    Refuses to patch blind. If the anchor is gone and the marker is not there either, the pinned ref
+    has moved out from under the patch, and we say so loudly rather than silently leaving a service
+    whose log nothing rotates.
+    """
+    text = f.read_text(encoding="utf-8")
+    if _PATCH_MARKER in text:
+        return False                       # already patched — re-provision is a no-op
+    if text.count(anchor) != 1:
+        raise RuntimeError(
+            f"cannot enable log rotation in {f}: expected exactly one occurrence of the {what} "
+            f"anchor, found {text.count(anchor)}.\n"
+            f"This patch was written against the PINNED ref {ref!r}. Changing the ref is changing "
+            f"the source this patch edits, so it becomes YOUR responsibility: update the anchor in "
+            f"spa_env._patch_store_logging / _patch_agent_logging to match the new source, or the "
+            f"service will run with an unrotated, unbounded log.")
+    f.write_text(text.replace(anchor, replacement, 1), encoding="utf-8")
+    return True
+
+
+def _patch_store_logging(d: Path, ref: str) -> None:
+    """Give the store a rotating log of its own, and stop it logging to stdout.
+
+    The store ships NO logging configuration — only ``logging.getLogger(__name__)`` in ~20 modules;
+    no basicConfig, no dictConfig, no file handler. Its records are formatted only once uvicorn
+    installs its own config, so everything logged while ``SBS()`` is built goes nowhere today.
+
+    Two seams. The first is at import time deliberately, NOT at the uvicorn call: ``SBS()`` runs,
+    plugins load and the DB initialises long before ``uvicorn.run``, so a handler installed there
+    would miss all of startup and any crash in it.
+    """
+    _apply_patch(
+        d / "src/skillberry_store/main.py",
+        "import os\nimport sys\nimport signal\nimport atexit\n",
+        "import os\nimport sys\nimport signal\nimport atexit\n"
+        "import logging\n"
+        "from logging.handlers import RotatingFileHandler\n"
+        "\n"
+        + _PATCH_MARKER + " installed by cap-evolve's spa intervention skill at provision time.\n"
+        "# Rotates from INSIDE this process, the only place a live log CAN be rotated: an external\n"
+        "# rotator renames the file while this process keeps writing to the now-deleted inode.\n"
+        "# Deliberately NO StreamHandler -- the stdout copy is what grew without limit.\n"
+        "_cap_log = os.environ.get(\"CAPEVOLVE_SKILLBERRY_STORE_TOOLS_LOG_FILE\") or \"" + STORE_TOOLS_LOG_FILE + "\"\n"
+        "_cap_handler = RotatingFileHandler(\n"
+        "    _cap_log,\n"
+        "    maxBytes=int(os.environ.get(\"CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES\") or 5 * 1024 * 1024),\n"
+        "    backupCount=int(os.environ.get(\"CAPEVOLVE_SKILLBERRY_LOG_BACKUPS\") or 10),\n"
+        ")\n"
+        "_cap_handler.setFormatter(logging.Formatter(\n"
+        "    \"%(asctime)s %(levelname)s %(name)s [%(filename)s:%(lineno)d] %(message)s\"))\n"
+        "logging.basicConfig(level=os.environ.get(\"CAPEVOLVE_SKILLBERRY_STORE_LOG_LEVEL\") or \"INFO\",\n"
+        "                    handlers=[_cap_handler])\n",
+        ref=ref, what="store import-block")
+
+    # Uvicorn's loggers default to propagate=False, which is why access lines never reach a root
+    # handler. The store already builds a custom log_config right here, so this is the one seam.
+    _apply_patch(
+        d / "src/skillberry_store/fast_api/server.py",
+        '        log_config["loggers"]["uvicorn.access"][\n'
+        '            "level"\n'
+        '        ] = "DEBUG"  # Ensure all access logs are shown\n',
+        '        log_config["loggers"]["uvicorn.access"][\n'
+        '            "level"\n'
+        '        ] = "DEBUG"  # Ensure all access logs are shown\n'
+        '\n'
+        '        # capevolve: send uvicorn records to the rotating file installed in main.py rather\n'
+        '        # than to stdout. Without this, access lines are the one thing that file would miss.\n'
+        '        for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):\n'
+        '            log_config["loggers"][_name]["handlers"] = []\n'
+        '            log_config["loggers"][_name]["propagate"] = True\n',
+        ref=ref, what="store uvicorn log_config")
+
+
+def _patch_agent_logging(d: Path, ref: str) -> None:
+    """Stop the agent duplicating every record onto stdout.
+
+    The agent ALREADY rotates its own file correctly (RotatingFileHandler, 5MB x 10, observed
+    rolling mid-run), so nothing is added there. The problem is the second handler in the same
+    basicConfig call: that console copy becomes SERVICE_LOG and grew at 1.10 MB/min (~660MB/10h),
+    with no way to rotate it from outside. Dropping it loses nothing -- the records are already in
+    the rotating file -- and routing uvicorn's loggers there ADDS the access lines it lacked.
+    """
+    _apply_patch(
+        d / "main.py",
+        "# Configure logger\n"
+        "logging.basicConfig(level=log_level, handlers=[console_handler, file_handler])\n",
+        _PATCH_MARKER + " adjusted by cap-evolve's spa intervention skill at provision time.\n"
+        "# console_handler is deliberately absent: it duplicated every record onto stdout, which\n"
+        "# start-service.sh captures into a file nothing can rotate mid-run. file_handler is the\n"
+        "# agent's own RotatingFileHandler, unchanged -- it already rotates from inside this process.\n"
+        "logging.basicConfig(level=log_level, handlers=[file_handler])\n"
+        "\n"
+        "# Uvicorn's loggers default to propagate=False, so its startup and access lines reached\n"
+        "# only stdout. Send them to the rotating file so dropping the console copy loses nothing.\n"
+        "for _cap_name in (\"uvicorn\", \"uvicorn.error\", \"uvicorn.access\"):\n"
+        "    _cap_lg = logging.getLogger(_cap_name)\n"
+        "    _cap_lg.handlers = [file_handler]\n"
+        "    _cap_lg.propagate = False\n",
+        ref=ref, what="agent basicConfig")
+
+
 def _install_service(d: Path) -> None:
     """Create the service's own py3.11 venv and install it.
 
@@ -410,14 +546,28 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
     """Clone + install both services at their pinned refs. Idempotent.
 
     Returns the resolved paths so a caller can report or verify them.
+
+    LOG ROTATION IS ENABLED HERE, by patching each clone between cloning and installing. A log can
+    only be rotated safely by the process that holds its fd — an external rotator renames the file
+    while the service keeps writing to the deleted inode — so the only way to bound these logs
+    WITHIN a run is to make the services rotate their own. We can, because we own the clone.
+
+    THE REF CONTRACT. Each patch is written against the ref pinned in this module and matches an
+    exact snippet of that source. **If you change the ref — STORE_REF / AGENT_REF here, or
+    SKILLBERRY_STORE_REF / SKILLBERRY_AGENT_REF in the environment — validating the patch against
+    the new source becomes your responsibility.** A moved anchor raises at provision time naming
+    the file and the ref, rather than quietly leaving a service whose log grows without limit
+    (measured before this existed: 1.10 MB/min for the agent, ~660MB per 10 hours).
     """
     load_env()
     sd, ad = store_dir(), agent_dir()
-    _clone_at(STORE_REPO, store_ref or os.environ.get("SKILLBERRY_STORE_REF") or STORE_REF,
-              sd, ref_is_tag=True)
+    sref = store_ref or os.environ.get("SKILLBERRY_STORE_REF") or STORE_REF
+    aref = agent_ref or os.environ.get("SKILLBERRY_AGENT_REF") or AGENT_REF
+    _clone_at(STORE_REPO, sref, sd, ref_is_tag=True)
+    _patch_store_logging(sd, sref)       # before install: the patch is source, not runtime config
     _install_service(sd)
-    _clone_at(AGENT_REPO, agent_ref or os.environ.get("SKILLBERRY_AGENT_REF") or AGENT_REF,
-              ad, ref_is_tag=False)
+    _clone_at(AGENT_REPO, aref, ad, ref_is_tag=False)
+    _patch_agent_logging(ad, aref)
     _install_service(ad)
     return {"store_dir": str(sd), "agent_dir": str(ad)}
 
@@ -427,13 +577,101 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
 # ---------------------------------------------------------------------------
 
 
-def _start_detached(d: Path, env: dict, log: Path, *, extra: str = "") -> None:
-    """Launch ``make run`` inside the service's venv, detached, logging to ``log``."""
-    log.parent.mkdir(parents=True, exist_ok=True)
-    cmd = f"cd {d} && . .venv/bin/activate && {extra}make run"
-    with log.open("ab") as fh:
+def rotate_if_large(log, max_bytes: int = None, backups: int = None) -> None:
+    """Rotate ``log`` to ``log.1`` (shifting older generations) once it exceeds ``max_bytes``.
+
+    PUBLIC because the tau2 arm's run.sh calls it for the environment manager, which spa_env does
+    not launch. One implementation, three callers: the store, SPA, and that run.sh branch.
+
+    CALLERS MUST only invoke this on a path that is about to launch a process. Rotating a log whose
+    writer holds the fd leaves the process appending to a renamed (eventually deleted) inode while
+    the fresh file stays empty — the run's log silently lost. That is why every call site sits
+    below a health short-circuit: a reused service returns before reaching this, and its rotation
+    was already performed by whichever call actually started it.
+
+    WHY AT START. The one thing we cannot do is rotate mid-run, for the reason above. So this
+    bounds growth ACROSS runs, not WITHIN one. Contrast the agent's own RotatingFileHandler
+    (main.py:82), which checks on every write and therefore keeps each generation at ~5MB: measured
+    2026-09-12, tools-agent.log.1-.4 were all ~4.9MB while skillberry-agent.log — rotated only by
+    us — reached 21.5MB inside a single run. The ceiling is a trigger; the real bound is
+    (backups + 1) x one run's output. Log level is the lever for within-run volume
+    (UVICORN_LOG_LEVEL for the store; advanced__debug for the agent, which also turns on
+    LangChain's set_debug).
+    """
+    log = Path(log)
+    max_bytes = LOG_MAX_BYTES if max_bytes is None else max_bytes
+    backups = LOG_BACKUPS if backups is None else backups
+    try:
+        if backups < 1 or not log.exists() or log.stat().st_size <= max_bytes:
+            return
+        # Oldest first, so nothing is overwritten before it has been shifted.
+        for gen in range(backups - 1, 0, -1):
+            src, dst = log.with_suffix(log.suffix + f".{gen}"), log.with_suffix(log.suffix + f".{gen + 1}")
+            if src.exists():
+                src.replace(dst)
+        log.replace(log.with_suffix(log.suffix + ".1"))
+    except OSError:
+        # Never let log housekeeping stop a service from starting: a full disk or a read-only
+        # mount is a reason to run degraded, not a reason to refuse to run.
+        pass
+
+
+def _start_capture_path(service_log) -> Path:
+    """Where make's own output goes while a service starts. ``/tmp/<svc>.start.log``."""
+    p = Path(service_log)
+    return p.with_suffix(".start" + p.suffix)
+
+
+def _resolve_start_capture(capture: Path, ok: bool) -> Optional[str]:
+    """Delete the start-capture on success; on failure keep it and return its tail.
+
+    The capture exists because a failure BEFORE the service is exec'd — a missing .stamps/srv.env,
+    a Makefile error, a RUN_DEPS failure — is visible only on make's stdout, never in the service's
+    own log. Those are exactly the "it never started" cases where an empty log is most confusing.
+    """
+    try:
+        if ok:
+            capture.unlink(missing_ok=True)
+            return None
+        text = capture.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None      # must never mask the real error about the service
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines[-40:]) or None
+
+
+def _start_detached(d: Path, env: dict, service_log, *, extra: str = "",
+                    rotate: bool = True) -> Path:
+    """Launch ``make run`` inside the service's venv, detached. Returns the start-capture path.
+
+    ``service_log`` is passed to make as ``SERVICE_LOG=...`` and is the file the SERVICE writes;
+    we rotate it here, immediately before the launch. How that file comes to exist:
+    skillberry-common's ``.mk/process.mk:22`` hands it to ``scripts/start-service.sh``, which does
+    ``nohup $@ >& $logfile`` — a TRUNCATING redirect established by the shell before the service is
+    exec'd. Rotate-then-truncate is what makes the generations meaningful; without rotation each
+    start simply destroyed the previous run's log.
+
+    A command-line assignment is required, not an environment variable: make lets makefile
+    assignments beat the environment unless ``-e`` is given, but a command-line assignment
+    outranks the makefile's plain ``=``.
+
+    ``SERVICE_SENTINEL`` is deliberately NOT overridden — SPA_PID_FILE / STORE_PID_FILE hardcode
+    the default pid paths and stop/liveness read them.
+
+    Make's own stdout (which also carries a ``tail -F`` mirror of the service log) goes to a
+    transient start-capture, resolved by the caller via _resolve_start_capture.
+    """
+    service_log = Path(service_log)
+    service_log.parent.mkdir(parents=True, exist_ok=True)
+    if rotate:
+        rotate_if_large(service_log)
+    capture = _start_capture_path(service_log)
+    cmd = (f"cd {d} && . .venv/bin/activate && {extra}make run "
+           f"SERVICE_LOG={shlex.quote(str(service_log))}")
+    with capture.open("wb") as fh:          # "wb", not "ab": bounded by truncation, never rotated
         subprocess.Popen(["bash", "-c", cmd], env=env, stdout=fh, stderr=fh,
                          start_new_session=True)
+    return capture
 
 
 def start_store(*, timeout: int = 90) -> None:
@@ -457,15 +695,46 @@ def start_store(*, timeout: int = 90) -> None:
     Path(STORE_PID_FILE).unlink(missing_ok=True)
     env = os.environ.copy()
     env["EXECUTE_PYTHON_LOCALLY"] = "True"
-    _start_detached(d, env, d / "store.log")
-    if not wait_for_health(port, timeout):
+    capture = _start_detached(d, env, STORE_LOG_FILE)
+    ok = wait_for_health(port, timeout)
+    tail = _resolve_start_capture(capture, ok)
+    if not ok:
+        extra = f"\n--- make output ({capture}) ---\n{tail}" if tail else ""
         raise RuntimeError(f"store did not become healthy on {port} in {timeout}s "
-                           f"(see {d / 'store.log'})")
+                           f"(see {STORE_LOG_FILE}){extra}")
     print(f"  ✓ store healthy on {port}")
 
 
 def stop_store() -> None:
     _stop_service("skillberry-store", store_port(), STORE_PID_FILE, STORE_PROC_MARKERS)
+
+
+def _bound_skill_name() -> Optional[str]:
+    """``SKILL_NAME`` of the RUNNING SPA, or None when it cannot be determined.
+
+    ``status()`` cannot answer this — it reports ports, pids and health, not the bound skill — and
+    SPA binds one skill at start, so the only reliable source is the environment the live process
+    was started with. /proc is exact; ``ps eww`` is the portable fallback (macOS has no /proc).
+    None means "unknown", and callers treat that as reusable rather than refusing to work on a
+    platform where we cannot read it.
+    """
+    for pid in _pids_on_port(SPA_PORT):
+        if not _is_service_process(pid, SPA_PROC_MARKERS):
+            continue
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes().decode("utf-8", "replace")
+            entries = raw.split("\0")
+        except OSError:
+            try:
+                r = subprocess.run(["ps", "eww", "-p", str(pid), "-o", "command="],
+                                   capture_output=True, text=True, timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            entries = r.stdout.split() if r.returncode == 0 else []
+        for e in entries:
+            if e.startswith("SKILL_NAME="):
+                return e.split("=", 1)[1] or None
+    return None
 
 
 def start_spa(skill_name: str, *, retries: int = 2, timeout: int = 60, **env_overrides) -> None:
@@ -481,6 +750,23 @@ def start_spa(skill_name: str, *, retries: int = 2, timeout: int = 60, **env_ove
     if not skill_name:
         raise RuntimeError("start_spa() requires a skill_name — SPA's nameless fallback "
                            "silently searches the store and cannot be verified")
+    # Reuse a healthy SPA: do nothing at all, no launch and no rotation. Its log is the one the
+    # live process is writing, and the generations were already established by the call that
+    # started it — so there is nothing left to do, and rotating here would corrupt a live log.
+    if health_ok(SPA_PORT):
+        served = _bound_skill_name()
+        if served is not None and served != skill_name:
+            raise RuntimeError(
+                f"SPA on {SPA_PORT} is already serving SKILL_NAME={served!r}, not {skill_name!r}. "
+                "SPA binds ONE skill at start, so reusing it would evaluate the wrong skill — "
+                "call stop_spa() first so it can be rebound.")
+        if served is None:
+            print(f"  ✓ SPA already healthy on {SPA_PORT} (bound skill unreadable; assuming "
+                  f"{skill_name})")
+        else:
+            print(f"  ✓ SPA already healthy on {SPA_PORT} (SKILL_NAME={skill_name})")
+        return
+
     d = agent_dir()
     if not (d / ".git").is_dir():
         raise RuntimeError(f"SPA not provisioned at {d} — run provision() first")
@@ -500,21 +786,30 @@ def start_spa(skill_name: str, *, retries: int = 2, timeout: int = 60, **env_ove
     env.pop("SKILL_UUID", None)          # else it silently outranks SKILL_NAME
     for k, v in SPA_ENV_DEFAULTS.items():
         env.setdefault(k, v)
+    # The agent's own rotating log. Set before env_overrides so an explicit caller override wins.
+    env.setdefault("SPA_ADVANCED__LOG_FILE", AGENT_TOOLS_LOG_FILE)
     for k, v in env_overrides.items():
         env[str(k)] = str(v)
 
+    tail = None
     for attempt in range(1 + retries):
         Path(SPA_PID_FILE).unlink(missing_ok=True)
-        _start_detached(d, env, d / "proxy-agent.log")
-        if wait_for_health(SPA_PORT, timeout):
+        capture = _start_detached(d, env, AGENT_LOG_FILE)
+        ok = wait_for_health(SPA_PORT, timeout)
+        # Resolve per attempt, so a later success still cleans up after a failed one.
+        tail = _resolve_start_capture(capture, ok)
+        if ok:
             print(f"  ✓ SPA healthy on {SPA_PORT} (SKILL_NAME={skill_name})")
             return
         if attempt < retries:
             stop_spa()
             time.sleep(3)
+    extra = f"\n--- make output ---\n{tail}" if tail else ""
+    # Both agent logs are named: an init failure after basicConfig (main.py:86) lands in the
+    # agent's own log, while anything above that line reaches only its stdout.
     raise RuntimeError(f"SPA did not become healthy on {SPA_PORT} with SKILL_NAME="
                        f"{skill_name} after {1 + retries} attempts "
-                       f"(see {d / 'proxy-agent.log'})")
+                       f"(see {AGENT_LOG_FILE} and {AGENT_TOOLS_LOG_FILE}){extra}")
 
 
 def stop_spa() -> None:
