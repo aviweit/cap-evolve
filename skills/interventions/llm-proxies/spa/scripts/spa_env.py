@@ -1059,6 +1059,57 @@ class Protection:
         return found
 
 
+#: Object kinds that register themselves as DEPENDENTS of a skill, and therefore block its
+#: deletion. ``skills_service.delete`` refuses outright while anything depends on the skill:
+#:
+#:     dependents = self.handler.dependency_manager.get_dependents(uuid)
+#:     if dependents:
+#:         raise ObjectInUseError("skill", uuid, dependents)   # -> HTTP 409
+#:
+#: Exactly two kinds do that, both via ``get_service("skill").add_dependent(<kind>, <own uuid>,
+#: [skill_uuid])`` — vmcp_service.py:191 and vnfs_service.py:149. Each entry is
+#: (list path for _list, singular kind for _delete_object).
+_SKILL_DEPENDENT_KINDS = (("vmcp_servers", "vmcp_server"), ("vnfs_servers", "vnfs_server"))
+
+
+def delete_skill_dependents(skill_uuid: str) -> bool:
+    """Delete every store object that depends on ``skill_uuid``, so the skill becomes deletable.
+
+    WHY THIS EXISTS. A skill cannot be deleted while anything depends on it, and the store creates
+    a dependent every time a vMCP (or vNFS) server is registered against a skill. Those live in the
+    store, not in the run, so an interrupted run leaves them behind in a store that keeps running —
+    and the next run then failed EVERY rollout with "could not remove existing skill my_skill from
+    the store" (observed: 50 tasks x 10 trials, coverage 0/50). Clearing them first is what the
+    manual "purge all store data" recovery was really achieving.
+
+    Safe to call unconditionally, which is what makes it correct in all three entry paths — a clean
+    store (nothing listed, no-op), a store left holding some previous skill, and a
+    baseline/candidate switch mid-run:
+
+    * deleting a dependent has no prerequisites of its own; neither ``vmcp_service.delete`` nor
+      ``vnfs_service.delete`` consults ``get_dependents``, so there is no recursion to worry about;
+    * each of those deletes calls ``remove_dependent`` itself, so the registration goes with the
+      object rather than lingering to block the skill anyway;
+    * only rows whose ``skill_uuid`` matches are touched — a vMCP server belonging to a different
+      skill is left alone, since it cannot be what blocks this skill.
+
+    Returns True when every matching dependent is gone (404 counts as gone).
+    """
+    ok = True
+    for list_kind, delete_kind in _SKILL_DEPENDENT_KINDS:
+        for row in _list(list_kind):
+            if row.get("skill_uuid") != skill_uuid:
+                continue
+            uuid = row.get("uuid")
+            if not uuid:
+                continue
+            if _delete_object(delete_kind, uuid):
+                print(f"  · removed {delete_kind} {uuid} depending on skill {skill_uuid}")
+            else:
+                ok = False
+    return ok
+
+
 def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
     """Delete a skill together with ALL of its own tools and snippets.
 
@@ -1070,13 +1121,20 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
     iteration. So the order that actually works:
 
       1. GET the manifest to collect tool_uuids / snippet_uuids
-      2. DELETE the skill (no cascade) — this releases the dependency
-      3. DELETE each tool and snippet, now that nothing depends on them
+      2. DELETE anything that DEPENDS on the skill (vMCP / vNFS servers), or step 3 gets a 409
+      3. DELETE the skill (no cascade) — this releases the dependency
+      4. DELETE each tool and snippet, now that nothing depends on them
 
     FAIL CLOSED: a tool whose metadata cannot be read is KEPT, not deleted. Leaking a
     stale wrapper is cheap; deleting a protected primitive corrupts the run.
 
     A missing skill (404) is success — callers always delete-then-import.
+
+    Raises RuntimeError, rather than returning False, when the store actively refuses the delete
+    (409, or any other unexpected status): those carry a reason in the response body, and a bare
+    False strips it. ``reset_store_to_skill`` reports False as "could not remove existing skill
+    <name>", which is unactionable — that exact message, with no status code and no named
+    dependent, is what made an interrupted-run failure take two days to diagnose.
     """
     protect = protect or Protection()
     before = protect.present_names()
@@ -1104,9 +1162,26 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
             continue                      # protected -> keep
         deletable.append(tu)
 
-    status, _ = _curl(["-X", "DELETE", _store_url(f"/skills/{skill_name}")])
+    # Clear the skill's dependents FIRST: the store refuses to delete a skill while anything
+    # depends on it, and vMCP/vNFS servers registered against this skill are exactly that. See
+    # delete_skill_dependents for why this is safe to do unconditionally.
+    deps_ok = delete_skill_dependents(manifest.get("uuid") or skill_name)
+
+    status, body = _curl(["-X", "DELETE", _store_url(f"/skills/{skill_name}")])
+    if status == 409:
+        # ObjectInUseError. Nothing should still depend on the skill at this point, so a 409 here
+        # means a dependent kind this code does not know about. The store names them in the body,
+        # which is the one piece of information needed to fix it -- raise rather than return a bare
+        # False that a caller can only report as "could not remove existing skill".
+        raise RuntimeError(
+            f"the store refuses to delete skill {skill_name}: something still depends on it after "
+            f"clearing {' and '.join(k for k, _ in _SKILL_DEPENDENT_KINDS)}"
+            f"{' (and some of those could not be deleted)' if not deps_ok else ''}.\n"
+            f"HTTP 409 from DELETE /skills/{skill_name}: {body.strip()[:400]}\n"
+            "Add the dependent kind named above to _SKILL_DEPENDENT_KINDS.")
     if status not in (200, 204, 404):
-        return False
+        raise RuntimeError(
+            f"DELETE /skills/{skill_name} returned HTTP {status}: {body.strip()[:400]}")
 
     ok = True
     for tu in deletable:
