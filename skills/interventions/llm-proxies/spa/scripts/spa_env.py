@@ -95,11 +95,13 @@ SPA_ENV_DEFAULTS = {
 }
 
 #: When a log we own exceeds this at service start, rotate it; keep this many old generations.
+#: 10 generations matches what the services' own handlers keep, so one variable means the same
+#: thing everywhere -- ours and theirs.
 #: NOTE this ceiling is a TRIGGER, not a cap. We can only act at start (see rotate_if_large), so a
 #: file is whatever size the run left it at — measured 21.5MB for skillberry-agent.log against a
 #: 5MB ceiling. The real bound is (backups + 1) x one run's output, not (backups + 1) x max_bytes.
 LOG_MAX_BYTES = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES") or 5 * 1024 * 1024)
-LOG_BACKUPS = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS") or 3)
+LOG_BACKUPS = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS") or 10)
 
 _ENV_LOADED = False
 
