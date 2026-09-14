@@ -100,8 +100,23 @@ SPA_ENV_DEFAULTS = {
 #: NOTE this ceiling is a TRIGGER, not a cap. We can only act at start (see rotate_if_large), so a
 #: file is whatever size the run left it at — measured 21.5MB for skillberry-agent.log against a
 #: 5MB ceiling. The real bound is (backups + 1) x one run's output, not (backups + 1) x max_bytes.
-LOG_MAX_BYTES = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES") or 5 * 1024 * 1024)
-LOG_BACKUPS = int(os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS") or 10)
+#: These are DEFAULTS, not the env read. The env vars are read lazily by _log_setting() because
+#: load_env() — which imports the repo-root .env into os.environ — only runs inside provision() /
+#: start_store() / start_spa(), i.e. AFTER this module's top level has finished. Reading os.environ
+#: here would mean a value set only in .env never reached rotation, silently.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUPS = 10
+
+
+def _log_setting(name: str, default: int) -> int:
+    """A log knob from the environment, read late enough that the repo-root ``.env`` counts.
+
+    ``load_env()`` is idempotent and uses setdefault, so a value exported in the shell still wins
+    over the file. Falls back to ``default`` when unset or empty.
+    """
+    load_env()
+    raw = os.environ.get(name)
+    return int(raw) if raw else default
 
 _ENV_LOADED = False
 
@@ -413,21 +428,29 @@ def _clone_at(repo: str, ref: str, dest: Path, *, ref_is_tag: bool) -> None:
 
 # Marker that makes every patch below idempotent and greppable in a provisioned clone.
 _PATCH_MARKER = "# capevolve: rotating log handler"
+_PATCH_MARKER_KNOBS = "# capevolve: rotation knobs"
 
 #: Written by the services' OWN rotating handlers once patched. These rotate DURING a run, which is
 #: the whole point: a log can only be rotated safely by the process that holds its fd.
 STORE_TOOLS_LOG_FILE = "/tmp/tools-store.log"
 
 
-def _apply_patch(f: Path, anchor: str, replacement: str, *, ref: str, what: str) -> bool:
+def _apply_patch(f: Path, anchor: str, replacement: str, *, ref: str, what: str,
+                 marker: str) -> bool:
     """Rewrite ``anchor`` to ``replacement`` in ``f``. True if applied, False if already present.
+
+    ``marker`` must be a string unique to ``replacement``; it is how idempotence is decided. A
+    per-patch marker matters because a file can carry more than one patch (the agent gets two), and
+    because a replacement that KEEPS its anchor — the store's uvicorn block appends after it — would
+    otherwise be applied again on every provision, stacking duplicates.
 
     Refuses to patch blind. If the anchor is gone and the marker is not there either, the pinned ref
     has moved out from under the patch, and we say so loudly rather than silently leaving a service
     whose log nothing rotates.
     """
+    assert marker in replacement, "the idempotence marker must appear in the replacement"
     text = f.read_text(encoding="utf-8")
-    if _PATCH_MARKER in text:
+    if marker in text:
         return False                       # already patched — re-provision is a no-op
     if text.count(anchor) != 1:
         raise RuntimeError(
@@ -448,9 +471,9 @@ def _patch_store_logging(d: Path, ref: str) -> None:
     no basicConfig, no dictConfig, no file handler. Its records are formatted only once uvicorn
     installs its own config, so everything logged while ``SBS()`` is built goes nowhere today.
 
-    Two seams. The first is at import time deliberately, NOT at the uvicorn call: ``SBS()`` runs,
-    plugins load and the DB initialises long before ``uvicorn.run``, so a handler installed there
-    would miss all of startup and any crash in it.
+    One seam, at import time deliberately: ``SBS()`` runs, plugins load and the DB initialises long
+    before ``uvicorn.run``, so a handler installed there would miss all of startup and any crash in
+    it. Uvicorn's own loggers are left alone — see the note below for why touching them lost data.
     """
     _apply_patch(
         d / "src/skillberry_store/main.py",
@@ -473,36 +496,49 @@ def _patch_store_logging(d: Path, ref: str) -> None:
         "    \"%(asctime)s %(levelname)s %(name)s [%(filename)s:%(lineno)d] %(message)s\"))\n"
         "logging.basicConfig(level=os.environ.get(\"CAPEVOLVE_SKILLBERRY_STORE_LOG_LEVEL\") or \"INFO\",\n"
         "                    handlers=[_cap_handler])\n",
-        ref=ref, what="store import-block")
+        ref=ref, what="store import-block", marker=_PATCH_MARKER)
 
-    # Uvicorn's loggers default to propagate=False, which is why access lines never reach a root
-    # handler. The store already builds a custom log_config right here, so this is the one seam.
-    _apply_patch(
-        d / "src/skillberry_store/fast_api/server.py",
-        '        log_config["loggers"]["uvicorn.access"][\n'
-        '            "level"\n'
-        '        ] = "DEBUG"  # Ensure all access logs are shown\n',
-        '        log_config["loggers"]["uvicorn.access"][\n'
-        '            "level"\n'
-        '        ] = "DEBUG"  # Ensure all access logs are shown\n'
-        '\n'
-        '        # capevolve: send uvicorn records to the rotating file installed in main.py rather\n'
-        '        # than to stdout. Without this, access lines are the one thing that file would miss.\n'
-        '        for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):\n'
-        '            log_config["loggers"][_name]["handlers"] = []\n'
-        '            log_config["loggers"][_name]["propagate"] = True\n',
-        ref=ref, what="store uvicorn log_config")
+    # NOT PATCHED: uvicorn's own loggers are deliberately left alone.
+    #
+    # An earlier revision rerouted uvicorn/uvicorn.error/uvicorn.access into the handler above, by
+    # setting handlers=[] and propagate=True in the log_config passed to uvicorn.run. It does not
+    # hold, and it LOSES the access log: every vMCP server constructs uvicorn.Config(...)
+    # (modules/vmcp_server.py), whose __init__ calls configure_logging() -> dictConfig, re-applying
+    # uvicorn's defaults process-wide. The result was uvicorn.access with no handler and no
+    # propagation, i.e. access records dropped entirely -- verified live, a GET returning 200 whose
+    # access line appeared in neither log. Leaving uvicorn's config untouched keeps those lines on
+    # stdout, where SERVICE_LOG captures them and our start-time rotation bounds them.
 
 
 def _patch_agent_logging(d: Path, ref: str) -> None:
-    """Stop the agent duplicating every record onto stdout.
+    """Stop the agent duplicating every record onto stdout, and put its rotation under our knobs.
 
     The agent ALREADY rotates its own file correctly (RotatingFileHandler, 5MB x 10, observed
     rolling mid-run), so nothing is added there. The problem is the second handler in the same
     basicConfig call: that console copy becomes SERVICE_LOG and grew at 1.10 MB/min (~660MB/10h),
-    with no way to rotate it from outside. Dropping it loses nothing -- the records are already in
-    the rotating file -- and routing uvicorn's loggers there ADDS the access lines it lacked.
+    with no way to rotate it from outside. Dropping it loses almost nothing -- every record is
+    already in the rotating file. What stays on stdout is what never passes through the root logger:
+    LiteLLM's own logger, rich's console renderer, and uvicorn's access log. SERVICE_LOG keeps
+    those, and our start-time rotation bounds them.
     """
+    # The handler's SIZE and COUNT. Upstream hardcodes 5MB x 10 at main.py:82 with no config key
+    # for either, so without this patch tools-agent.log is the one log our knobs cannot reach --
+    # CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES=1048576 rotated the store every 1MB while the agent kept
+    # rolling at 5MB. Reading the same two variables here makes one knob mean one thing across
+    # every log this stack writes. (Wiring these through config/config_structure.py as
+    # advanced__log_max_bytes / advanced__log_backup_count would be the proper fix, and belongs in
+    # a PR against skillberry-agent -- see the stopgap note in provision().)
+    _apply_patch(
+        d / "main.py",
+        "file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=10)\n",
+        _PATCH_MARKER_KNOBS + " -- same env vars as the store's handler and our own rotation.\n"
+        "file_handler = RotatingFileHandler(\n"
+        "    log_file,\n"
+        "    maxBytes=int(os.environ.get(\"CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES\") or 5 * 1024 * 1024),\n"
+        "    backupCount=int(os.environ.get(\"CAPEVOLVE_SKILLBERRY_LOG_BACKUPS\") or 10),\n"
+        ")\n",
+        ref=ref, what="agent RotatingFileHandler", marker=_PATCH_MARKER_KNOBS)
+
     _apply_patch(
         d / "main.py",
         "# Configure logger\n"
@@ -512,14 +548,8 @@ def _patch_agent_logging(d: Path, ref: str) -> None:
         "# start-service.sh captures into a file nothing can rotate mid-run. file_handler is the\n"
         "# agent's own RotatingFileHandler, unchanged -- it already rotates from inside this process.\n"
         "logging.basicConfig(level=log_level, handlers=[file_handler])\n"
-        "\n"
-        "# Uvicorn's loggers default to propagate=False, so its startup and access lines reached\n"
-        "# only stdout. Send them to the rotating file so dropping the console copy loses nothing.\n"
-        "for _cap_name in (\"uvicorn\", \"uvicorn.error\", \"uvicorn.access\"):\n"
-        "    _cap_lg = logging.getLogger(_cap_name)\n"
-        "    _cap_lg.handlers = [file_handler]\n"
-        "    _cap_lg.propagate = False\n",
-        ref=ref, what="agent basicConfig")
+        ,
+        ref=ref, what="agent basicConfig", marker=_PATCH_MARKER)
 
 
 def _install_service(d: Path) -> None:
@@ -579,7 +609,8 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
 # ---------------------------------------------------------------------------
 
 
-def rotate_if_large(logfile, max_bytes: int = None, backups: int = None) -> None:
+def rotate_if_large(logfile, max_bytes: Optional[int] = None,
+                    backups: Optional[int] = None) -> None:
     """Rotate ``logfile`` to ``logfile.1`` (shifting older generations) once it exceeds ``max_bytes``.
 
     PUBLIC because the tau2 arm's run.sh calls it for the environment manager, which spa_env does
@@ -601,8 +632,10 @@ def rotate_if_large(logfile, max_bytes: int = None, backups: int = None) -> None
     LangChain's set_debug).
     """
     logfile = Path(logfile)
-    max_bytes = LOG_MAX_BYTES if max_bytes is None else max_bytes
-    backups = LOG_BACKUPS if backups is None else backups
+    if max_bytes is None:
+        max_bytes = _log_setting("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES", LOG_MAX_BYTES)
+    if backups is None:
+        backups = _log_setting("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS", LOG_BACKUPS)
     try:
         if backups < 1 or not logfile.exists() or logfile.stat().st_size <= max_bytes:
             return

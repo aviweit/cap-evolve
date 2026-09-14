@@ -72,8 +72,10 @@ else
   echo "  starting -> $ENV_LOG"
   # Rotate ONLY here, inside the "not already up" branch: rotating a log the running env manager
   # holds open would leave it appending to a deleted inode (see rotate_if_large in spa_env).
-  "$PY" -c "import sys; sys.path.insert(0,'skills/interventions/llm-proxies/spa/scripts')
-import spa_env; spa_env.rotate_if_large('$ENV_LOG')" || true
+
+  "$PY" -c "import sys; sys.path.insert(0, '$REPO/skills/interventions/llm-proxies/spa/scripts')
+import spa_env; spa_env.rotate_if_large('$ENV_LOG')" \
+    || echo "  WARNING: could not rotate $ENV_LOG (continuing; it may grow unbounded)" >&2
   ( cd "$REPO" && LITELLM_LOCAL_MODEL_COST_MAP=True nohup "$PY" -c "
 import asyncio
 from tau2.orchestrator.environment_manager import EnvironmentManager

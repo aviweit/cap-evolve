@@ -12,6 +12,7 @@ mis-placed call (rotating a log a live process holds open), neither of which a s
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,19 @@ def spa_env():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(autouse=True)
+def isolate_log_knobs(spa_env, monkeypatch):
+    """Keep these tests independent of the developer's repo-root .env.
+
+    rotate_if_large now reads the knobs through load_env(), which imports .env into os.environ --
+    correct behaviour, but it means a ceiling set in a real .env silently overrides a monkeypatched
+    LOG_MAX_BYTES and the assertions here become environment-dependent.
+    """
+    monkeypatch.delenv("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES", raising=False)
+    monkeypatch.delenv("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS", raising=False)
+    monkeypatch.setattr(spa_env, "load_env", lambda: None)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +131,47 @@ def test_the_ceiling_and_backup_count_come_from_the_environment(spa_env, tmp_pat
 
     assert (tmp_path / "skillberry-store.log.1").read_bytes() == b"a" * 1024
     assert not (tmp_path / "skillberry-store.log.2").exists(), "backups=1 keeps one generation"
+
+
+def test_a_value_set_only_in_dot_env_reaches_rotation(spa_env, tmp_path, monkeypatch):
+    """The knobs must be read AFTER load_env(), not at import.
+
+    load_env() imports the repo-root .env into os.environ, but it only runs inside provision() /
+    start_store() / start_spa() — after this module's top level has finished. Reading os.environ at
+    import time meant a value set only in .env silently never reached rotation, while the PR claimed
+    it would. Regression test for that: no shell export, value only in the file.
+    """
+    monkeypatch.delenv("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES", raising=False)
+    monkeypatch.delenv("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS", raising=False)
+    monkeypatch.setattr(spa_env, "_ENV_LOADED", False)          # let load_env() run again
+    # Goes through monkeypatch, not os.environ directly: a raw mutation here leaked the variable
+    # into later tests and silently overrode their ceilings.
+    monkeypatch.setattr(spa_env, "load_env",
+                        lambda: monkeypatch.setenv("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES", "1024"))
+
+    logfile = tmp_path / "skillberry-store.log"
+    logfile.write_bytes(b"z" * 2048)                            # over 1024, under the 5MB default
+
+    spa_env.rotate_if_large(logfile)                            # no explicit max_bytes
+
+    assert (tmp_path / "skillberry-store.log.1").exists(), (
+        "a ceiling set only in .env must be honoured; reading it at import time misses it")
+
+
+def test_a_shell_export_still_wins_over_the_file(spa_env, tmp_path, monkeypatch):
+    """load_env() uses setdefault, so an exported value must not be overwritten by the file."""
+    monkeypatch.setenv("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES", "1024")
+    monkeypatch.setattr(spa_env, "_ENV_LOADED", False)
+    # load_env() uses setdefault, so the file must not clobber what the shell already set.
+    monkeypatch.setattr(spa_env, "load_env",
+                        lambda: os.environ.setdefault("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES",
+                                                      "999999999"))
+
+    logfile = tmp_path / "skillberry-store.log"
+    logfile.write_bytes(b"z" * 2048)
+    spa_env.rotate_if_large(logfile)
+
+    assert (tmp_path / "skillberry-store.log.1").exists(), "the exported 1024 must win, not the file"
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +434,14 @@ def test_the_env_manager_log_rotates_like_the_others(spa_env, tmp_path):
 
 
 def test_it_is_callable_exactly_the_way_run_sh_calls_it(spa_env, tmp_path):
-    """Out of process, with run.sh's own sys.path insert — the only test that catches a broken
-    import path or an import-time side effect in that invocation."""
+    """Out of process, from a FOREIGN cwd — the invocation contract, not the happy path.
+
+    run.sh never cd's to $REPO (only its launch subshell does), so the insert it passes must be
+    absolute. An earlier version of this test ran the subprocess with cwd=<repo root>, which made a
+    cwd-relative insert pass here while failing for anyone invoking run.sh from elsewhere — and the
+    `|| true` on that line swallowed the ImportError, so env_manager.log silently never rotated.
+    Running from tmp_path is what makes this test able to catch that.
+    """
     log = tmp_path / "env_manager.log"
     log.write_bytes(b"r" * 4096)
     code = ("import sys; sys.path.insert(0, %r)\n"
@@ -388,10 +449,31 @@ def test_it_is_callable_exactly_the_way_run_sh_calls_it(spa_env, tmp_path):
             (str(SPA_ENV.parent), str(log)))
 
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                       cwd=SPA_ENV.parents[5])
+                       cwd=tmp_path)                     # deliberately NOT the repo root
 
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "env_manager.log.1").exists(), "rotation must happen in that subprocess"
+
+
+def test_run_sh_anchors_the_import_path_and_reports_failure(spa_env):
+    """The two properties of that run.sh line, checked on the script itself.
+
+    This is the one place a source assertion is right: the defect is not in Python behaviour but in
+    what the shell hands to it, and no unit test of spa_env can observe a bad path in run.sh.
+    """
+    run_sh = (SPA_ENV.parents[5]
+              / "examples/skillberry_benchmarks_tau2_airline/spa/run.sh").read_text()
+    rotate_line = next(ln for ln in run_sh.splitlines() if "sys.path.insert" in ln
+                       and "rotate" in run_sh.split(ln)[1][:120])
+
+    assert "'$REPO/skills" in rotate_line, (
+        "the insert must be $REPO-anchored; run.sh does not cd to $REPO, so a relative path breaks "
+        "whenever it is invoked from another directory")
+
+    block = run_sh.split("rotate_if_large('$ENV_LOG')")[1][:200]
+    assert "|| true" not in block, (
+        "a swallowed ImportError means env_manager.log silently never rotates")
+    assert "WARNING" in block, "a rotation failure must be reported, not hidden"
 
 
 # ---------------------------------------------------------------------------
@@ -490,3 +572,131 @@ def test_an_unreadable_bound_skill_is_reused_rather_than_refused(spa_env, monkey
     spa_env.start_spa("my_skill")          # must not raise
 
     assert launched == []
+
+# ---------------------------------------------------------------------------
+# The provision-time patches
+#
+# These are what give the SERVICES their own rotation -- the only kind that can happen mid-run,
+# since a live log can only be rotated by the process holding its fd. Driven against synthetic
+# clones that mirror the pinned sources exactly.
+# ---------------------------------------------------------------------------
+
+AGENT_HANDLER_LINE = "file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=10)\n"
+AGENT_BASICCONFIG = ("# Configure logger\n"
+                     "logging.basicConfig(level=log_level, handlers=[console_handler, file_handler])\n")
+
+
+@pytest.fixture
+def agent_clone(tmp_path):
+    """A minimal stand-in for the pinned skillberry-agent source the patches anchor on."""
+    d = tmp_path / "skillberry-agent"
+    d.mkdir()
+    (d / "main.py").write_text(
+        "import logging\nimport os\nfrom logging.handlers import RotatingFileHandler\n\n"
+        'log_file = config.get("advanced__log_file")\n'
+        "log_level = 'INFO'\n" + AGENT_HANDLER_LINE + AGENT_BASICCONFIG)
+    return d
+
+
+def test_the_agents_rotation_size_and_count_come_under_our_knobs(spa_env, agent_clone):
+    """Upstream hardcodes 5MB x 10 with no config key, so tools-agent.log was the one log our
+    variables could not reach: CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES=1048576 rotated the store every
+    1MB while the agent kept rolling at 5MB."""
+    spa_env._patch_agent_logging(agent_clone, "e359494")
+    text = (agent_clone / "main.py").read_text()
+
+    assert "maxBytes=5*1024*1024" not in text, "the hardcoded size must be gone"
+    assert 'os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_MAX_BYTES")' in text
+    assert 'os.environ.get("CAPEVOLVE_SKILLBERRY_LOG_BACKUPS")' in text
+    compile(text, "main.py", "exec")           # the patched source must still be valid Python
+
+
+def test_the_agent_stops_duplicating_records_onto_stdout(spa_env, agent_clone):
+    spa_env._patch_agent_logging(agent_clone, "e359494")
+    text = (agent_clone / "main.py").read_text()
+    assert "handlers=[file_handler]" in text
+    assert "console_handler, file_handler" not in text, "the stdout duplicate is what grew unbounded"
+
+
+def test_two_patches_to_one_file_do_not_shadow_each_other(spa_env, agent_clone):
+    """Both agent patches live in main.py. With a single shared marker the second would be skipped,
+    because the first one's marker is already in the file."""
+    spa_env._patch_agent_logging(agent_clone, "e359494")
+    text = (agent_clone / "main.py").read_text()
+    assert spa_env._PATCH_MARKER in text
+    assert spa_env._PATCH_MARKER_KNOBS in text, "the second patch must not be skipped by the first"
+
+
+def test_re_provisioning_does_not_stack_duplicates(spa_env, agent_clone):
+    """Idempotence, per patch — the agent carries two, and a shared marker would let the second be
+    skipped or a keep-your-anchor replacement be appended twice on every provision."""
+    spa_env._patch_agent_logging(agent_clone, "e359494")
+    once = (agent_clone / "main.py").read_text()
+    for _ in range(3):
+        spa_env._patch_agent_logging(agent_clone, "e359494")
+    assert (agent_clone / "main.py").read_text() == once, "re-provision must be a byte-for-byte no-op"
+
+
+def test_every_marker_is_present_in_its_own_replacement(spa_env):
+    """The assert inside _apply_patch guards this, but a mismatch would only surface at provision
+    time on a real clone -- catch it here instead."""
+    markers = [spa_env._PATCH_MARKER, spa_env._PATCH_MARKER_KNOBS]
+    assert len(set(markers)) == len(markers), "markers must be distinct or patches shadow each other"
+    assert all(m.startswith("# capevolve:") for m in markers), "keep them greppable in a clone"
+
+
+def test_uvicorn_loggers_are_left_alone(spa_env, agent_clone, tmp_path):
+    """Rerouting uvicorn's loggers LOST the access log, so neither patch may touch them.
+
+    Every vMCP server builds uvicorn.Config(...), whose __init__ calls configure_logging() ->
+    dictConfig, re-applying uvicorn's defaults process-wide. Combined with handlers=[] that left
+    uvicorn.access with no handler AND no propagation: a GET returning 200 whose access line
+    appeared in neither log. Untouched, those lines stay on stdout, which SERVICE_LOG captures and
+    our start-time rotation bounds.
+    """
+    spa_env._patch_agent_logging(agent_clone, "e359494")
+    assert "uvicorn" not in (agent_clone / "main.py").read_text(), (
+        "the agent patch must not reconfigure uvicorn's loggers")
+
+    store = tmp_path / "skillberry-store"
+    (store / "src/skillberry_store/fast_api").mkdir(parents=True)
+    (store / "src/skillberry_store/main.py").write_text(
+        "import os\nimport sys\nimport signal\nimport atexit\n")
+    server_py = store / "src/skillberry_store/fast_api/server.py"
+    original = ('        log_config["loggers"]["uvicorn.access"][\n'
+                '            "level"\n'
+                '        ] = "DEBUG"  # Ensure all access logs are shown\n')
+    server_py.write_text(original)
+
+    spa_env._patch_store_logging(store, "0.2.1")
+
+    assert server_py.read_text() == original, "server.py must not be modified at all"
+    assert "RotatingFileHandler" in (store / "src/skillberry_store/main.py").read_text(), (
+        "the handler in main.py is the part that works and must still be applied")
+
+
+def test_a_moved_anchor_names_the_file_and_the_pinned_ref(spa_env, tmp_path):
+    """A ref bump is the realistic trigger. Failing loudly at provision time is the whole point:
+    silently skipping would leave a service whose log nothing rotates."""
+    d = tmp_path / "agent-moved"
+    d.mkdir()
+    (d / "main.py").write_text("logging.basicConfig(level=log_level)\n")   # upstream changed it
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env._patch_agent_logging(d, "deadbee")
+
+    msg = str(err.value)
+    assert "main.py" in msg and "deadbee" in msg
+    assert "found 0" in msg
+    assert "responsibility" in msg, "the message must say who owns the patch after a ref bump"
+
+
+def test_an_ambiguous_anchor_refuses_rather_than_guessing(spa_env, tmp_path):
+    d = tmp_path / "agent-dup"
+    d.mkdir()
+    (d / "main.py").write_text(AGENT_HANDLER_LINE + "\n" + AGENT_HANDLER_LINE)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env._patch_agent_logging(d, "e359494")
+
+    assert "found 2" in str(err.value), "two candidates must not be patched blind"
