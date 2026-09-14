@@ -579,8 +579,8 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
 # ---------------------------------------------------------------------------
 
 
-def rotate_if_large(log, max_bytes: int = None, backups: int = None) -> None:
-    """Rotate ``log`` to ``log.1`` (shifting older generations) once it exceeds ``max_bytes``.
+def rotate_if_large(logfile, max_bytes: int = None, backups: int = None) -> None:
+    """Rotate ``logfile`` to ``logfile.1`` (shifting older generations) once it exceeds ``max_bytes``.
 
     PUBLIC because the tau2 arm's run.sh calls it for the environment manager, which spa_env does
     not launch. One implementation, three callers: the store, SPA, and that run.sh branch.
@@ -600,18 +600,19 @@ def rotate_if_large(log, max_bytes: int = None, backups: int = None) -> None:
     (UVICORN_LOG_LEVEL for the store; advanced__debug for the agent, which also turns on
     LangChain's set_debug).
     """
-    log = Path(log)
+    logfile = Path(logfile)
     max_bytes = LOG_MAX_BYTES if max_bytes is None else max_bytes
     backups = LOG_BACKUPS if backups is None else backups
     try:
-        if backups < 1 or not log.exists() or log.stat().st_size <= max_bytes:
+        if backups < 1 or not logfile.exists() or logfile.stat().st_size <= max_bytes:
             return
         # Oldest first, so nothing is overwritten before it has been shifted.
         for gen in range(backups - 1, 0, -1):
-            src, dst = log.with_suffix(log.suffix + f".{gen}"), log.with_suffix(log.suffix + f".{gen + 1}")
+            src = logfile.with_suffix(logfile.suffix + f".{gen}")
+            dst = logfile.with_suffix(logfile.suffix + f".{gen + 1}")
             if src.exists():
                 src.replace(dst)
-        log.replace(log.with_suffix(log.suffix + ".1"))
+        logfile.replace(logfile.with_suffix(logfile.suffix + ".1"))
     except OSError:
         # Never let log housekeeping stop a service from starting: a full disk or a read-only
         # mount is a reason to run degraded, not a reason to refuse to run.
