@@ -1060,14 +1060,17 @@ class Protection:
 
 
 #: Object kinds that register themselves as DEPENDENTS of a skill, and therefore block its
-#: deletion. ``skills_service.delete`` refuses outright while anything depends on the skill:
+#: deletion. In the STORE's own code — skillberry-store @ the tag STORE_REF pins (0.2.1), not this
+#: repo — ``skills_service.delete`` refuses outright while anything depends on the skill:
 #:
 #:     dependents = self.handler.dependency_manager.get_dependents(uuid)
 #:     if dependents:
 #:         raise ObjectInUseError("skill", uuid, dependents)   # -> HTTP 409
 #:
-#: Exactly two kinds do that, both via ``get_service("skill").add_dependent(<kind>, <own uuid>,
-#: [skill_uuid])`` — vmcp_service.py:191 and vnfs_service.py:149. Each entry is
+#: At 0.2.1 exactly two kinds do that, both via ``get_service("skill").add_dependent(<kind>,
+#: <own uuid>, [skill_uuid])`` — ``services/vmcp_service.py:191`` and ``services/vnfs_service.py:149``
+#: in that repo. Verified by enumerating every ``add_dependent`` call at that tag; the others are
+#: skill->tool/snippet and tool->tool, none of which make a skill undeletable. Each entry here is
 #: (list path for _list, singular kind for _delete_object).
 _SKILL_DEPENDENT_KINDS = (("vmcp_servers", "vmcp_server"), ("vnfs_servers", "vnfs_server"))
 
@@ -1086,16 +1089,20 @@ def delete_skill_dependents(skill_uuid: str) -> bool:
     store (nothing listed, no-op), a store left holding some previous skill, and a
     baseline/candidate switch mid-run:
 
-    * deleting a dependent has no prerequisites of its own; neither ``vmcp_service.delete`` nor
-      ``vnfs_service.delete`` consults ``get_dependents``, so there is no recursion to worry about;
-    * each of those deletes calls ``remove_dependent`` itself, so the registration goes with the
-      object rather than lingering to block the skill anyway;
+    * deleting a dependent has no prerequisites of its own; at 0.2.1 neither
+      ``vmcp_service.delete`` nor ``vnfs_service.delete`` consults ``get_dependents``, so there is
+      no recursion to worry about;
+    * each of those deletes calls ``remove_dependent`` itself (``services/vmcp_service.py:629``,
+      ``services/vnfs_service.py:536``), so the registration goes with the object rather than
+      lingering to block the skill anyway;
     * only rows whose ``skill_uuid`` matches are touched — a vMCP server belonging to a different
       skill is left alone, since it cannot be what blocks this skill.
 
-    Returns True when every matching dependent is gone (404 counts as gone).
+    Returns the dependents it could NOT delete, as ``["<kind>/<uuid>", ...]`` — empty when every
+    matching one is gone (404 counts as gone). A list rather than a bool so the caller can name them:
+    a leftover dependent blocks the next import as surely as the one this run started with.
     """
-    ok = True
+    stuck: list[str] = []
     for list_kind, delete_kind in _SKILL_DEPENDENT_KINDS:
         for row in _list(list_kind):
             if row.get("skill_uuid") != skill_uuid:
@@ -1106,8 +1113,8 @@ def delete_skill_dependents(skill_uuid: str) -> bool:
             if _delete_object(delete_kind, uuid):
                 print(f"  · removed {delete_kind} {uuid} depending on skill {skill_uuid}")
             else:
-                ok = False
-    return ok
+                stuck.append(f"{delete_kind}/{uuid}")
+    return stuck
 
 
 def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
@@ -1130,11 +1137,13 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
 
     A missing skill (404) is success — callers always delete-then-import.
 
-    Raises RuntimeError, rather than returning False, when the store actively refuses the delete
-    (409, or any other unexpected status): those carry a reason in the response body, and a bare
-    False strips it. ``reset_store_to_skill`` reports False as "could not remove existing skill
-    <name>", which is unactionable — that exact message, with no status code and no named
-    dependent, is what made an interrupted-run failure take two days to diagnose.
+    ONE FAILURE MODE: this returns True, or raises RuntimeError carrying the reason. It never
+    returns False. Every failure here has a reason the store already told us — an HTTP status, a
+    response body naming a dependent, the uuid of an object that would not delete — and a bare bool
+    strips all of it: ``reset_store_to_skill`` could only report "could not remove existing skill
+    <name>", which is unactionable and is what made an interrupted-run failure take two days to
+    diagnose. The ``bool`` return is kept so that existing ``if not delete_skill(...)`` callers
+    stay valid; that branch is simply unreachable now.
     """
     protect = protect or Protection()
     before = protect.present_names()
@@ -1143,11 +1152,15 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
     if status == 404:
         return True
     if status != 200:
-        return False
+        raise RuntimeError(
+            f"cannot read skill {skill_name} from the store: GET /skills/{skill_name} returned "
+            f"HTTP {status}: {body.strip()[:400]}"
+            + ("  (status -1 means curl itself failed — is the store up?)" if status == -1 else ""))
     try:
         manifest = json.loads(body)
     except ValueError:
-        return False
+        raise RuntimeError(
+            f"the store returned unparseable JSON for skill {skill_name}: {body.strip()[:400]}")
 
     deletable: list[str] = []
     for tu in list(manifest.get("tool_uuids") or []):
@@ -1165,7 +1178,16 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
     # Clear the skill's dependents FIRST: the store refuses to delete a skill while anything
     # depends on it, and vMCP/vNFS servers registered against this skill are exactly that. See
     # delete_skill_dependents for why this is safe to do unconditionally.
-    deps_ok = delete_skill_dependents(manifest.get("uuid") or skill_name)
+    #
+    # No fallback to skill_name here. A dependent's skill_uuid always holds a real UUID, so
+    # matching it against a NAME could never hit anything: the cleanup would quietly do nothing and
+    # the failure would resurface one step removed, as the 409 below.
+    skill_uuid = manifest.get("uuid")
+    if not skill_uuid:
+        raise RuntimeError(
+            f"the store's manifest for skill {skill_name} has no uuid, so its dependents cannot be "
+            f"identified: {body.strip()[:400]}")
+    deps_stuck = delete_skill_dependents(skill_uuid)
 
     status, body = _curl(["-X", "DELETE", _store_url(f"/skills/{skill_name}")])
     if status == 409:
@@ -1176,25 +1198,47 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
         raise RuntimeError(
             f"the store refuses to delete skill {skill_name}: something still depends on it after "
             f"clearing {' and '.join(k for k, _ in _SKILL_DEPENDENT_KINDS)}"
-            f"{' (and some of those could not be deleted)' if not deps_ok else ''}.\n"
+            f"{' (these could not be deleted: ' + ', '.join(deps_stuck) + ')' if deps_stuck else ''}.\n"
             f"HTTP 409 from DELETE /skills/{skill_name}: {body.strip()[:400]}\n"
             "Add the dependent kind named above to _SKILL_DEPENDENT_KINDS.")
     if status not in (200, 204, 404):
         raise RuntimeError(
             f"DELETE /skills/{skill_name} returned HTTP {status}: {body.strip()[:400]}")
 
-    ok = True
-    for tu in deletable:
-        ok &= _delete_object("tool", tu)
-    for su in list(manifest.get("snippet_uuids") or []):
-        ok &= _delete_object("snippet", su)
+    # The skill itself is gone by now, so a failure here is NOT "could not remove the skill" —
+    # it is a leftover object, and the caller needs to know which one. A dependent we failed to
+    # delete above counts the same way: it will block the next import exactly as this one blocked
+    # ours, so it must not be lost just because the skill delete happened to succeed.
+    stuck: list[str] = list(deps_stuck)
+
+    # RETRY UNTIL NO PROGRESS, because tools depend on each other. A tool auto-registers a
+    # dependency on every tool it calls by bare name (tools_service.py:326 at 0.2.1), and
+    # tools_service.delete refuses while a tool has dependents (tools_service.py:672) — so deleting
+    # a skill's tools in manifest order fails whenever one wrapper calls another and the callee
+    # comes first. Retrying frees them one layer at a time without needing a topological sort; the
+    # no-progress exit is what stops a genuine cycle or a truly stuck object from looping.
+    # Snippets are NOT filtered through Protection, unlike tools: a snippet belongs to its skill,
+    # and one shared with another skill is refused by the store anyway and reported below.
+    pending = ([("tool", tu) for tu in deletable]
+               + [("snippet", su) for su in (manifest.get("snippet_uuids") or [])])
+    while pending:
+        remaining = [(kind, uuid) for kind, uuid in pending if not _delete_object(kind, uuid)]
+        if len(remaining) == len(pending):          # a pass freed nothing: cycle, or truly stuck
+            stuck += [f"{kind}/{uuid}" for kind, uuid in remaining]
+            break
+        pending = remaining
 
     after = protect.present_names()
     if before and not before.issubset(after):
         raise RuntimeError(
             f"delete_skill({skill_name}) removed protected tools: {sorted(before - after)}. "
             "The store is now inconsistent — re-run the example's setup to re-import them.")
-    return ok
+    if stuck:
+        raise RuntimeError(
+            f"skill {skill_name} was deleted, but these objects it owned could not be: "
+            f"{', '.join(stuck)}. They are now orphans — the next import mints fresh UUIDs under "
+            "the same names, so clear them before trusting the next candidate's tool set.")
+    return True
 
 
 def purge_orphans(protect: Optional[Protection] = None) -> bool:

@@ -1,6 +1,8 @@
 """Deleting a skill requires deleting whatever depends on it first.
 
-``skills_service.delete`` refuses outright while anything depends on the skill::
+The store is an external service — skillberry-store at the tag ``spa_env.STORE_REF`` pins (0.2.1),
+not this repo. There, ``skills_service.delete`` refuses outright while anything depends on the
+skill::
 
     dependents = self.handler.dependency_manager.get_dependents(uuid)
     if dependents:
@@ -45,9 +47,11 @@ class FakeStore:
     /skills/<x> returns 409 for as long as any row still references it via ``skill_uuid``.
     """
 
-    def __init__(self, *, skill=True, vmcp=(), vnfs=(), tools=()):
+    def __init__(self, *, skill=True, vmcp=(), vnfs=(), tools=(), snippets=()):
         self.skill = {"uuid": SKILL_UUID, "name": "my_skill",
-                      "tool_uuids": list(tools), "snippet_uuids": []} if skill else None
+                      "tool_uuids": list(tools),
+                      "snippet_uuids": list(snippets)} if skill else None
+        self.snippets = {sn: {"uuid": sn} for sn in snippets}
         self.vmcp = [dict(r) for r in vmcp]
         self.vnfs = [dict(r) for r in vnfs]
         self.tools = {t: {"uuid": t, "name": "tool-" + t, "tags": []} for t in tools}
@@ -91,7 +95,15 @@ class FakeStore:
         if verb == "DELETE" and path.startswith("/tools/"):
             self.tools.pop(path.rsplit("/", 1)[-1], None)
             return 204, ""
-        return 404, "unhandled"
+        if verb == "DELETE" and path.startswith("/snippets/"):
+            uuid = path.rsplit("/", 1)[-1]
+            if uuid not in self.snippets:
+                return 404, "gone"
+            del self.snippets[uuid]
+            return 204, ""
+        # Anything unmodelled must NOT look like success: _delete_object treats 404 as "already
+        # gone", so returning 404 here would let an unexercised path pass vacuously.
+        return 501, f"FakeStore does not model {verb} {path}"
 
     def install(self, spa_env, monkeypatch):
         monkeypatch.setattr(spa_env, "_curl", self.curl)
@@ -168,7 +180,7 @@ def test_a_surviving_409_names_the_dependent_instead_of_returning_false(spa_env,
     that must reach the operator.
     """
     FakeStore(vmcp=[{"uuid": "vmcp-ghost", "skill_uuid": SKILL_UUID}]).install(spa_env, monkeypatch)
-    monkeypatch.setattr(spa_env, "delete_skill_dependents", lambda _uuid: True)   # unknown kind
+    monkeypatch.setattr(spa_env, "delete_skill_dependents", lambda _uuid: [])   # unknown kind
 
     with pytest.raises(RuntimeError) as err:
         spa_env.delete_skill("my_skill")
@@ -198,7 +210,7 @@ def test_dependents_are_matched_on_skill_uuid_not_name(spa_env, monkeypatch):
     """add_dependent registers the skill's UUID, so a row without skill_uuid is not a dependent."""
     store = FakeStore(vmcp=[{"uuid": "vmcp-nolink"}]).install(spa_env, monkeypatch)
 
-    assert spa_env.delete_skill_dependents(SKILL_UUID) is True
+    assert spa_env.delete_skill_dependents(SKILL_UUID) == []
     assert store.vmcp == [{"uuid": "vmcp-nolink"}]
 
 
@@ -214,4 +226,229 @@ def test_a_failed_dependent_delete_is_reported(spa_env, monkeypatch):
 
     monkeypatch.setattr(spa_env, "_curl", stubborn)
 
-    assert spa_env.delete_skill_dependents(SKILL_UUID) is False
+    assert spa_env.delete_skill_dependents(SKILL_UUID) == ["vmcp_server/vmcp-1"], \
+        "name what could not be deleted; a bool cannot be reported to the operator"
+
+# ---------------------------------------------------------------------------
+# One failure mode: delete_skill returns True or raises with the reason
+#
+# It used to return a bare False from four different places, which reset_store_to_skill could only
+# report as "could not remove existing skill <name>" — no status, no named object. Every failure the
+# store reports comes with a reason; none of them should be thrown away.
+# ---------------------------------------------------------------------------
+
+def test_an_unreadable_manifest_raises_with_the_status(spa_env, monkeypatch):
+    store = FakeStore().install(spa_env, monkeypatch)
+    real = store.curl
+
+    def down(args, timeout=60):
+        if args[args.index("-X") + 1] == "GET" and "/skills/" in args[-1]:
+            return 503, "upstream unavailable"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", down)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "503" in str(err.value) and "upstream unavailable" in str(err.value)
+
+
+def test_curl_itself_failing_says_the_store_may_be_down(spa_env, monkeypatch):
+    """_curl returns -1 when curl cannot run at all — the commonest cause is no store."""
+    FakeStore().install(spa_env, monkeypatch)
+    monkeypatch.setattr(spa_env, "_curl", lambda args, timeout=60: (-1, ""))
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "is the store up" in str(err.value)
+
+
+def test_unparseable_json_raises_rather_than_returning_false(spa_env, monkeypatch):
+    FakeStore().install(spa_env, monkeypatch)
+    monkeypatch.setattr(spa_env, "_curl", lambda args, timeout=60: (200, "<html>nope</html>"))
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "unparseable" in str(err.value) and "nope" in str(err.value)
+
+
+def test_a_tool_that_will_not_delete_is_named_not_hidden(spa_env, monkeypatch):
+    """The skill IS gone at that point, so "could not remove the skill" would be a lie — and the
+    orphan matters: the next import mints fresh UUIDs under the same names."""
+    store = FakeStore(tools=["tool-stuck"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def stubborn(args, timeout=60):
+        if args[args.index("-X") + 1] == "DELETE" and "/tools/" in args[-1]:
+            return 500, "in use"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", stubborn)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+
+    msg = str(err.value)
+    assert "tool/tool-stuck" in msg, "name the object that could not be deleted"
+    assert "was deleted" in msg, "be clear the SKILL went away; it is the tool that did not"
+    assert store.skill is None
+
+
+def test_delete_skill_never_returns_false(spa_env, monkeypatch):
+    """The contract in one assertion: True, or an exception carrying the reason."""
+    FakeStore().install(spa_env, monkeypatch)
+    assert spa_env.delete_skill("my_skill") is True
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (PR #489) and one gap found auditing the store at 0.2.1
+# ---------------------------------------------------------------------------
+
+def test_a_dependent_that_will_not_delete_is_reported_even_if_the_skill_deletes(
+        spa_env, monkeypatch):
+    """The corner the first round of tests missed.
+
+    deps_stuck used to be read only inside the 409 branch, so a dependent that failed to delete
+    while the skill delete still succeeded left an orphan behind and delete_skill returned True.
+    Probably unreachable — a surviving BLOCKING dependent should make the skill delete 409 — but it
+    read as an oversight, and a stuck tool already raised while a stuck vMCP row did not.
+    """
+    store = FakeStore(vmcp=[{"uuid": "vmcp-1", "skill_uuid": SKILL_UUID}]).install(
+        spa_env, monkeypatch)
+    real = store.curl
+
+    def dependent_wont_die(args, timeout=60):
+        verb = args[args.index("-X") + 1]
+        if verb == "DELETE" and "/vmcp_servers/" in args[-1]:
+            return 500, "transient"          # fails, but the row stays -> skill delete would 409
+        if verb == "DELETE" and "/skills/" in args[-1]:
+            store.skill = None               # force the "skill deleted anyway" corner
+            return 204, ""
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", dependent_wont_die)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "vmcp_server/vmcp-1" in str(err.value), "the orphaned dependent must be named"
+
+
+def test_a_manifest_without_a_uuid_raises_instead_of_matching_on_the_name(spa_env, monkeypatch):
+    """`manifest.get("uuid") or skill_name` was a fallback no real store could exercise.
+
+    A dependent's skill_uuid always holds a UUID, so matching it against a NAME can never hit
+    anything: the cleanup would silently do nothing and the failure would resurface as a 409 one
+    step removed from its cause.
+    """
+    store = FakeStore().install(spa_env, monkeypatch)
+    store.skill = {"name": "my_skill", "tool_uuids": [], "snippet_uuids": []}   # no uuid
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "has no uuid" in str(err.value)
+
+
+def test_tools_that_depend_on_each_other_are_deleted_in_a_workable_order(spa_env, monkeypatch):
+    """A tool auto-registers a dependency on every tool it calls by bare name
+    (tools_service.py:326 at 0.2.1), and tools_service.delete refuses while a tool has dependents
+    (tools_service.py:672). Deleting a skill's tools in manifest order therefore fails whenever one
+    wrapper calls another and the callee comes first — so retry until a pass frees nothing.
+    """
+    store = FakeStore(tools=["callee", "caller"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def with_tool_deps(args, timeout=60):
+        # "callee" cannot go while "caller" still exists, exactly as the store would refuse it.
+        if (args[args.index("-X") + 1] == "DELETE" and args[-1].endswith("/tools/callee")
+                and "caller" in store.tools):
+            return 409, "tool callee in use by [tool:caller]"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", with_tool_deps)
+
+    assert spa_env.delete_skill("my_skill") is True, "the retry pass must free the callee"
+    assert store.tools == {}, "both tools must be gone"
+
+
+def test_a_genuine_cycle_stops_instead_of_looping(spa_env, monkeypatch):
+    """The no-progress exit. Two tools that each block the other must be reported, not spun on."""
+    store = FakeStore(tools=["a", "b"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def deadlocked(args, timeout=60):
+        if args[args.index("-X") + 1] == "DELETE" and "/tools/" in args[-1]:
+            return 409, "in use"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", deadlocked)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    msg = str(err.value)
+    assert "tool/a" in msg and "tool/b" in msg, "name every object that stayed stuck"
+
+
+# ---------------------------------------------------------------------------
+# The rest of that retry block: snippets, and more than one dependency layer
+# ---------------------------------------------------------------------------
+
+def test_snippets_go_with_the_skill_and_are_not_filtered_by_protection(spa_env, monkeypatch):
+    """Tools are filtered through Protection; snippets are deliberately not.
+
+    A snippet belongs to its skill, so there is no frozen-substrate equivalent to protect. Until now
+    no test touched snippets at all, and FakeStore did not model DELETE /snippets/ — which meant the
+    unexercised path would have "passed" on the 404-is-already-gone rule.
+    """
+    store = FakeStore(tools=["t1"], snippets=["s1", "s2"]).install(spa_env, monkeypatch)
+
+    assert spa_env.delete_skill("my_skill") is True
+    assert store.snippets == {}, "the skill's snippets must be deleted with it"
+    assert store.tools == {}
+
+
+def test_a_snippet_that_will_not_delete_is_named(spa_env, monkeypatch):
+    """The comment claims a shared snippet is "refused by the store anyway and reported below" —
+    this is the test for the reported-below half."""
+    store = FakeStore(snippets=["s-shared"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def shared(args, timeout=60):
+        if args[args.index("-X") + 1] == "DELETE" and "/snippets/" in args[-1]:
+            return 409, "snippet s-shared in use by [skill:other]"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", shared)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.delete_skill("my_skill")
+    assert "snippet/s-shared" in str(err.value)
+    assert store.skill is None, "the skill still went away; it is the snippet that did not"
+
+
+def test_a_three_deep_chain_needs_more_than_one_retry_pass(spa_env, monkeypatch):
+    """"One layer at a time" — a single retry is not enough, so prove the loop keeps going.
+
+    a is blocked by b, and b is blocked by c: c goes first, then b, then a. Manifest order is the
+    worst case (a, b, c), so a naive single retry would leave a behind.
+    """
+    store = FakeStore(tools=["a", "b", "c"]).install(spa_env, monkeypatch)
+    real = store.curl
+    blocked_by = {"a": "b", "b": "c"}
+    passes = {"n": 0}
+
+    def layered(args, timeout=60):
+        verb = args[args.index("-X") + 1]
+        url = args[-1]
+        if verb == "DELETE" and "/tools/" in url:
+            uuid = url.rsplit("/", 1)[-1]
+            blocker = blocked_by.get(uuid)
+            if blocker and blocker in store.tools:
+                passes["n"] += 1
+                return 409, f"tool {uuid} in use by [tool:{blocker}]"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", layered)
+
+    assert spa_env.delete_skill("my_skill") is True
+    assert store.tools == {}, "every tool in the chain must be freed"
+    assert passes["n"] >= 3, "a single pass cannot resolve a two-layer chain"
