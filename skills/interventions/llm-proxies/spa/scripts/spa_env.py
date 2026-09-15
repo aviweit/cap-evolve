@@ -37,7 +37,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Pins and ports
@@ -613,8 +613,9 @@ def rotate_if_large(logfile, max_bytes: Optional[int] = None,
                     backups: Optional[int] = None) -> None:
     """Rotate ``logfile`` to ``logfile.1`` (shifting older generations) once it exceeds ``max_bytes``.
 
-    PUBLIC because the tau2 arm's run.sh calls it for the environment manager, which spa_env does
-    not launch. One implementation, three callers: the store, SPA, and that run.sh branch.
+    PUBLIC because an example's ``run.sh`` calls it for a log belonging to a service this module does
+    not launch — a benchmark that ships its own environment service owns that process, and only the
+    example knows it exists. One implementation, three callers: the store, SPA, and that branch.
 
     CALLERS MUST only invoke this on a path that is about to launch a process. Rotating a log whose
     writer holds the fd leaves the process appending to a renamed (eventually deleted) inode while
@@ -1059,6 +1060,29 @@ class Protection:
         return found
 
 
+def _delete_all(pending: Sequence[tuple[str, str]]) -> list[str]:
+    """Delete every ``(kind, uuid)``, retrying until a pass frees nothing. Returns what stayed stuck.
+
+    RETRY, because store objects depend on each other. A tool auto-registers a dependency on every
+    tool it calls by bare name (``tools_service.py:326`` in skillberry-store @ 0.2.1), and
+    ``tools_service.delete`` refuses while a tool has dependents (``tools_service.py:672``) — so
+    deleting a set of tools in listing order fails whenever one calls another and the callee comes
+    first. Retrying frees them one layer at a time without needing a topological sort.
+
+    The no-progress exit is what stops a genuine cycle, or an object that is stuck for some other
+    reason, from looping forever: if a whole pass deletes nothing, nothing further can change.
+
+    Shared by delete_skill and purge_orphans deliberately. They run one after the other on the same
+    class of objects, so an ordering fix in one and not the other just moves the failure.
+    """
+    while pending:
+        remaining = [(kind, uuid) for kind, uuid in pending if not _delete_object(kind, uuid)]
+        if len(remaining) == len(pending):
+            return [f"{kind}/{uuid}" for kind, uuid in remaining]
+        pending = remaining
+    return []
+
+
 #: Object kinds that register themselves as DEPENDENTS of a skill, and therefore block its
 #: deletion. In the STORE's own code — skillberry-store @ the tag STORE_REF pins (0.2.1), not this
 #: repo — ``skills_service.delete`` refuses outright while anything depends on the skill:
@@ -1081,9 +1105,9 @@ def delete_skill_dependents(skill_uuid: str) -> list[str]:
     WHY THIS EXISTS. A skill cannot be deleted while anything depends on it, and the store creates
     a dependent every time a vMCP (or vNFS) server is registered against a skill. Those live in the
     store, not in the run, so an interrupted run leaves them behind in a store that keeps running —
-    and the next run then failed EVERY rollout with "could not remove existing skill my_skill from
-    the store" (observed: 50 tasks x 10 trials, coverage 0/50). Clearing them first is what the
-    manual "purge all store data" recovery was really achieving.
+    and the next run then failed EVERY rollout with "could not remove existing skill <name> from the
+    store" (observed on one arm: 50 tasks x 10 trials, coverage 0/50). Clearing them first is what
+    the manual "purge all store data" recovery was really achieving.
 
     Safe to call unconditionally, which is what makes it correct in all three entry paths — a clean
     store (nothing listed, no-op), a store left holding some previous skill, and a
@@ -1211,22 +1235,11 @@ def delete_skill(skill_name: str, protect: Optional[Protection] = None) -> bool:
     # ours, so it must not be lost just because the skill delete happened to succeed.
     stuck: list[str] = list(deps_stuck)
 
-    # RETRY UNTIL NO PROGRESS, because tools depend on each other. A tool auto-registers a
-    # dependency on every tool it calls by bare name (tools_service.py:326 at 0.2.1), and
-    # tools_service.delete refuses while a tool has dependents (tools_service.py:672) — so deleting
-    # a skill's tools in manifest order fails whenever one wrapper calls another and the callee
-    # comes first. Retrying frees them one layer at a time without needing a topological sort; the
-    # no-progress exit is what stops a genuine cycle or a truly stuck object from looping.
     # Snippets are NOT filtered through Protection, unlike tools: a snippet belongs to its skill,
     # and one shared with another skill is refused by the store anyway and reported below.
-    pending = ([("tool", tu) for tu in deletable]
-               + [("snippet", su) for su in (manifest.get("snippet_uuids") or [])])
-    while pending:
-        remaining = [(kind, uuid) for kind, uuid in pending if not _delete_object(kind, uuid)]
-        if len(remaining) == len(pending):          # a pass freed nothing: cycle, or truly stuck
-            stuck += [f"{kind}/{uuid}" for kind, uuid in remaining]
-            break
-        pending = remaining
+    # _delete_all retries because a skill's tools can depend on each other — see its docstring.
+    stuck += _delete_all([("tool", tu) for tu in deletable]
+                         + [("snippet", str(su)) for su in (manifest.get("snippet_uuids") or [])])
 
     after = protect.present_names()
     if before and not before.issubset(after):
@@ -1247,19 +1260,36 @@ def purge_orphans(protect: Optional[Protection] = None) -> bool:
     Call only AFTER the skill is gone: at that point any surviving unprotected tool is
     an orphan from an earlier run, and orphans are harmful — they pollute listings and
     make the store's name-based dependency resolution ambiguous for the next import.
+
+    Deletes through ``_delete_all``, for the same reason ``delete_skill`` does: orphans can depend
+    on each other exactly as a skill's own tools can, so a single pass in listing order fails
+    whenever one orphan calls another and the callee comes first. This runs one line after
+    ``delete_skill`` in ``reset_store_to_skill``, on the same class of objects — fixing the ordering
+    in one and not the other would only move the failure.
+
+    ONE FAILURE MODE, matching ``delete_skill``: returns True, or raises RuntimeError naming what
+    stayed stuck. The ``bool`` return is kept so existing ``if not purge_orphans(...)`` callers stay
+    valid; that branch is unreachable now.
     """
     protect = protect or Protection()
-    ok = True
+    pending: list[tuple[str, str]] = []
     for row in _list("tools"):
         uuid = row.get("uuid")
         if not uuid or protect.covers(row):
-            continue
-        ok &= _delete_object("tool", uuid)
+            continue                      # protected substrate -> keep
+        pending.append(("tool", str(uuid)))
     for row in _list("snippets"):
         uuid = row.get("uuid")
         if uuid:
-            ok &= _delete_object("snippet", uuid)
-    return ok
+            pending.append(("snippet", str(uuid)))
+
+    stuck = _delete_all(pending)
+    if stuck:
+        raise RuntimeError(
+            f"could not purge these leftover objects: {', '.join(stuck)}. They are orphans from an "
+            "earlier run, and they make the store's name-based dependency resolution ambiguous for "
+            "the next import — clear them before trusting the next candidate's tool set.")
+    return True
 
 
 def upload_skill(skill_dir: str | Path) -> bool:

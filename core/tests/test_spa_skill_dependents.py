@@ -35,6 +35,7 @@ SKILL_UUID = "skill-uuid-1111"
 @pytest.fixture(scope="module")
 def spa_env():
     spec = importlib.util.spec_from_file_location("spa_env_under_test", SPA_ENV)
+    assert spec and spec.loader, f"could not load {SPA_ENV}"   # also satisfies the type checker
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -75,7 +76,14 @@ class FakeStore:
             return 200, json.dumps(self.vnfs)
         if verb == "GET" and path.startswith("/tools/"):
             uuid = path.split("/tools/")[1].split("?")[0]
+            if not uuid:                                  # the LIST endpoint, used by purge_orphans
+                return 200, json.dumps(list(self.tools.values()))
             return (200, json.dumps(self.tools[uuid])) if uuid in self.tools else (404, "gone")
+        if verb == "GET" and path.startswith("/snippets/"):
+            uuid = path.split("/snippets/")[1].split("?")[0]
+            if not uuid:
+                return 200, json.dumps(list(self.snippets.values()))
+            return (200, json.dumps(self.snippets[uuid])) if uuid in self.snippets else (404, "gone")
         if verb == "DELETE" and path.startswith("/vmcp_servers/"):
             uuid = path.rsplit("/", 1)[-1]
             self.vmcp = [r for r in self.vmcp if r.get("uuid") != uuid]
@@ -452,3 +460,62 @@ def test_a_three_deep_chain_needs_more_than_one_retry_pass(spa_env, monkeypatch)
     assert spa_env.delete_skill("my_skill") is True
     assert store.tools == {}, "every tool in the chain must be freed"
     assert passes["n"] >= 3, "a single pass cannot resolve a two-layer chain"
+
+
+# ---------------------------------------------------------------------------
+# purge_orphans runs one line after delete_skill in reset_store_to_skill, on the same class of
+# objects. It had the single-pass bug delete_skill was just fixed for, so an ordering fix in one and
+# not the other would only move the failure.
+# ---------------------------------------------------------------------------
+
+def test_purge_orphans_retries_when_orphans_depend_on_each_other(spa_env, monkeypatch):
+    """Same chain as the skill's own tools: b blocks a, so listing order alone is not enough."""
+    store = FakeStore(skill=False, tools=["a", "b"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def layered(args, timeout=60):
+        url = args[-1]
+        if (args[args.index("-X") + 1] == "DELETE" and url.endswith("/tools/a")
+                and "b" in store.tools):
+            return 409, "tool a in use by [tool:b]"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", layered)
+
+    assert spa_env.purge_orphans() is True
+    assert store.tools == {}, "the retry pass must free the blocked orphan"
+
+
+def test_purge_orphans_names_what_it_could_not_delete(spa_env, monkeypatch):
+    """It used to return a bare False, which reset_store_to_skill reported as "could not purge
+    leftover unprotected tools/snippets" — no names, the same unactionable message this PR is about.
+    """
+    store = FakeStore(skill=False, tools=["wedged"]).install(spa_env, monkeypatch)
+    real = store.curl
+
+    def wedged(args, timeout=60):
+        if args[args.index("-X") + 1] == "DELETE" and "/tools/" in args[-1]:
+            return 409, "in use"
+        return real(args, timeout)
+
+    monkeypatch.setattr(spa_env, "_curl", wedged)
+
+    with pytest.raises(RuntimeError) as err:
+        spa_env.purge_orphans()
+    assert "tool/wedged" in str(err.value)
+
+
+def test_purge_orphans_still_keeps_the_protected_substrate(spa_env, monkeypatch):
+    """The frozen primitives must survive every redeploy — unchanged behaviour, now pinned."""
+    store = FakeStore(skill=False, tools=["wrapper", "primitive"]).install(spa_env, monkeypatch)
+    store.tools["primitive"]["tags"] = ["frozen"]
+
+    assert spa_env.purge_orphans(spa_env.Protection(tags=("frozen",))) is True
+    assert list(store.tools) == ["primitive"], "protected tools are kept, orphans go"
+
+
+def test_purge_orphans_clears_snippets_too(spa_env, monkeypatch):
+    store = FakeStore(skill=False, tools=["t"], snippets=["s"]).install(spa_env, monkeypatch)
+
+    assert spa_env.purge_orphans() is True
+    assert (store.tools, store.snippets) == ({}, {})
