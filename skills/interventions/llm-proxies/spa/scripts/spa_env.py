@@ -1075,7 +1075,7 @@ class Protection:
 _SKILL_DEPENDENT_KINDS = (("vmcp_servers", "vmcp_server"), ("vnfs_servers", "vnfs_server"))
 
 
-def delete_skill_dependents(skill_uuid: str) -> bool:
+def delete_skill_dependents(skill_uuid: str) -> list[str]:
     """Delete every store object that depends on ``skill_uuid``, so the skill becomes deletable.
 
     WHY THIS EXISTS. A skill cannot be deleted while anything depends on it, and the store creates
