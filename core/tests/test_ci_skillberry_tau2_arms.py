@@ -201,6 +201,16 @@ def test_the_spa_arm_serialises_rollouts():
     assert 'TAU2_AGENT_MODEL:-ibm/skillberry-local' in spa, "spa delivery needs the sentinel"
 
 
+def test_native_sims_are_on_for_the_tau2_legs_and_uploaded():
+    """A rollout that fails before scoring is only readable from its raw trajectory."""
+    sh = RUN_SUITE.read_text(encoding="utf-8")
+    assert "tau2|skillberry_tau2_*) _NATIVE_SIMS_DEFAULT=1" in sh
+    assert "*)                      _NATIVE_SIMS_DEFAULT=0" in sh, "other benches stay off"
+    assert 'CAPEVOLVE_NATIVE_SIMS:-$_NATIVE_SIMS_DEFAULT' in sh, "env must still win"
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert "run_suite/native_sims/**" in wf, "sims live outside the uploaded output dir"
+
+
 def test_the_arms_use_their_own_venv():
     """Both arms install tau2 from skillberry-benchmarks; the `tau2` leg installs the public
     checkout. Same package name, two sources, both editable — one venv means whichever ran last

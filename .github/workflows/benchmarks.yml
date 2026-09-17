@@ -455,7 +455,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmarks-${{ matrix.tier }}-${{ matrix.bench }}
-          path: ci/benchmarks/.work/suite_${{ matrix.tier }}_${{ matrix.bench }}/**
+          # native_sims lives in the run dir, not the output dir, and is the only place a
+          # failed tau2 rollout is readable. Absent for benches that write none.
+          path: |
+            ci/benchmarks/.work/suite_${{ matrix.tier }}_${{ matrix.bench }}/**
+            ci/benchmarks/.work/suite_${{ matrix.tier }}_${{ matrix.bench }}_proj/.capevolve/run_suite/native_sims/**
           if-no-files-found: warn
 
       - name: Comment results on the PR

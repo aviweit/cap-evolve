@@ -30,10 +30,14 @@ AGENT_MODEL="${AGENT_MODEL:-aws/gpt-oss-120b}"
 NUM_TRIALS="${NUM_TRIALS:-10}"
 OPTIMIZER_MODEL="${OPTIMIZER_MODEL:-claude-opus-4-8}"
 GATE_K_SE="${GATE_K_SE:-1.0}"
-# Raw native trajectories (today: tau2's own results.json, via adapter._sim_save_path) are
-# OFF here. They are a reading aid for a human working a run locally, and CI is not that
-# reader.
-export CAPEVOLVE_NATIVE_SIMS="${CAPEVOLVE_NATIVE_SIMS:-0}"
+# Raw native trajectories (tau2's own results.json, via adapter._sim_save_path). ON for the
+# tau2 legs, whose adapters write them and where a failed rollout is only readable from the
+# trajectory; no other adapter produces them. Env wins, so a dispatch can still force either way.
+case "$BENCH" in
+  tau2|skillberry_tau2_*) _NATIVE_SIMS_DEFAULT=1 ;;
+  *)                      _NATIVE_SIMS_DEFAULT=0 ;;
+esac
+export CAPEVOLVE_NATIVE_SIMS="${CAPEVOLVE_NATIVE_SIMS:-$_NATIVE_SIMS_DEFAULT}"
 
 # ---- algorithm selection ----------------------------------------------------
 # ALGORITHM is the workflow's `algorithm` input. It names the algorithm AND, for
