@@ -96,10 +96,11 @@ the only difference is how a candidate reaches the agent:
 | services started by the run | none | tau2 Environment Manager (`:8004`) + Store + Proxy-Agent, torn down on exit |
 | rollout concurrency | 10 | **1** — the proxy binds one skill at a time, so parallel candidates would serve the wrong tools |
 
-They are separate **benchmark** options rather than one option plus an `arm` input because
-`workflow_dispatch` allows at most **10 inputs and that list is full** — the same constraint
-that makes `algorithm` a single packed token. Being separate legs also means `benchmark=all`
-measures both arms in one dispatch, which is the comparison they exist for.
+Pick them with **`benchmark: tau2-custom`** plus **`intervention: direct | spa`**, which maps
+straight onto the spec key of the same name. `intervention` is ignored by every other benchmark —
+they all run direct. Internally each arm stays its own leg (`skillberry_tau2_direct` /
+`skillberry_tau2_spa`) so it keeps its own tier task lists, history row and concurrency group, and
+`benchmark=all` sweeps both regardless of `intervention`.
 
 Their rewards are comparable **to each other**, and *not* to the plain `tau2` leg: that one
 also optimizes `policy.md` and installs the public `sierra-research/tau2-bench`, while the arms
@@ -171,8 +172,7 @@ has a **Type** column + filter.
 
 #### The `algorithm` input
 
-One token names the algorithm and, for hill-climb, its focus schedule — because
-`workflow_dispatch` caps a workflow at 10 inputs and that list is full.
+One token names the algorithm and, for hill-climb, its focus schedule.
 
   | value | what runs |
   |---|---|

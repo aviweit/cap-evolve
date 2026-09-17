@@ -41,19 +41,34 @@ def test_both_arms_are_dispatchable_and_planned():
     wf = WORKFLOW.read_text(encoding="utf-8")
     options = re.search(r"options: \[all, tau2,(.*?)\]", wf, re.S).group(1)
     benches = re.search(r"BENCHES = \[(.*?)\]", wf, re.S).group(1)
+    assert "tau2-custom" in options, "the picker must offer tau2-custom"
     for arm in ARMS:
-        assert arm in options, f"{arm} missing from the benchmark picker"
+        assert arm not in options, f"{arm} is an internal leg, not a picker option"
         assert arm in benches, f"{arm} missing from the planner's BENCHES"
 
 
-def test_the_dispatch_form_stays_within_githubs_ten_input_ceiling():
-    """workflow_dispatch allows at most 10 inputs and the list is FULL. That is why the arm is
-    packed into the `benchmark` token instead of becoming an `arm` input: an 11th input makes
-    the whole workflow file invalid, so this is not a style preference."""
+def test_the_intervention_input_offers_exactly_the_spec_values():
+    """The input feeds the spec key of the same name, so its values must be core's."""
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    block = wf.split("      intervention:", 1)[1].split("      tier:", 1)[0]
+    assert "options: [direct, spa]" in block
+    assert "default: direct" in block, "every other benchmark runs direct"
+
+
+def test_the_dispatch_form_stays_within_githubs_input_ceiling():
+    """GitHub allows 25. An earlier note in this repo said 10, which is why the arm used to be
+    packed into the benchmark token."""
     wf = WORKFLOW.read_text(encoding="utf-8")
     inputs_block = wf.split("    inputs:", 1)[1].split("  pull_request:", 1)[0]
     names = re.findall(r"^      ([a-z_]+):$", inputs_block, re.M)
-    assert len(names) <= 10, f"{len(names)} dispatch inputs: {names}"
+    assert len(names) <= 25, f"{len(names)} dispatch inputs: {names}"
+
+
+def test_tau2_custom_resolves_to_an_arm_through_the_intervention_input():
+    wf = WORKFLOW.read_text(encoding="utf-8")
+    assert 'INTERVENTION_SEL: ${{ github.event.inputs.intervention' in wf, "planner needs it"
+    assert '"direct": "skillberry_tau2_direct", "spa": "skillberry_tau2_spa"' in wf
+    assert 'bench_sel = ARM_OF.get(intervention, ARM_OF["direct"])' in wf
 
 
 # ---- the tier task lists ---------------------------------------------------------
