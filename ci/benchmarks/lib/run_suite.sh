@@ -287,12 +287,11 @@ runner_repo_path: \"$SB_DIR\""
       # them but deliberately did not start them (starting on the operator's behalf during
       # provisioning is the anti-pattern the intervention skill calls out).
       #
-      # Concurrency is 1, not the direct arm's 10. The Proxy-Agent binds ONE skill by name at
-      # start, so parallel rollouts of DIFFERENT candidates through one proxy would serve the
-      # wrong candidate's tools; the arm's own run.sh defaults to 4 only because a single
-      # candidate is in flight at a time there. Correctness over wall-clock: a spa leg is slow.
+      # Concurrency 4 — the adapter's own default (adapter.py) and what the arm's run.sh uses.
+      # Only ONE candidate is in flight per evaluation, so parallel rollouts all want the same
+      # skill the proxy is already bound to.
       export TAU2_AGENT_MODEL="${TAU2_AGENT_MODEL:-ibm/skillberry-local}"   # the SPA sentinel
-      export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-1}"
+      export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-4}"
       # What the proxy calls upstream once the sentinel reaches it, and what runner_model()
       # reports. Comes from the repo-root .env locally; CI has none, and unset falls back to
       # gateway.DEFAULT_GATEWAY_MODEL, so a dispatched agent_model would be silently ignored.

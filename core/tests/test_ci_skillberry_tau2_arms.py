@@ -207,12 +207,15 @@ def test_each_arms_extra_yaml_parses_and_declares_its_delivery(arm, expect):
         assert "primitive_tools/*" in parsed["protected_paths"]
 
 
-def test_the_spa_arm_serialises_rollouts():
-    """The Proxy-Agent binds ONE skill by name at start, so concurrent rollouts of different
-    candidates through one proxy would serve the wrong candidate's tools."""
+def test_the_spa_arm_matches_the_adapters_own_concurrency():
+    """The CI leg must not invent a different value from the one the arm runs with locally."""
     case = _arm_case()
     spa = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
-    assert 'TAU2_MAX_CONCURRENCY:-1' in spa, "the spa arm must not run rollouts in parallel"
+    adapter = (REPO / "examples/skillberry_benchmarks_tau2_airline/spa/adapters/adapter.py"
+               ).read_text(encoding="utf-8")
+    default = re.search(r'TAU2_MAX_CONCURRENCY", "(\d+)"', adapter).group(1)
+    assert f"TAU2_MAX_CONCURRENCY:-{default}" in spa, (
+        f"adapter defaults to {default}; the spa leg must use the same")
     assert 'TAU2_AGENT_MODEL:-ibm/skillberry-local' in spa, "spa delivery needs the sentinel"
 
 
