@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-ARM = REPO / "examples/skillberry_benchmarks_tau2_airline/spa/adapters"
+ARM = REPO / "examples/tau2_custom/spa/adapters"
 SKILL_REL = Path("skills/interventions/llm-proxies/spa/scripts")
 
 
@@ -58,14 +58,14 @@ def test_the_local_layout_still_resolves_without_the_env_var(tmp_path, monkeypat
 
 def test_the_ci_layout_resolves_through_the_env_var(tmp_path, monkeypatch):
     root, adapters = _fake_repo(
-        tmp_path, "ci/benchmarks/.work/suite_smoke_skillberry_tau2_spa_proj/.capevolve/project")
+        tmp_path, "ci/benchmarks/.work/suite_smoke_tau2_custom_spa_proj/.capevolve/project")
     mod = _load(adapters, monkeypatch, skills_dir=root / "skills")
     assert Path(mod._spa_env().__file__) == root / SKILL_REL / "spa_env.py"
 
 
 def test_the_ci_layout_fails_without_the_env_var(tmp_path, monkeypatch):
     _, adapters = _fake_repo(
-        tmp_path, "ci/benchmarks/.work/suite_smoke_skillberry_tau2_spa_proj/.capevolve/project")
+        tmp_path, "ci/benchmarks/.work/suite_smoke_tau2_custom_spa_proj/.capevolve/project")
     mod = _load(adapters, monkeypatch)
     with pytest.raises(RuntimeError, match="SPA intervention library not found"):
         mod._spa_env()

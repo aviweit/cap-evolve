@@ -1,6 +1,6 @@
-"""The two skillberry_benchmarks_tau2_airline DELIVERY ARMS as CI benchmark legs.
+"""The two tau2_custom DELIVERY ARMS as CI benchmark legs.
 
-`skillberry_tau2_direct` and `skillberry_tau2_spa` run the SAME 50 tau2 airline tasks by two
+`tau2_custom_direct` and `tau2_custom_spa` run the SAME 50 tau2 airline tasks by two
 different delivery routes: in the runner's own process, and through the Skillberry Store +
 Proxy-Agent. What makes them worth having in CI is that the two numbers are comparable to each
 other — so the things worth pinning are the ones that would silently break that comparison, or
@@ -21,14 +21,19 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github/workflows/benchmarks.yml"
 RUN_SUITE = REPO / "ci/benchmarks/lib/run_suite.sh"
 CI_SETUP = REPO / "ci/benchmarks/lib/ci_setup.sh"
-ARMS = ("skillberry_tau2_direct", "skillberry_tau2_spa")
+ARMS = ("tau2_custom_direct", "tau2_custom_spa")
+
+
+def tier_dir(arm: str, tier: str) -> Path:
+    """Both arms are one benchmark on disk: ci/benchmarks/tau2_custom/<arm>/<tier>/."""
+    return REPO / "ci/benchmarks/tau2_custom" / arm.replace("tau2_custom_", "") / tier
 TIERS = ("smoke", "integration", "full")
 
 
 def _arm_case() -> str:
     """The run_suite.sh case body shared by both arms."""
     sh = RUN_SUITE.read_text(encoding="utf-8")
-    head = "  skillberry_tau2_direct|skillberry_tau2_spa)"
+    head = "  tau2_custom_direct|tau2_custom_spa)"
     assert head in sh, "the arms' case block is gone from run_suite.sh"
     return sh.split(head, 1)[1].split("\n  swebench)", 1)[0]
 
@@ -67,7 +72,7 @@ def test_the_dispatch_form_stays_within_githubs_input_ceiling():
 def test_tau2_custom_resolves_to_an_arm_through_the_intervention_input():
     wf = WORKFLOW.read_text(encoding="utf-8")
     assert 'INTERVENTION_SEL: ${{ github.event.inputs.intervention' in wf, "planner needs it"
-    assert '"direct": "skillberry_tau2_direct", "spa": "skillberry_tau2_spa"' in wf
+    assert '"direct": "tau2_custom_direct", "spa": "tau2_custom_spa"' in wf
     assert 'bench_sel = ARM_OF.get(intervention, ARM_OF["direct"])' in wf
 
 
@@ -78,7 +83,7 @@ def test_tau2_custom_resolves_to_an_arm_through_the_intervention_input():
 def test_every_tier_ships_a_task_list(arm, tier):
     """A tier with no tasks.json is not an error — `plan` silently drops the leg. So a missing
     file means "this tier quietly does not exist", which is exactly the failure to catch here."""
-    p = REPO / "ci/benchmarks" / arm / tier / "tasks.json"
+    p = tier_dir(arm, tier) / "tasks.json"
     assert p.is_file(), f"{p} missing — the {tier} leg would never be created"
     rows = json.loads(p.read_text(encoding="utf-8"))
     assert rows and all(r.get("id") for r in rows)
@@ -89,18 +94,18 @@ def test_the_two_arms_run_identical_task_ids(tier):
     """The whole point of two arms is a like-for-like comparison. Different task ids would make
     the two rewards incomparable for a reason that has nothing to do with delivery."""
     ids = {arm: [r["id"] for r in json.loads(
-        (REPO / "ci/benchmarks" / arm / tier / "tasks.json").read_text(encoding="utf-8"))]
-        for arm in ARMS}
+        (tier_dir(arm, tier) / "tasks.json").read_text(encoding="utf-8"))] for arm in ARMS}
     assert ids[ARMS[0]] == ids[ARMS[1]], f"{tier}: arms disagree on task ids"
 
 
 def test_smoke_matches_the_plain_tau2_leg():
     """Sharing tau2/smoke's ids makes tau2 / direct / spa three readings of one sample rather
     than three different samples. Deliberate; change it and say so."""
-    def ids(bench):
-        return [r["id"] for r in json.loads(
-            (REPO / "ci/benchmarks" / bench / "smoke/tasks.json").read_text(encoding="utf-8"))]
-    assert ids(ARMS[0]) == ids("tau2")
+    arm = [r["id"] for r in json.loads(
+        (tier_dir(ARMS[0], "smoke") / "tasks.json").read_text(encoding="utf-8"))]
+    plain = [r["id"] for r in json.loads(
+        (REPO / "ci/benchmarks/tau2/smoke/tasks.json").read_text(encoding="utf-8"))]
+    assert arm == plain
 
 
 @pytest.mark.parametrize("arm", ARMS)
@@ -109,7 +114,7 @@ def test_the_recorded_agent_is_a_gateway_model_not_the_spa_sentinel(arm):
     turn through the Proxy-Agent, which then calls a real model. Recording it as a tier's
     `agent` would make sync_models.py report an unserved agent on every scheduled pass."""
     for tier in TIERS:
-        rows = json.loads((REPO / "ci/benchmarks" / arm / tier / "tasks.json").read_text())
+        rows = json.loads((tier_dir(arm, tier) / "tasks.json").read_text())
         agents = {r.get("agent") for r in rows}
         assert "ibm/skillberry-local" not in agents
         assert agents == {"aws/gpt-oss-120b"}, agents
@@ -121,12 +126,12 @@ def test_the_adapter_is_sourced_from_the_example_not_duplicated_into_templates()
     """A copy under templates/adapters/ would duplicate ~700 lines per arm and be free to drift
     from the example a reviewer actually reads."""
     case = _arm_case()
-    assert "examples/skillberry_benchmarks_tau2_airline/$ARM" in case
+    assert "examples/tau2_custom/$ARM" in case
     assert "$TPL/" not in case, "the arms must not source an adapter from templates/adapters/"
     for tpl in (REPO / "templates/adapters").iterdir():
         assert "skillberry" not in tpl.name.lower(), (
             f"{tpl.name} duplicates an arm's adapter into templates/ — source it from "
-            "examples/skillberry_benchmarks_tau2_airline/<arm>/ instead")
+            "examples/tau2_custom/<arm>/ instead")
 
 
 def test_both_arms_land_their_own_optimizer_instructions():
@@ -137,7 +142,7 @@ def test_both_arms_land_their_own_optimizer_instructions():
     assert 'cp "$ARM_DIR/optimizer/INSTRUCTIONS.md" "$PROJ/optimizer/"' in case
     assert 'OPT_INSTRUCTIONS="$PROJ/optimizer/INSTRUCTIONS.md"' in case
     for arm in ARMS:
-        d = REPO / "examples/skillberry_benchmarks_tau2_airline" / arm.split("_")[-1]
+        d = REPO / "examples/tau2_custom" / arm.split("_")[-1]
         assert (d / "optimizer/INSTRUCTIONS.md").is_file(), f"{d} ships no INSTRUCTIONS.md"
 
 
@@ -211,7 +216,7 @@ def test_the_spa_arm_matches_the_adapters_own_concurrency():
     """The CI leg must not invent a different value from the one the arm runs with locally."""
     case = _arm_case()
     spa = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
-    adapter = (REPO / "examples/skillberry_benchmarks_tau2_airline/spa/adapters/adapter.py"
+    adapter = (REPO / "examples/tau2_custom/spa/adapters/adapter.py"
                ).read_text(encoding="utf-8")
     default = re.search(r'TAU2_MAX_CONCURRENCY", "(\d+)"', adapter).group(1)
     assert f"TAU2_MAX_CONCURRENCY:-{default}" in spa, (
@@ -223,7 +228,7 @@ def test_native_sims_are_on_for_the_tau2_legs():
     """A rollout that fails before scoring is only readable from its raw trajectory. Written to the
     run dir only; not uploaded."""
     sh = RUN_SUITE.read_text(encoding="utf-8")
-    assert "tau2|skillberry_tau2_*) _NATIVE_SIMS_DEFAULT=1" in sh
+    assert "tau2|tau2_custom_*) _NATIVE_SIMS_DEFAULT=1" in sh
     assert "*)                      _NATIVE_SIMS_DEFAULT=0" in sh, "other benches stay off"
     assert 'CAPEVOLVE_NATIVE_SIMS:-$_NATIVE_SIMS_DEFAULT' in sh, "env must still win"
 
@@ -234,7 +239,7 @@ def test_the_arms_use_their_own_venv():
     wins, and the loser fails with a missing domain rather than an install error."""
     setup = CI_SETUP.read_text(encoding="utf-8")
     head = setup.split("case \"$BENCH\" in", 1)[1].split("esac", 1)[0]
-    assert 'skillberry_tau2_*) VENV="$CACHE/venv-skillberry-tau2"' in head, (
+    assert 'tau2_custom_*) VENV="$CACHE/venv-skillberry-tau2"' in head, (
         "the arms must not share the venv the tau2 leg installs its own tau2 into")
     assert 'VENV="$CACHE/venv"' in head, "every other bench keeps the shared venv"
 
@@ -310,7 +315,7 @@ def test_the_spa_arm_reads_service_logs_and_never_writes_them():
         assert f"spa_env.{name}" in spa, f"tail capture should source {name} from spa_env"
 
     setup = CI_SETUP.read_text(encoding="utf-8")
-    arm_case = setup.split("  skillberry_tau2_direct|skillberry_tau2_spa)", 1)[1] \
+    arm_case = setup.split("  tau2_custom_direct|tau2_custom_spa)", 1)[1] \
                     .split("\n  skillsbench)", 1)[0]
     assert 'export SPA_VENDOR_DIR="$CACHE/spa-vendor"' in arm_case, (
         "the stack must be provisioned into the cache, not the checkout — actions/checkout "
@@ -345,7 +350,7 @@ def test_the_arms_install_the_pinned_skillberry_build_not_public_tau2():
     `airline_skillberry` domain the spa arm needs nor the [skillberry] extra. ONE build for
     both arms is what keeps direct-vs-spa meaningful."""
     sh = CI_SETUP.read_text(encoding="utf-8")
-    case = sh.split("  skillberry_tau2_direct|skillberry_tau2_spa)", 1)[1].split("\n  skillsbench)", 1)[0]
+    case = sh.split("  tau2_custom_direct|tau2_custom_spa)", 1)[1].split("\n  skillsbench)", 1)[0]
     assert "skillberry-ai/skillberry-benchmarks" in case
     assert "tau2/tau2-bench[skillberry]" in case
     # CODE only: the comment above the case deliberately names sierra-research to say why the
@@ -360,7 +365,7 @@ def test_the_ci_pin_matches_the_examples_own_pin():
     sh = CI_SETUP.read_text(encoding="utf-8")
     ci_ref = re.search(r'BENCH_REF="\$\{BENCH_REF:-([0-9a-f]{40})\}"', sh).group(1)
     for arm in ("direct", "spa"):
-        setup = (REPO / "examples/skillberry_benchmarks_tau2_airline" / arm / "setup.sh"
+        setup = (REPO / "examples/tau2_custom" / arm / "setup.sh"
                  ).read_text(encoding="utf-8")
         arm_ref = re.search(r'BENCH_REF="\$\{BENCH_REF:-([0-9a-f]{40})\}"', setup).group(1)
         assert arm_ref == ci_ref, f"{arm}/setup.sh pins {arm_ref}, ci_setup.sh pins {ci_ref}"
@@ -395,8 +400,8 @@ def test_the_integration_workflow_still_defaults_to_tau2():
 
 def test_only_the_spa_arm_provisions_the_skillberry_stack():
     sh = CI_SETUP.read_text(encoding="utf-8")
-    case = sh.split("  skillberry_tau2_direct|skillberry_tau2_spa)", 1)[1].split("\n  skillsbench)", 1)[0]
-    assert 'if [ "$BENCH" = "skillberry_tau2_spa" ]; then' in case
+    case = sh.split("  tau2_custom_direct|tau2_custom_spa)", 1)[1].split("\n  skillsbench)", 1)[0]
+    assert 'if [ "$BENCH" = "tau2_custom_spa" ]; then' in case
     assert "spa_env.provision()" in case
     # PROVISION, never start: starting during setup is the anti-pattern the intervention skill
     # calls out, and the arm's own setup.sh is careful about the same line.

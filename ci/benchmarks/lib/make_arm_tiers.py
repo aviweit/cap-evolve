@@ -1,4 +1,4 @@
-"""Generate the tier task lists for the two skillberry_benchmarks_tau2_airline arms.
+"""Generate the tier task lists for the two tau2_custom arms.
 
 Run once from the repo root; committed output is what CI reads. Kept as a script rather than
 hand-written JSON so the two arms can never drift from each other — a direct-vs-spa
@@ -34,14 +34,14 @@ TIERS = {
     "integration": (INTEGRATION, "integration"),
     "full": (FULL, "full"),
 }
-ARMS = ("skillberry_tau2_direct", "skillberry_tau2_spa")
+ARMS = ("tau2_custom_direct", "tau2_custom_spa")
 
 
 def main() -> None:
     root = pathlib.Path(__file__).resolve().parents[1]  # ci/benchmarks
     for arm in ARMS:
         for tier, (ids, tag) in TIERS.items():
-            d = root / arm / tier
+            d = root / "tau2_custom" / arm.replace("tau2_custom_", "") / tier
             d.mkdir(parents=True, exist_ok=True)
             rows = [{"id": i, "tag": tag, "agent": AGENT} for i in ids]
             (d / "tasks.json").write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")

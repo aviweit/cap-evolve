@@ -191,18 +191,20 @@ jobs:
           # tier is a first-class dimension. full runs the whole/representative benchmark
           # (frozen baselines under <bench>/full/); it no-ops until that tier is populated.
           TIERS = ["smoke", "pilot", "full"]
-          # skillberry_tau2_direct / _spa are the DELIVERY ARMS of the tau2 airline benchmark:
+          # tau2_custom_direct / _spa are the DELIVERY ARMS of the tau2 airline benchmark:
           # same tasks and tiers, candidate delivered in-process versus through the Skillberry
           # Store + Proxy-Agent. They stay separate legs so each keeps its own tier task lists,
           # its own history row and its own concurrency group.
           BENCHES = ["tau2", "swebench", "skillsbench", "spreadsheetbench", "rfe-creator",
-                     "skillberry_tau2_direct", "skillberry_tau2_spa"]
+                     "tau2_custom_direct", "tau2_custom_spa"]
 
           # `tau2-custom` is the picker's name for "the arms"; `intervention` chooses which one.
           # A benchmark token is what the rest of the pipeline keys off — tasks.json paths, the
           # work dirs, the history rows — so resolve it here, once.
           CUSTOM = "tau2-custom"
-          ARM_OF = {"direct": "skillberry_tau2_direct", "spa": "skillberry_tau2_spa"}
+          ARM_OF = {"direct": "tau2_custom_direct", "spa": "tau2_custom_spa"}
+          # Both arms are one benchmark on disk: ci/benchmarks/tau2_custom/<arm>/<tier>/.
+          BENCH_DIR = {v: "tau2_custom/" + k for k, v in ARM_OF.items()}
           # `all` sweeps both arms regardless of `intervention`: it means every leg, and the two
           # arms are the comparison they exist for.
 
@@ -252,7 +254,7 @@ jobs:
                   # dispatch into a no-op that still reports success. Only trust the filter
                   # when there is a tree to look at.
                   if run and tree_present and not os.path.isfile(
-                          f"ci/benchmarks/{bench}/{tier}/tasks.json"):
+                          f"ci/benchmarks/{BENCH_DIR.get(bench, bench)}/{tier}/tasks.json"):
                       print(f"skip {tier}/{bench}: no tasks.json for that tier",
                             file=sys.stderr, flush=True)
                       run = False
@@ -403,7 +405,9 @@ jobs:
       - name: Assert the suite run completed
         if: always()
         run: |
-          tasks="ci/benchmarks/${{ matrix.bench }}/${{ matrix.tier }}/tasks.json"
+          bench_dir="${{ matrix.bench }}"
+          case "$bench_dir" in tau2_custom_*) bench_dir="tau2_custom/${bench_dir#tau2_custom_}" ;; esac
+          tasks="ci/benchmarks/$bench_dir/${{ matrix.tier }}/tasks.json"
           if [ ! -f "$tasks" ]; then
             echo "no tasks.json for ${{ matrix.tier }}/${{ matrix.bench }} — nothing to assert"
             exit 0
@@ -432,7 +436,9 @@ jobs:
           # SB_* flags live in the tier's committed overrides.env, which only run_suite.sh
           # sources — so resolve them here too, or the disclosure field below would always read
           # as "not warm" even on a warm-started run. An env var still wins over the file.
-          ov="$GITHUB_WORKSPACE/ci/benchmarks/${{ matrix.bench }}/${{ matrix.tier }}/overrides.env"
+          ov_dir="${{ matrix.bench }}"
+          case "$ov_dir" in tau2_custom_*) ov_dir="tau2_custom/${ov_dir#tau2_custom_}" ;; esac
+          ov="$GITHUB_WORKSPACE/ci/benchmarks/$ov_dir/${{ matrix.tier }}/overrides.env"
           warm_file=$(sed -n 's/^[[:space:]]*SB_WARM_SEED=\([01]\).*/\1/p' "$ov" 2>/dev/null | tail -1)
           if [ "${SB_WARM_SEED:-${warm_file:-0}}" = "1" ]; then warm_json=true; else warm_json=false; fi
           # Emit both free-form fields as JSON *string literals*. Shell quoting alone is not

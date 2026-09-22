@@ -218,7 +218,7 @@ def _yaml_block() -> str:
     """Lift the spec-rendering block too — it turns those variables into capevolve.yaml."""
     src = RUN_SUITE.read_text(encoding="utf-8")
     start = src.index("# The algorithm block above chose the skill")
-    end = src.index('BASE="$REPO/ci/benchmarks/$BENCH/$TIER"', start)
+    end = src.index('BASE="$REPO/ci/benchmarks/$BENCH_DIR/$TIER"', start)
     return src[start:end]
 
 

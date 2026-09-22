@@ -15,7 +15,7 @@ CACHE="${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}"
 # in one venv whichever ran last wins, and the loser fails with a missing domain rather than an
 # install error. Sequencing on a single runner hides it; a second runner would not.
 case "$BENCH" in
-  skillberry_tau2_*) VENV="$CACHE/venv-skillberry-tau2" ;;
+  tau2_custom_*) VENV="$CACHE/venv-skillberry-tau2" ;;
   *)                 VENV="$CACHE/venv" ;;
 esac
 CAPEVOLVE_PY="$VENV/bin/python"
@@ -153,7 +153,7 @@ case "$BENCH" in
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"
     uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$CACHE/tau2-bench" ;;
-  skillberry_tau2_direct|skillberry_tau2_spa)
+  tau2_custom_direct|tau2_custom_spa)
     # A DIFFERENT tau2 build from the `tau2` leg above. Both arms are onboarded against
     # skillberry-ai/skillberry-benchmarks at a PINNED commit. ONE build for both arms is what keeps
     # a direct-vs-spa comparison meaningful;
@@ -180,7 +180,7 @@ case "$BENCH" in
     # arms' committed specs use a project-relative '../../vendor/skillberry-benchmarks', which
     # would resolve to nothing under ci/benchmarks/.work/.
     echo "skillberry-benchmarks @ $(git -C "$SB_DIR" rev-parse HEAD)"
-    if [ "$BENCH" = "skillberry_tau2_spa" ]; then
+    if [ "$BENCH" = "tau2_custom_spa" ]; then
       # Put the stack's clones in the CACHE, not the checkout. spa_env defaults its vendor dir
       # to <repo>/vendor, and actions/checkout wipes untracked files in the workspace — so the
       # default would re-clone and re-install BOTH services on every single run (minutes each),

@@ -49,7 +49,7 @@ ADAPTER = REPO / "templates" / "adapters" / "tau2_bench" / "adapter.py"
 #: each ships as ONE self-contained file copied into a project's ``adapters/`` — so the
 #: alignment is held by the test below rather than by a shared import.
 #:
-#: The two ``skillberry_benchmarks_tau2_airline`` arms do not exist on ``main`` yet — they
+#: The two ``tau2_custom`` arms do not exist on ``main`` yet — they
 #: land with PR #424 — so the check SKIPS a path that is absent rather than failing on it.
 #: Listing them anyway is the point: the guard widens by itself the moment #424 merges,
 #: with no follow-up edit to remember, and this tuple stays byte-identical to the one on
@@ -58,8 +58,8 @@ ADAPTER = REPO / "templates" / "adapters" / "tau2_bench" / "adapter.py"
 TAU2_ADAPTERS = (
     REPO / "templates" / "adapters" / "tau2_bench" / "adapter.py",
     REPO / "examples" / "tau2_airline" / "adapters" / "adapter.py",
-    REPO / "examples" / "skillberry_benchmarks_tau2_airline" / "direct" / "adapters" / "adapter.py",
-    REPO / "examples" / "skillberry_benchmarks_tau2_airline" / "spa" / "adapters" / "adapter.py",
+    REPO / "examples" / "tau2_custom" / "direct" / "adapters" / "adapter.py",
+    REPO / "examples" / "tau2_custom" / "spa" / "adapters" / "adapter.py",
 )
 
 #: Below this many present adapters the alignment check is not checking alignment.

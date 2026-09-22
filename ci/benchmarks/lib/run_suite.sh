@@ -14,7 +14,7 @@
 set -uo pipefail
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$LIB_DIR/../../.." && pwd)"
-BENCH="${1:?bench (tau2|swebench|skillsbench|spreadsheetbench|rfe-creator|parsec|skillberry_tau2_direct|skillberry_tau2_spa)}"
+BENCH="${1:?bench (tau2|swebench|skillsbench|spreadsheetbench|rfe-creator|parsec|tau2_custom_direct|tau2_custom_spa)}"
 PY="${CAPEVOLVE_PY:-$REPO/.venv-e2e/bin/python}"; [ -x "$PY" ] || PY="python3"
 TIER="${TIER:-smoke}"
 
@@ -23,7 +23,11 @@ TIER="${TIER:-smoke}"
 # why this is a committed file rather than a repo variable.
 # shellcheck source=ci/benchmarks/lib/load_overrides.sh
 . "$LIB_DIR/load_overrides.sh"
-load_overrides "$REPO/ci/benchmarks/$BENCH/$TIER/overrides.env"
+# The two tau2_custom arms are ONE benchmark with two delivery paths, so their tier lists live
+# under ci/benchmarks/tau2_custom/<arm>/ rather than a directory per leg token.
+BENCH_DIR="$BENCH"
+case "$BENCH" in tau2_custom_*) BENCH_DIR="tau2_custom/${BENCH#tau2_custom_}" ;; esac
+load_overrides "$REPO/ci/benchmarks/$BENCH_DIR/$TIER/overrides.env"
 
 ITER="${ITERATIONS:-3}"
 AGENT_MODEL="${AGENT_MODEL:-aws/gpt-oss-120b}"
@@ -34,7 +38,7 @@ GATE_K_SE="${GATE_K_SE:-1.0}"
 # tau2 legs, whose adapters write them and where a failed rollout is only readable from the
 # trajectory; no other adapter produces them. Env wins, so a dispatch can still force either way.
 case "$BENCH" in
-  tau2|skillberry_tau2_*) _NATIVE_SIMS_DEFAULT=1 ;;
+  tau2|tau2_custom_*) _NATIVE_SIMS_DEFAULT=1 ;;
   *)                      _NATIVE_SIMS_DEFAULT=0 ;;
 esac
 export CAPEVOLVE_NATIVE_SIMS="${CAPEVOLVE_NATIVE_SIMS:-$_NATIVE_SIMS_DEFAULT}"
@@ -134,7 +138,7 @@ orchestration_mode: agent
 $(STOP_CONDITION="$STOP_CONDITION" "$PY" -c 'import json,os;print("stop_condition:     " + json.dumps(os.environ["STOP_CONDITION"]))')"
 fi
 
-BASE="$REPO/ci/benchmarks/$BENCH/$TIER"
+BASE="$REPO/ci/benchmarks/$BENCH_DIR/$TIER"
 OUT="${2:-$REPO/ci/benchmarks/.work/suite_${TIER}_${BENCH}}"
 mkdir -p "$OUT/optimized"
 : > "$OUT/metrics.jsonl"
@@ -216,7 +220,7 @@ TEMPERATURE=0.0
 ENV
     export TAU2_MAX_CONCURRENCY=10
     ;;
-  skillberry_tau2_direct|skillberry_tau2_spa)
+  tau2_custom_direct|tau2_custom_spa)
     # The two DELIVERY ARMS of the tau2 airline benchmark. Same 50 airline tasks as the `tau2`
     # leg above, same tier ids, but a different question: `tau2` asks "can the optimizer
     # improve the agent's prompt+tools", these ask "does the candidate still land when it is
@@ -228,13 +232,13 @@ ENV
     # duplicate ~700 lines per arm and be free to drift from the example a reviewer reads. The
     # tau2 leg already sources examples/tau2_airline/seed_capability, so this is the convention.
     ARM="${BENCH#skillberry_tau2_}"                     # -> direct | spa
-    ARM_DIR="$REPO/examples/skillberry_benchmarks_tau2_airline/$ARM"
+    ARM_DIR="$REPO/examples/tau2_custom/$ARM"
     [ -d "$ARM_DIR" ] || { echo "::error:: no such arm: $ARM_DIR"; exit 2; }
     cp "$ARM_DIR/adapters/adapter.py" "$ARM_DIR/adapters/gateway.py" "$PROJ/adapters/"
     # scoring.py is the mixin both arms include, deployed beside adapter.py exactly as their own
     # setup.sh does it. Copied when present so this holds whether or not the arms share it yet.
-    [ -f "$REPO/examples/skillberry_benchmarks_tau2_airline/scoring.py" ] \
-      && cp "$REPO/examples/skillberry_benchmarks_tau2_airline/scoring.py" "$PROJ/adapters/"
+    [ -f "$REPO/examples/tau2_custom/scoring.py" ] \
+      && cp "$REPO/examples/tau2_custom/scoring.py" "$PROJ/adapters/"
     rm -rf "$PROJ/seed_capability"; cp -R "$ARM_DIR/seed_capability" "$PROJ/seed_capability"
     # The arm's own optimizer instructions, pinned ABSOLUTE. The generic template speaks of
     # policy.md + tools.py; the direct arm has no policy surface and the spa arm's artifact is a
