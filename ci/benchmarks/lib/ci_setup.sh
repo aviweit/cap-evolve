@@ -10,12 +10,10 @@
 set -euo pipefail
 BENCH="${1:?bench}"
 CACHE="${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}"
-# The arms get their OWN venv. They install tau2 from skillberry-benchmarks; the `tau2` leg
-# installs the public sierra-research checkout. Same package name, two sources, both editable —
-# in one venv whichever ran last wins, and the loser fails with a missing domain rather than an
-# install error. Sequencing on a single runner hides it; a second runner would not.
+# The arms get their OWN venv. They install tau2 from either skillberry-benchmarks or
+# the public sierra-research checkout. Same package name, two sources.
 case "$BENCH" in
-  tau2_custom_*) VENV="$CACHE/venv-skillberry-tau2" ;;
+  tau2_custom_*) VENV="$CACHE/venv-tau2-custom" ;;
   *)                 VENV="$CACHE/venv" ;;
 esac
 CAPEVOLVE_PY="$VENV/bin/python"

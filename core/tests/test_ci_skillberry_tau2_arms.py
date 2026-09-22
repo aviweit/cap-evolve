@@ -249,12 +249,11 @@ def test_native_sims_are_on_for_the_tau2_legs():
 
 
 def test_the_arms_use_their_own_venv():
-    """Both arms install tau2 from skillberry-benchmarks; the `tau2` leg installs the public
-    checkout. Same package name, two sources, both editable — one venv means whichever ran last
-    wins, and the loser fails with a missing domain rather than an install error."""
+    """Both arms install tau2 from either skillberry-benchmarks or the public
+    checkout. Same package name, two sources."""
     setup = CI_SETUP.read_text(encoding="utf-8")
     head = setup.split("case \"$BENCH\" in", 1)[1].split("esac", 1)[0]
-    assert 'tau2_custom_*) VENV="$CACHE/venv-skillberry-tau2"' in head, (
+    assert 'tau2_custom_*) VENV="$CACHE/venv-tau2-custom"' in head, (
         "the arms must not share the venv the tau2 leg installs its own tau2 into")
     assert 'VENV="$CACHE/venv"' in head, "every other bench keeps the shared venv"
 
