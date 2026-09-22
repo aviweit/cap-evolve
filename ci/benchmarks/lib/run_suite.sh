@@ -231,7 +231,7 @@ ENV
     # The adapter comes from examples/, not templates/adapters/: a copy under templates/ would
     # duplicate ~700 lines per arm and be free to drift from the example a reviewer reads. The
     # tau2 leg already sources examples/tau2_airline/seed_capability, so this is the convention.
-    ARM="${BENCH#skillberry_tau2_}"                     # -> direct | spa
+    ARM="${BENCH#tau2_custom_}"                         # -> direct | spa
     ARM_DIR="$REPO/examples/tau2_custom/$ARM"
     [ -d "$ARM_DIR" ] || { echo "::error:: no such arm: $ARM_DIR"; exit 2; }
     cp "$ARM_DIR/adapters/adapter.py" "$ARM_DIR/adapters/gateway.py" "$PROJ/adapters/"

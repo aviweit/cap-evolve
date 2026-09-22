@@ -134,6 +134,21 @@ def test_the_adapter_is_sourced_from_the_example_not_duplicated_into_templates()
             "examples/tau2_custom/<arm>/ instead")
 
 
+@pytest.mark.parametrize("arm", ARMS)
+def test_the_arm_dir_the_leg_derives_actually_exists(arm):
+    """run_suite.sh strips the token prefix to get the arm, then paths into examples/. A stale
+    prefix leaves the token whole and the leg dies with "no such arm" on the runner — which is
+    exactly what a rename did, because the strip is a literal the token rename did not match."""
+    case = _arm_case()
+    m = re.search(r'ARM="\$\{BENCH#([a-z0-9_]+)\}"', case)
+    assert m, "run_suite.sh no longer derives ARM by stripping a prefix"
+    prefix = m.group(1)
+    assert arm.startswith(prefix), f"{arm} does not start with the stripped prefix {prefix!r}"
+    tail = arm[len(prefix):]
+    assert (REPO / "examples/tau2_custom" / tail).is_dir(), (
+        f"examples/tau2_custom/{tail} missing — the leg would fail with 'no such arm'")
+
+
 def test_both_arms_land_their_own_optimizer_instructions():
     """The generic template names policy.md and tools.py. The direct arm has no policy surface
     and the spa arm's artifact is a skill package, so the shared text sends the optimizer
