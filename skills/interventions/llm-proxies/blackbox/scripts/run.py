@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Report the state of the SPA intervention stack. Read-only.
+"""Report the state of the blackbox intervention stack. Read-only.
 
 This is the skill's registry ``entry`` (see meta.yaml) and deliberately does nothing
 else: the intervention is a LIBRARY. Provisioning, starting, deploying and cleaning are
-``spa_env`` calls, made by the adapter that needs them or by an example's own
+``blackbox_env`` calls, made by the adapter that needs them or by an example's own
 setup/teardown script — not by a command layer wrapping them.
 
-    python skills/interventions/llm-proxies/spa/scripts/run.py [--json]
+    python skills/interventions/llm-proxies/blackbox/scripts/run.py [--json]
 
 Exit code 0 when store and SPA are both healthy, 1 otherwise, so a shell caller can
 gate on it.
@@ -21,16 +21,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import spa_env  # noqa: E402
+import blackbox_env  # noqa: E402
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="spa-status", description=__doc__,
+    ap = argparse.ArgumentParser(prog="blackbox-status", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
 
-    st = spa_env.status()
+    st = blackbox_env.status()
     if args.json:
         print(json.dumps(st, indent=2))
     else:

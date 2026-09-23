@@ -34,12 +34,14 @@ def _plan_script() -> str:
     return script
 
 
-def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None):
+def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
     env = dict(os.environ, EVENT=event)
     if tier_sel is not None:
         env["TIER_SEL"] = tier_sel
     if bench_sel is not None:
         env["BENCH_SEL"] = bench_sel
+    if intervention is not None:
+        env["INTERVENTION_SEL"] = intervention
     env["LABELS"] = json.dumps(labels or [])
     proc = subprocess.run([sys.executable, "-c", _plan_script()], capture_output=True,
                           text=True, cwd=str(REPO), env=env)
@@ -50,11 +52,11 @@ def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None):
 
 
 # The two tau2_custom_* entries are the tau2 airline benchmark's DELIVERY ARMS (direct =
-# in-process, spa = Store + Proxy-Agent), not two more benchmarks. They are listed here because
+# in-process, blackbox = Store + Proxy-Agent), not two more benchmarks. They are listed here because
 # the planner treats them as ordinary benches: each populates smoke/integration/full, so every
 # fan-out assertion below holds for them unchanged.
 ALL_BENCHES = ["tau2", "swebench", "skillsbench", "spreadsheetbench", "rfe-creator",
-               "tau2_custom_direct", "tau2_custom_spa"]
+               "tau2_custom_direct", "tau2_custom_blackbox"]
 
 
 # ---- adding `pilot` must not disturb existing selections ---------------------
@@ -89,6 +91,34 @@ def test_single_bench_dispatch_unchanged():
 def test_default_dispatch_is_still_smoke_everywhere():
     legs = _run_plan(event="workflow_dispatch")
     assert sorted(legs) == sorted(("smoke", b) for b in ALL_BENCHES)
+
+
+# ---- tau2-custom + intervention resolves to a real, populated leg ------------
+
+@pytest.mark.parametrize("intervention,expect", [
+    ("direct", "tau2_custom_direct"),
+    ("blackbox", "tau2_custom_blackbox"),
+])
+def test_tau2_custom_plus_intervention_selects_a_leg_whose_tasks_exist(intervention, expect):
+    """Both halves, because the planner FAILS OPEN on a missing tasks.json: it prints `skip`
+    and drops the leg. So renaming the leg token without moving
+    ci/benchmarks/tau2_custom/<option>/ would select ZERO legs and still report success — a
+    dispatch that looks green and measured nothing. Assert the leg is planned AND that the
+    file the planner looked for is really there."""
+    legs = _run_plan(event="workflow_dispatch", tier_sel="smoke", bench_sel="tau2-custom",
+                     intervention=intervention)
+    assert legs == [("smoke", expect)], f"intervention={intervention} planned {legs}"
+    option = expect.removeprefix("tau2_custom_")
+    tasks = REPO / "ci" / "benchmarks" / "tau2_custom" / option / "smoke" / "tasks.json"
+    assert tasks.is_file(), f"the planner resolves to {tasks}, which does not exist"
+
+
+def test_an_unknown_intervention_falls_back_to_direct():
+    """The workflow, unlike core's `declared()`, does not refuse an unknown value — it
+    silently falls back. Pinned so the fallback stays deliberate and visible."""
+    legs = _run_plan(event="workflow_dispatch", tier_sel="smoke", bench_sel="tau2-custom",
+                     intervention="not-a-mode")
+    assert legs == [("smoke", "tau2_custom_direct")]
 
 
 # ---- pull_request labels ----------------------------------------------------

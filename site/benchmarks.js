@@ -10,7 +10,10 @@ const JOB_RE = /^([a-z][a-z0-9-]*) \/ ([a-z][a-z0-9_-]*)$/;
 // The arms are internal leg names; the picker calls them tau2-custom + intervention.
 const BENCH_LABEL = {
   tau2_custom_direct: "tau2-custom (direct)",
-  tau2_custom_spa: "tau2-custom (spa)",
+  tau2_custom_blackbox: "tau2-custom (blackbox)",
+  // Legacy leg token, renamed in #462. Kept so already-published benchmark-history
+  // rows still render a label instead of a raw token.
+  tau2_custom_spa: "tau2-custom (spa, legacy)",
 };
 const benchLabel = (b) => BENCH_LABEL[b] || b;
 // ?fixture — read the committed local eyeball fixture instead of the live feed (see

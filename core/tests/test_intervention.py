@@ -20,6 +20,13 @@ SKILLS = REPO / "skills"
 MANIFEST = json.loads((SKILLS / "_registry" / "manifest.json").read_text())["skills"]
 
 
+@pytest.fixture(autouse=True)
+def _forget_emitted_warnings():
+    """The deprecation warning is emitted once per process, so without this the alias tests
+    pass or fail depending on which ran first."""
+    itv._WARNED.clear()
+
+
 # --- declared() -----------------------------------------------------------
 
 
@@ -30,8 +37,8 @@ def test_absent_intervention_is_direct():
 
 
 def test_known_values_are_normalised():
-    assert itv.declared({"intervention": "spa"}) == itv.SPA
-    assert itv.declared({"intervention": "  SPA "}) == itv.SPA
+    assert itv.declared({"intervention": "blackbox"}) == itv.BLACKBOX
+    assert itv.declared({"intervention": "  BLACKBOX "}) == itv.BLACKBOX
     assert itv.declared({"intervention": "direct"}) == itv.DIRECT
 
 
@@ -43,22 +50,48 @@ def test_unknown_value_is_refused_by_name():
     assert "sap" in str(e.value) and "direct" in str(e.value)
 
 
+def test_the_deprecated_alias_still_resolves_and_warns(capsys):
+    """A spec written before the rename — including one outside this repo — must keep running."""
+    assert itv.declared({"intervention": "spa"}) == itv.BLACKBOX
+    assert itv.declared({"intervention": "  SPA "}) == itv.BLACKBOX
+    out = capsys.readouterr()
+    assert "deprecated alias" in out.err and itv.BLACKBOX in out.err
+    assert out.out == "", "a deprecation line must never reach the JSON on stdout"
+
+
+def test_the_alias_warns_once_per_process():
+    """``declared()`` is called from both `check` and the run path, and one command printing
+    the same deprecation twice reads like two different problems."""
+    itv.declared({"intervention": "spa"})
+    before = len(itv._WARNED)
+    itv.declared({"intervention": "spa"})
+    assert len(itv._WARNED) == before
+
+
+def test_the_alias_is_not_advertised_as_a_valid_value():
+    """An alias offered as a choice would keep minting new specs that need the alias."""
+    assert "spa" not in itv.KNOWN
+    with pytest.raises(itv.InterventionError) as e:
+        itv.declared({"intervention": "sap"})
+    assert "spa" not in str(e.value), "the error must not teach the deprecated name"
+
+
 # --- skill resolution -----------------------------------------------------
 
 
-def test_spa_intervention_skill_is_registered():
-    row = MANIFEST.get("spa")
-    assert row, "the spa intervention skill is missing from the manifest"
+def test_blackbox_intervention_skill_is_registered():
+    row = MANIFEST.get("blackbox")
+    assert row, "the blackbox intervention skill is missing from the manifest"
     assert row["component"] == "intervention"
-    assert (SKILLS / row["path"] / "scripts" / "spa_env.py").exists()
+    assert (SKILLS / row["path"] / "scripts" / "blackbox_env.py").exists()
 
 
 def test_skill_dir_rejects_a_component_mismatch():
     """Resolution is by name AND component: a name collision with a capability must not
     hand the intervention layer the wrong skill."""
-    fake = {"spa": {"component": "capability", "path": "capabilities/skill-package"}}
+    fake = {"blackbox": {"component": "capability", "path": "capabilities/skill-package"}}
     with pytest.raises(itv.InterventionError) as e:
-        itv.skill_dir("spa", fake, SKILLS)
+        itv.skill_dir("blackbox", fake, SKILLS)
     assert "not 'intervention'" in str(e.value)
 
 
@@ -75,30 +108,30 @@ def test_direct_preflight_is_a_noop():
     assert itv.preflight({}, {}, SKILLS) == {"intervention": itv.DIRECT}
 
 
-def test_spa_preflight_refuses_when_not_provisioned(tmp_path, monkeypatch):
+def test_blackbox_preflight_refuses_when_not_provisioned(tmp_path, monkeypatch):
     """A run must NOT clone and install two services behind the operator's back; it must
     say which onboarding step was skipped."""
     monkeypatch.setenv("SPA_VENDOR_DIR", str(tmp_path / "empty-vendor"))
     with pytest.raises(itv.InterventionError) as e:
-        itv.preflight({"intervention": "spa", "skill_name": "x"}, MANIFEST, SKILLS)
+        itv.preflight({"intervention": "blackbox", "skill_name": "x"}, MANIFEST, SKILLS)
     msg = str(e.value)
     assert "not provisioned" in msg and "setup.sh" in msg
 
 
-def test_spa_preflight_needs_a_skill_name(tmp_path, monkeypatch):
+def test_blackbox_preflight_needs_a_skill_name(tmp_path, monkeypatch):
     """SPA serves exactly one skill; with no name it falls back to searching the store,
     which succeeds silently even when the store is empty."""
     monkeypatch.setenv("SPA_VENDOR_DIR", str(tmp_path / "empty-vendor"))
     with pytest.raises(itv.InterventionError):
-        itv.preflight({"intervention": "spa"}, MANIFEST, SKILLS)
+        itv.preflight({"intervention": "blackbox"}, MANIFEST, SKILLS)
 
 
 # --- describe() -----------------------------------------------------------
 
 
-def test_describe_direct_and_spa():
+def test_describe_direct_and_blackbox():
     assert "direct" in itv.describe({"intervention": "direct"})
-    line = itv.describe({"intervention": "spa", "store_port": "8000", "spa_port": "7000",
+    line = itv.describe({"intervention": "blackbox", "store_port": "8000", "proxy_port": "7000",
                         "skill_name": "airline_skill",
                         "remote_env": "http://127.0.0.1:8004", "remote_env_healthy": False})
     assert "airline_skill" in line and "UNREACHABLE" in line
