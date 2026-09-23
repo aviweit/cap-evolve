@@ -675,6 +675,12 @@ OPTNOTE
     SB_DEFAULT="$SB_CACHE/sample_data_200"
     # pilot draws its tasks from full's train split, so it needs the 912-task dataset too.
     case "$TIER" in full|pilot) SB_DEFAULT="$SB_CACHE/all_data_912_v0.1";; esac
+    # full_verified is the OTHER dataset variant (see fetch_data.sh) — a different download
+    # and layout, not a subset of the 912 archive. Without this arm, a direct
+    # `TIER=full_verified` invocation without SPREADSHEETBENCH_DATA_DIR set (e.g. locally,
+    # bypassing ci_setup.sh) would silently fall through to the sample_200 fallback above
+    # and score the wrong benchmark under the full_verified tier's name.
+    case "$TIER" in full_verified) SB_DEFAULT="$SB_CACHE/spreadsheetbench_verified_400";; esac
     # SPREADSHEETBENCH_DATA_DIR is expected to be set (and exported to GITHUB_ENV) by
     # ci_setup.sh, which calls fetch_data.sh and echoes the resolved path. When running
     # locally without ci_setup.sh, the SB_DEFAULT fallback is used instead.
@@ -684,15 +690,17 @@ OPTNOTE
     # (still bounded; each container is ~8GB RAM / 2 CPU, see adapter.py's NOTE ON SCORING)
     # unless the caller already pinned SPREADSHEETBENCH_CONCURRENCY explicitly.
     SB_CONCURRENCY_DEFAULT=4
-    case "$TIER" in full|pilot) SB_CONCURRENCY_DEFAULT=8;; esac
+    case "$TIER" in full|pilot|full_verified) SB_CONCURRENCY_DEFAULT=8;; esac
     # Rounds of code-exec interaction the agent gets per task. SkillOpt runs SpreadsheetBench
     # as "multi-round codegen with up to 30 turns" (arXiv 2605.23904), and the adapter's own
     # default is 5 — a real handicap on a multi-round benchmark, so full (the comparison tier)
     # matches 30. Smoke stays at 5 to keep it a cheap, fast signal whose numbers remain
     # comparable to its own history. Override with SPREADSHEETBENCH_MAX_TURNS.
     SB_MAX_TURNS_DEFAULT=5
-    # pilot exists to MEASURE the full tier, so it must match full's turn budget.
-    case "$TIER" in full|pilot) SB_MAX_TURNS_DEFAULT=30;; esac
+    # pilot exists to MEASURE the full tier, so it must match full's turn budget. full_verified is
+    # the other comparison tier (the verified 400-task release) and matches it for the same
+    # reason: the turn budget is part of what is being compared, not an implementation detail.
+    case "$TIER" in full|pilot|full_verified) SB_MAX_TURNS_DEFAULT=30;; esac
     CAPS="[system-prompt]"
     cat > "$WORK/.env" <<ENV
 MODEL=litellm_proxy/$AGENT_MODEL

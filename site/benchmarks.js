@@ -1,12 +1,14 @@
 const RAW = "https://raw.githubusercontent.com/skillberry-ai/cap-evolve/benchmark-history";
 const GH_API = "https://api.github.com/repos/skillberry-ai/cap-evolve";
-// Tier is matched GENERICALLY: the workflow's TIERS list grows (smoke, pilot, full, …) and
-// hardcoding it here silently hides new tiers from the live panel — a `pilot` run was
-// invisible while it was executing. The bench allowlist stays explicit so unrelated jobs
-// ("plan legs", "aggregate history") never match.
-// Any bench token, not a hardcoded list: enumerating them here silently hid the two
-// tau2-airline arms from this panel entirely.
-const JOB_RE = /^([a-z][a-z0-9-]*) \/ ([a-z][a-z0-9_-]*)$/;
+// Tier is matched GENERICALLY: the workflow's TIERS list grows (smoke, pilot, full,
+// full_verified, …) and hardcoding it here silently hides new tiers from the live panel — a
+// `pilot` run was invisible while it was executing. The character class must therefore admit
+// every shape a tier name can take, UNDERSCORE INCLUDED: `full_verified` fails `[a-z0-9-]*`,
+// which would have reproduced the exact pilot bug for it.
+//
+// Bench is matched GENERICALLY too, not against a hardcoded list: enumerating benches here
+// silently hid the two tau2-airline arms from this panel entirely.
+const JOB_RE = /^([a-z][a-z0-9_-]*) \/ ([a-z][a-z0-9_-]*)$/;
 // The arms are internal leg names; the picker calls them tau2-custom + intervention.
 const BENCH_LABEL = {
   tau2_custom_direct: "tau2-custom (direct)",
