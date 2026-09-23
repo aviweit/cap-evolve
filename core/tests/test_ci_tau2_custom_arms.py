@@ -230,13 +230,13 @@ def test_each_arms_extra_yaml_parses_and_declares_its_delivery(arm, expect):
 def test_the_blackbox_arm_matches_the_adapters_own_concurrency():
     """The CI leg must not invent a different value from the one the arm runs with locally."""
     case = _arm_case()
-    spa = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
+    blackbox = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
     adapter = (REPO / "examples/tau2_custom/blackbox/adapters/adapter.py"
                ).read_text(encoding="utf-8")
     default = re.search(r'TAU2_MAX_CONCURRENCY", "(\d+)"', adapter).group(1)
-    assert f"TAU2_MAX_CONCURRENCY:-{default}" in spa, (
+    assert f"TAU2_MAX_CONCURRENCY:-{default}" in blackbox, (
         f"adapter defaults to {default}; the blackbox leg must use the same")
-    assert 'TAU2_AGENT_MODEL:-ibm/skillberry-local' in spa, "blackbox delivery needs the SPA sentinel"
+    assert 'TAU2_AGENT_MODEL:-ibm/skillberry-local' in blackbox, "blackbox delivery needs the Blackbox sentinel"
 
 
 def test_native_sims_are_on_for_the_tau2_legs():
@@ -265,8 +265,8 @@ def test_the_blackbox_arm_sets_the_upstream_model_the_proxy_calls():
     dispatched agent_model would be silently ignored by both the proxy and the report.
     """
     case = _arm_case()
-    spa = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
-    code = "\n".join(ln for ln in spa.splitlines() if not ln.strip().startswith("#"))
+    blackbox = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
+    code = "\n".join(ln for ln in blackbox.splitlines() if not ln.strip().startswith("#"))
     assert "SPA_MODEL_NAME" in code, "the blackbox leg must set the proxy's upstream model"
     assert "openai/$AGENT_MODEL" in code, "derive it from AGENT_MODEL"
     assert "openai/*)" in code, "openai/openai/... is a 404; only prefix when absent"
@@ -319,14 +319,14 @@ def test_the_blackbox_arm_reads_service_logs_and_never_writes_them():
     file stays empty. So CI may only READ bounded tails into the artifacts.
     """
     case = _arm_case()
-    spa = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
-    assert "SPA_VENDOR_DIR" in spa, "the run must agree with ci_setup.sh on the vendor dir"
-    assert ': > "$_log"' not in spa, "must not truncate a log a live service owns"
-    assert "tail -c" in spa, "no bounded tail captured for the artifacts"
+    blackbox = case.split('if [ "$ARM" = "direct" ]', 1)[1].split("else", 1)[1]
+    assert "SPA_VENDOR_DIR" in blackbox, "the run must agree with ci_setup.sh on the vendor dir"
+    assert ': > "$_log"' not in blackbox, "must not truncate a log a live service owns"
+    assert "tail -c" in blackbox, "no bounded tail captured for the artifacts"
     # Paths come from blackbox_env rather than being retyped, so they cannot drift.
     for name in ("AGENT_LOG_FILE", "STORE_LOG_FILE", "AGENT_TOOLS_LOG_FILE",
                  "STORE_TOOLS_LOG_FILE"):
-        assert f"blackbox_env.{name}" in spa, f"tail capture should source {name} from blackbox_env"
+        assert f"blackbox_env.{name}" in blackbox, f"tail capture should source {name} from blackbox_env"
 
     setup = CI_SETUP.read_text(encoding="utf-8")
     arm_case = setup.split("  tau2_custom_direct|tau2_custom_blackbox)", 1)[1] \

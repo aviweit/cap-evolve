@@ -35,60 +35,20 @@ DIRECT = "direct"
 BLACKBOX = "blackbox"
 KNOWN = (DIRECT, BLACKBOX)
 
-#: Spec values that still RESOLVE but are no longer canonical, mapped to what they mean. A
-#: capevolve.yaml written before the rename — including one outside this repo, or a project dir
-#: scaffolded earlier — must not become unrunnable.
-#:
-#: DELIBERATELY NOT IN ``KNOWN``. ``KNOWN`` is both the accept-list and the "Valid values:" list
-#: a typo is measured against below, and an alias belongs in neither: advertising the old name
-#: there would keep minting new specs that need this map.
-ALIASES = {"spa": BLACKBOX}
-
-#: Warnings already emitted. ``declared()`` is called from both ``check`` and the run path in
-#: ``cli``, so one command would otherwise print the same line twice.
-_WARNED: set[str] = set()
-
-
 class InterventionError(RuntimeError):
     """An intervention that is misdeclared, missing, or not ready."""
-
-
-def _warn_once(msg: str) -> None:
-    """One operator-facing warning line, on stderr, at most once per process.
-
-    stderr, never stdout: ``declared()`` is on the ``--plan-only`` path, whose stdout is a
-    single JSON document, and on the preflight-failure path that prints ``json.dumps(err)`` to
-    stdout. One stray stdout line breaks that one-document contract.
-
-    A stderr ``print`` rather than ``warnings.warn`` matches the house style — there is no
-    ``warnings.warn`` anywhere in this package.
-    """
-    if msg in _WARNED:
-        return
-    err = sys.stderr
-    if err is None or getattr(err, "closed", False):
-        return
-    _WARNED.add(msg)
-    print(f"warning: {msg}", file=err, flush=True)
 
 
 def declared(spec: dict) -> str:
     """The validated ``intervention`` value for this spec (``direct`` when absent).
 
     Raises on an unknown value rather than falling back: a fallback here is exactly the
-    failure mode described in this module's docstring. A DEPRECATED ALIAS is not an unknown
-    value — it resolves, with one warning line, to its canonical name.
+    failure mode described in this module's docstring.
     """
     raw = spec.get("intervention")
     if raw is None or str(raw).strip() == "":
         return DIRECT
     val = str(raw).strip().lower()
-    # Aliases are checked BEFORE the accept-list, because they are deliberately absent from it.
-    canon = ALIASES.get(val)
-    if canon is not None:
-        _warn_once(f"intervention {val!r} is a deprecated alias for {canon!r} — set "
-                   f"`intervention: {canon}` in the spec (this run proceeds as {canon})")
-        return canon
     if val not in KNOWN:
         raise InterventionError(
             f"unknown intervention {raw!r} in the spec. Valid values: {', '.join(KNOWN)}. "
@@ -154,7 +114,7 @@ def preflight(spec: dict, skills: dict, skills_dir: Path) -> dict:
     env = _load_blackbox_env(d)
 
     st = env.status()
-    missing = [n for n in ("store", "spa") if not st[n]["provisioned"]]
+    missing = [n for n in ("store", "agent") if not st[n]["provisioned"]]
     if missing:
         raise InterventionError(
             f"intervention 'blackbox' is declared but {', '.join(missing)} is not provisioned "
@@ -164,7 +124,7 @@ def preflight(spec: dict, skills: dict, skills_dir: Path) -> dict:
 
     # A port held by something that is NOT our service is a different problem from a
     # stopped service, and the fix differs, so say which one it is.
-    for name in ("store", "spa"):
+    for name in ("store", "agent"):
         r = st[name]
         if not r["healthy"] and r["pids"] and not r["ours"]:
             raise InterventionError(
@@ -172,19 +132,19 @@ def preflight(spec: dict, skills: dict, skills_dir: Path) -> dict:
                 f"{name} service. Free the port and retry.")
 
     skill_name = str(spec.get("skill_name") or "").strip()
-    if not st["spa"]["healthy"] and not skill_name:
+    if not st["agent"]["healthy"] and not skill_name:
         raise InterventionError(
-            "intervention 'blackbox' needs `skill_name:` in the spec to start the proxy-agent: SPA "
-            "serves exactly one skill, and with no name it falls back to searching the "
+            "intervention 'blackbox' needs `skill_name:` in the spec to start the proxy-agent: the "
+            "proxy-agent serves exactly one skill, and with no name it falls back to searching the "
             "store — which succeeds silently even when the store is empty.")
 
     if not st["store"]["healthy"]:
         env.start_store()
-    if not st["spa"]["healthy"]:
+    if not st["agent"]["healthy"]:
         env.start_spa(skill_name)
 
     st = env.status()
-    for name in ("store", "spa"):
+    for name in ("store", "agent"):
         if not st[name]["healthy"]:
             raise InterventionError(f"intervention 'blackbox': {name} is not healthy on port "
                                 f"{st[name]['port']} after a start attempt")
@@ -194,7 +154,7 @@ def preflight(spec: dict, skills: dict, skills_dir: Path) -> dict:
         "skill_dir": str(d),
         "skill_name": skill_name or None,
         "store_port": st["store"]["port"],
-        "proxy_port": st["spa"]["port"],
+        "proxy_port": st["agent"]["port"],
         "remote_env": st["remote_env"]["url"] or None,
         "remote_env_healthy": st["remote_env"]["healthy"],
     }

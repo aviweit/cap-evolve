@@ -34,7 +34,7 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps(st, indent=2))
     else:
-        for name in ("store", "spa"):
+        for name in ("store", "agent"):
             r = st[name]
             # A port held by someone who is not our service is the failure mode worth
             # shouting about: it looks identical to "down" but needs a different fix.
@@ -45,7 +45,7 @@ def main(argv=None) -> int:
         env = st["remote_env"]
         state = "healthy" if env["healthy"] else ("down" if env["url"] else "not configured")
         print(f"  {'remote':<6} {state:<8} {env['url'] or '(set SPA_REMOTE_ENV_URL)'}")
-    return 0 if (st["store"]["healthy"] and st["spa"]["healthy"]) else 1
+    return 0 if (st["store"]["healthy"] and st["agent"]["healthy"]) else 1
 
 
 if __name__ == "__main__":

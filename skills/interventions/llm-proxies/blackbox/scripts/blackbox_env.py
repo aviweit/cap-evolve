@@ -867,8 +867,8 @@ def status() -> dict:
     rows = {
         "store": {"port": store_port(), "pid_file": STORE_PID_FILE, "markers": STORE_PROC_MARKERS,
                   "dir": str(store_dir())},
-        "spa": {"port": SPA_PORT, "pid_file": SPA_PID_FILE, "markers": SPA_PROC_MARKERS,
-                "dir": str(agent_dir())},
+        "agent": {"port": SPA_PORT, "pid_file": SPA_PID_FILE, "markers": SPA_PROC_MARKERS,
+                  "dir": str(agent_dir())},
     }
     out: dict = {}
     for name, r in rows.items():

@@ -280,7 +280,7 @@ ENV
     export TAU2_INFRA_RETRIES="${TAU2_INFRA_RETRIES:-2}"
     if [ "$ARM" = "direct" ]; then
       # In-process delivery: no service to start, so nothing here mirrors the blackbox block below.
-      # The agent under test IS the gateway model; gateway.py refuses the SPA sentinel here.
+      # The agent under test IS the gateway model; gateway.py refuses the Blackbox sentinel here.
       export TAU2_AGENT_MODEL="$AGENT_MODEL"
       export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-10}"
       EXTRA_YAML="actions: [edit]
@@ -294,7 +294,7 @@ runner_repo_path: \"$SB_DIR\""
       # Concurrency 4 — the adapter's own default (adapter.py) and what the arm's run.sh uses.
       # Only ONE candidate is in flight per evaluation, so parallel rollouts all want the same
       # skill the proxy is already bound to.
-      export TAU2_AGENT_MODEL="${TAU2_AGENT_MODEL:-ibm/skillberry-local}"   # the SPA sentinel
+      export TAU2_AGENT_MODEL="${TAU2_AGENT_MODEL:-ibm/skillberry-local}"   # the Blackbox sentinel
       export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-4}"
       # What the proxy calls upstream once the sentinel reaches it, and what runner_model()
       # reports. Comes from the repo-root .env locally; CI has none, and unset falls back to
@@ -304,7 +304,7 @@ runner_repo_path: \"$SB_DIR\""
         openai/*) export SPA_MODEL_NAME="${SPA_MODEL_NAME:-$AGENT_MODEL}" ;;
         *)        export SPA_MODEL_NAME="${SPA_MODEL_NAME:-openai/$AGENT_MODEL}" ;;
       esac
-      echo "  SPA upstream model: $SPA_MODEL_NAME (sentinel: $TAU2_AGENT_MODEL)"
+      echo "  Blackbox upstream model: $SPA_MODEL_NAME (sentinel: $TAU2_AGENT_MODEL)"
       # Same vendor dir ci_setup.sh provisioned into. blackbox_env recomputes this from the
       # environment in every process, so setup and run must agree or the run re-clones.
       export SPA_VENDOR_DIR="${SPA_VENDOR_DIR:-${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}/spa-vendor}"
@@ -360,8 +360,8 @@ asyncio.run(EnvironmentManager(host='127.0.0.1', port=$ENV_PORT).run())
                tail -40 "$ENV_LOG" 2>/dev/null; exit 1; }
         echo "  healthy"
       fi
-      # Store, then Proxy-Agent — ORDER MATTERS: the store must be healthy before SPA starts,
-      # and SPA binds `my_skill` at start. Both starts are idempotent.
+      # Store, then Proxy-Agent — ORDER MATTERS: the store must be healthy before the Proxy-Agent starts,
+      # and the Proxy-Agent binds `my_skill` at start. Both starts are idempotent.
       ( cd "$REPO" && CAPEVOLVE_SKILLS_DIR="$REPO/skills" "$PY" - <<'PYEOF'
 import json, sys
 sys.path.insert(0, "skills/interventions/llm-proxies/blackbox/scripts")
