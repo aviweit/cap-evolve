@@ -91,10 +91,10 @@ the only difference is how a candidate reaches the agent:
 
 | | `tau2_custom_direct` | `tau2_custom_spa` |
 |---|---|---|
-| delivery | the runner imports the candidate tools in its own process | the Skillberry **Store** serves the candidate skill and the **Proxy-Agent** injects it |
+| delivery | the runner imports the candidate tools in its own process | the Skillberry **Store** serves the candidate skill and the **Proxy-Agent** uses it |
 | tau2 agent model | the gateway model itself | the `ibm/skillberry-local` sentinel, which routes through the proxy to that same model |
 | services started by the run | none | tau2 Environment Manager (`:8004`) + Store + Proxy-Agent, torn down on exit |
-| rollout concurrency | 10 | **1** — the proxy binds one skill at a time, so parallel candidates would serve the wrong tools |
+| rollout concurrency | 10 | 4 |
 
 Pick them with **`benchmark: tau2-custom`** plus **`intervention: direct | spa`**, which maps
 straight onto the spec key of the same name. `intervention` is ignored by every other benchmark —
