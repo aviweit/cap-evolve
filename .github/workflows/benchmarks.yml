@@ -17,7 +17,17 @@
 #
 # REQUIRES a SELF-HOSTED runner on the IBM network (the gateway is VPC-internal;
 # GitHub-hosted runners cannot reach it). See ci/benchmarks/README.md +
-# ci/benchmarks/runner/arm-runner.sh. Repo secrets: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN.
+# ci/benchmarks/runner/arm-runner.sh. Repo secrets: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+# RITS_API_BASE, RITS_API_KEY.
+#
+# TWO providers can be picked per model, resolved by ci/benchmarks/lib/resolve_provider.sh:
+#   * the default ete-litellm gateway — every plain model id above.
+#   * RITS, via the lite-rits proxy running on skillberry-1 (the same box this self-hosted
+#     runner is on) — any id prefixed "rits/<vendor>/<model>". The prefix is CI-only: it is
+#     stripped before the bare id is sent on the wire, since lite-rits's own scraped catalog
+#     doesn't know it. agent_model and optimizer_model resolve independently, so pairing a
+#     RITS agent with a gateway optimizer (or vice versa) is a normal combination, not an
+#     error.
 # ============================================================================
 
 name: Benchmarks
@@ -36,10 +46,10 @@ on:
         default: direct
         options: [direct, blackbox]
       tier:
-        description: "Which tier (default smoke; pilot is a small cost/runtime measurement rig — its rewards are NOT comparable; full is the whole benchmark and is expensive). A tier only runs for benchmarks that populate it."
+        description: "Which tier. smoke (default) is a few tasks per benchmark. full is a benchmark's whole/original task set. full_verified is a benchmark's verified/curated re-release, where upstream publishes one. pilot is a cost/runtime measurement rig whose rewards are NOT comparable to anything. full and full_verified are both expensive and run only when named, never under `all`. A tier only runs for benchmarks that populate it — see ci/benchmarks/<bench>/README.md for what each tier means for that benchmark."
         type: choice
         default: smoke
-        options: [all, smoke, pilot, full]
+        options: [all, smoke, pilot, full, full_verified]
       iterations:
         description: "Optimizer iterations. LEAVE BLANK for the tier default (smoke 3, everything else 10). Set a value to override deliberately — including on smoke, where more rounds are how you watch a per-iteration curve rather than a single step."
         type: string
@@ -49,7 +59,7 @@ on:
         type: string
         default: ""
       agent_model:
-        description: "Evaluation model — the agent under test (litellm_proxy alias on the ete-litellm gateway)"
+        description: "Evaluation model — the agent under test. Plain id = ete-litellm gateway alias; \"rits/<vendor>/<model>\" = RITS via skillberry-1's lite-rits proxy (see resolve_provider.sh). Independent of optimizer_model — any pairing is valid."
         type: choice
         default: "aws/gpt-oss-120b"
         options:
@@ -77,9 +87,23 @@ on:
           - "gcp/gemini-3.6-flash"
           - "gemini-2.5-flash"
           - "gemini-2.5-pro"
-          - "rits/google/gemma-4-31B"
+          # ---- RITS (skillberry-1 lite-rits proxy) — see resolve_provider.sh ----
+          # Curated from the live rits.json catalog (105 models), granite family excluded on
+          # request. Only gemma-4-31B-it is a genuine match to the WikiSkill paper's model
+          # axis (arXiv 2608.27454v1: Qwen-3.5-4B/9B, Qwen-3.6-27B, Gemma-4-31B, Gemini-3.5-
+          # Flash) — RITS carries no small Qwen or Gemini, so the other 8 are a general-
+          # purpose spread across vendor/size rather than a reproduction of that paper's axis.
+          - "rits/google/gemma-4-31B-it"
+          - "rits/Qwen/Qwen3-8B"
+          - "rits/Qwen/Qwen2.5-72B-Instruct"
+          - "rits/Qwen/Qwen3-30B-A3B-Thinking-2507"
+          - "rits/meta-llama/llama-3-3-70b-instruct"
+          - "rits/mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+          - "rits/deepseek-ai/DeepSeek-V3.2"
+          - "rits/openai/gpt-oss-120b-a100"
+          - "rits/moonshotai/Kimi-K2.7-Code"
       optimizer_model:
-        description: "Optimization model — the Claude Code optimizer's model (litellm_proxy alias on the ete-litellm gateway)"
+        description: "Optimization model — the Claude Code optimizer's model. Plain id = ete-litellm gateway alias; \"rits/<vendor>/<model>\" = RITS via skillberry-1's lite-rits proxy (see resolve_provider.sh) — the claude-code CLI is pointed at it via ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN, UNVERIFIED whether lite-rits speaks the Anthropic Messages API shape the CLI expects."
         type: choice
         default: "claude-opus-4-8"
         options:
@@ -107,7 +131,17 @@ on:
           - "gcp/gemini-3.6-flash"
           - "gemini-2.5-flash"
           - "gemini-2.5-pro"
-          - "rits/google/gemma-4-31B"
+          # ---- RITS (skillberry-1 lite-rits proxy) — see resolve_provider.sh and the
+          # agent_model list above for the same catalog note. ----
+          - "rits/google/gemma-4-31B-it"
+          - "rits/Qwen/Qwen3-8B"
+          - "rits/Qwen/Qwen2.5-72B-Instruct"
+          - "rits/Qwen/Qwen3-30B-A3B-Thinking-2507"
+          - "rits/meta-llama/llama-3-3-70b-instruct"
+          - "rits/mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+          - "rits/deepseek-ai/DeepSeek-V3.2"
+          - "rits/openai/gpt-oss-120b-a100"
+          - "rits/moonshotai/Kimi-K2.7-Code"
       optimizer_usd_per_iter:
         description: "Per-iteration $ cap on the optimizer (default unlimited — 0 disables the native --max-budget-usd cap entirely; set e.g. 4.0 to bound spend)"
         type: string
@@ -190,7 +224,11 @@ jobs:
           # literal `matrix.tier` / `matrix.bench` lists).
           # tier is a first-class dimension. full runs the whole/representative benchmark
           # (frozen baselines under <bench>/full/); it no-ops until that tier is populated.
-          TIERS = ["smoke", "pilot", "full"]
+          # full_verified is the GENERIC name for a benchmark's verified/curated re-release, so
+          # any bench that gains one uses the same tier rather than inventing a name with its
+          # own task count baked in. Sizes, datasets and costs differ per benchmark and are
+          # documented under ci/benchmarks/<bench>/ — never here.
+          TIERS = ["smoke", "pilot", "full", "full_verified"]
           # tau2_custom_direct / _blackbox are the DELIVERY ARMS of the tau2 airline benchmark:
           # same tasks and tiers, candidate delivered in-process versus through the Skillberry
           # Store + Proxy-Agent. They stay separate legs so each keeps its own tier task lists,
@@ -214,7 +252,11 @@ jobs:
           # EVERY leg to benchmark-history. Letting "all" pick it up would put meaningless
           # numbers on the benchmarks page. A `benchmark-pilot` label still works, because
           # that names the tier deliberately.
-          EXPLICIT_ONLY_TIERS = {"pilot"}
+          # `full_verified` is a REAL comparison tier, unlike pilot — it is excluded for COST,
+          # not for honesty. A benchmark populating both whole-set tiers would put two of them
+          # in every `all` dispatch, and each is a full-length run on its own. Run it by name:
+          # `tier=full_verified`, or a `benchmark-full_verified-<bench>` label.
+          EXPLICIT_ONLY_TIERS = {"pilot", "full_verified"}
 
           # Is the repository actually checked out here? See the fail-open note below.
           tree_present = os.path.isdir("ci/benchmarks")
@@ -279,9 +321,10 @@ jobs:
     # 'benchmark-smoke-typo' label), which would otherwise be an empty-matrix error.
     if: needs.plan.outputs.has_legs == 'true'
     runs-on: [self-hosted, ibm-vpc]
-    # GitHub's default 360min job timeout is too tight for full/spreadsheetbench (912
-    # tasks x trials x iterations, one Docker container per task); self-hosted runners
-    # aren't GH-minute-billed, so a generous ceiling just prevents a silent mid-run kill.
+    # GitHub's default 360min job timeout is too tight for a whole-set tier (a benchmark's
+    # full task list x trials x iterations, and some benchmarks run a container per task);
+    # self-hosted runners aren't GH-minute-billed, so a generous ceiling just prevents a
+    # silent mid-run kill. Per-benchmark run shapes live in ci/benchmarks/<bench>/README.md.
     timeout-minutes: 1440
     # Repo default token is read-only; the "Comment results on the PR" step needs write.
     permissions:
@@ -299,6 +342,11 @@ jobs:
     env:
       ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+      # lite-rits proxy on skillberry-1 — the SAME box this self-hosted runner is on, so
+      # RITS_API_BASE is a plain localhost URL, not a VPC-internal address. Used only for a
+      # "rits/*" agent_model/optimizer_model id; see resolve_provider.sh.
+      RITS_API_BASE: ${{ secrets.RITS_API_BASE }}
+      RITS_API_KEY: ${{ secrets.RITS_API_KEY }}
       # Smoke DEFAULTS to 3 iterations (cheap, fast regression) but an explicit dispatch value
       # now wins, exactly as it does for NUM_TRIALS below and for the same reason: the input's
       # own default is "" so "user asked for 10" is distinguishable from "user asked for

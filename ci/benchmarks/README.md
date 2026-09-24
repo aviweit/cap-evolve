@@ -113,22 +113,28 @@ Cheapest way to exercise an arm: **Integration tests** → Run workflow → `ben
 
 ## Trigger the suite
 
-Runs come in two **tiers** (a first-class dimension in the workflow, same workflow + history page):
+Runs come in several **tiers** (a first-class dimension in the workflow, same workflow + history page):
 - **`smoke`** — a few representative tasks per benchmark (fast regression; the default).
 - **`full`** — the whole/representative benchmark per bench (thorough; expensive). Its tasks
   live under `ci/benchmarks/<bench>/full/tasks.json`; a bench with an empty list simply runs
-  zero tasks until populated (see below). `tau2/full/tasks.json` is already populated (50
-  tasks); `spreadsheetbench/full/tasks.json` is populated with the real 912-task set (fetched
-  separately from `smoke`'s 200-task sample via `SPREADSHEETBENCH_VARIANT=full_912` — see
-  `ci/benchmarks/spreadsheetbench/fetch_data.sh`), matching the population SpreadsheetBench's
-  self-reported leaderboard is computed over; `swebench` and `skillsbench` are not yet.
-  `rfe-creator/full/tasks.json` covers all 25 curated cases; a full run there costs real
-  money (~$235 for 3 iterations x 25 tasks x 3 trials, measured) — dispatch deliberately,
-  not routinely.
-  A 912-task run is long — the `bench` job has a 1440min (`24h`) `timeout-minutes` and
-  `full` defaults `SPREADSHEETBENCH_CONCURRENCY` to `8` (vs. smoke's `4`; override either
-  via the env var / workflow input if the runner's Docker headroom can't take it — each
-  container is ~8GB RAM / 2 CPU).
+  zero tasks until populated (see below). Not every benchmark populates it yet. A whole-set run
+  is long and can cost real money, so dispatch it deliberately, not routinely — the `bench` job
+  carries a 1440min (`24h`) `timeout-minutes` for that reason.
+- **`full_verified`** — a benchmark's **verified/curated re-release**, where upstream publishes
+  one. Generic by design: any bench that gains such a release populates
+  `ci/benchmarks/<bench>/full_verified/` and uses this same tier, rather than a name with that
+  benchmark's task count baked in. Like `pilot` it runs only when named
+  (`tier=full_verified`, or a `benchmark-full_verified-<bench>` label), never under `tier=all`
+  — but unlike `pilot` that exclusion is about **cost**, not about the numbers being
+  meaningless: a `full_verified` result is a real held-out number.
+- **`pilot`** — a cost/runtime measurement rig whose reward numbers are **not comparable to
+  anything**. Explicit dispatch only.
+
+> Tier **sizes, datasets, splits, turn budgets and costs are per-benchmark** and are documented
+> in `ci/benchmarks/<bench>/README.md`. They deliberately do not appear here: a tier is a
+> dimension of the suite, not a property of whichever benchmark needed it first. Which
+> benchmarks populate which tier is likewise not listed here — it is exactly the set of
+> `ci/benchmarks/<bench>/<tier>/tasks.json` files, which is what the planner reads.
 
   **`spreadsheetbench` runner prerequisites** (installed on `skillberry-1`):
   - **LibreOffice** (`sudo dnf install libreoffice-calc`). Scoring uses it to recalculate
@@ -224,7 +230,38 @@ No baseline-freezing step — `run_suite.sh` computes the baseline fresh, in the
 whatever ids are listed. Pick ids with headroom (baseline not already saturated) by running
 `run_suite.sh` against a candidate list and checking the report.
 
-Repo secrets required: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`.
+Repo secrets required: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` — the ete-litellm
+gateway, used for every plain (non-`rits/`-prefixed) `agent_model`/`optimizer_model` id.
+
+### RITS (skillberry-1 lite-rits proxy)
+
+A second provider, reached only through a `rits/<vendor>/<model>` model id in either
+dropdown. `resolve_provider.sh` strips the CI-only `rits/` prefix and resolves the rest to
+the `RITS_API_BASE`/`RITS_API_KEY` secrets — a LiteLLM proxy (`lite-rits`) running on
+skillberry-1 itself (`http://localhost:4000`), talking directly to IBM RITS's own API. Since
+the `ibm-vpc` self-hosted runner IS skillberry-1, this needs no new network path.
+
+- **Repo secrets required:** `RITS_API_BASE` (`http://localhost:4000`), `RITS_API_KEY`.
+- **Model ids** are the bare `<vendor>/<model>` strings in lite-rits's own scraped catalog
+  (e.g. `google/gemma-4-31B-it`), prefixed with `rits/` for the dropdown only.
+  `agent_model`/`optimizer_model` resolve independently, so a RITS agent with a
+  gateway optimizer (or vice versa) is a normal, deliberate combination.
+- **`agent_model`/`optimizer_model`'s curated RITS entries** are a general-purpose spread
+  across lite-rits's catalog, granite family excluded on request. Only
+  `rits/google/gemma-4-31B-it` is a genuine match to the WikiSkill paper's
+  (arXiv 2608.27454v1) SpreadsheetBench model axis (Qwen-3.5-4B/9B, Qwen-3.6-27B,
+  Gemma-4-31B, Gemini-3.5-Flash) — RITS carries no small Qwen or Gemini, so the rest of the
+  list is not a reproduction of that axis.
+- **Preflight:** `ci_setup.sh`'s gateway preflight is provider-aware — it skips the
+  ete-litellm `/models` entitlement check for a `rits/*` model (lite-rits's own `/v1/models`
+  is always empty by design: it builds routes dynamically per request rather than
+  publishing a static `model_list`) and instead runs the same completion probe against
+  `RITS_API_BASE`/`RITS_API_KEY`.
+- **Caveat:** `OPTIMIZER_MODEL: rits/*` points the `claude-code` CLI's
+  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` at lite-rits. It is UNVERIFIED whether
+  lite-rits speaks the Anthropic Messages API shape the CLI expects — a RITS
+  `agent_model` with a gateway (Claude) `optimizer_model` is the combination actually
+  exercised so far.
 
 > **Note:** GitHub only exposes `workflow_dispatch` (and evaluates `pull_request`
 > workflows) from the **default branch**, so `benchmarks.yml` becomes triggerable
