@@ -159,7 +159,7 @@ page has a **Type** column + filter.
 
 - **Manually:** Actions → **Benchmarks** → Run workflow → pick the **benchmark** (one of:
   `tau2` / `swebench` / `skillsbench` / `spreadsheetbench` / `rfe-creator` / `tau2-custom`)
-  and **tier** (`smoke` default / `full` / `pilot` / `full_verified`), plus any of these knobs
+  and **tier** (`smoke` default / `full` / `all` / `pilot` / `full_verified`), plus any of these knobs
   (all optional, sensible defaults):
 
   | input | default | applies to |

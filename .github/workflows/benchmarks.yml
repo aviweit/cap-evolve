@@ -13,7 +13,7 @@
 #
 # REAL models, real $ → NOT part of always-on CI. Runs ONLY when requested:
 #   * manually  — Actions → "Benchmarks" → Run workflow (pick a benchmark), or
-#   * on a PR   — add the `benchmark-test` label.
+#   * on a PR   — add a `benchmark-<tier>-<bench>` label (e.g. benchmark-smoke-tau2).
 #
 # REQUIRES a SELF-HOSTED runner on the IBM network (the gateway is VPC-internal;
 # GitHub-hosted runners cannot reach it). See ci/benchmarks/README.md +
@@ -182,8 +182,13 @@ jobs:
     # Trust guard: run PR code from ANY repo (same-repo or a fork) on the self-hosted
     # runner only when the PR author is a known collaborator — never for outside/
     # first-time contributors, who could otherwise run arbitrary code with secrets.
-    # PR trigger: any label starting with 'benchmark-'; the step below picks the
-    # exact tier×bench.
+    # PR trigger: any label CONTAINING 'benchmark-' — this is a substring test over the
+    # comma-joined label list, not a per-label prefix test, so an unrelated label that merely
+    # embeds the string (`no-benchmark-needed`) also admits the PR. That is deliberate here:
+    # over-admitting costs only a cheap planner run, and narrowing an authorization guard to
+    # sharpen a diagnostic would be the wrong trade. The planner applies the precise prefix
+    # test, so those PRs select nothing and exit 0 rather than being failed.
+    # The step below picks the exact tier×bench.
     # Guarding `plan` (not just `bench`) means an untrusted PR never even reaches the
     # planner, and `bench` inherits the guard transitively via `needs`.
     if: >-
@@ -246,8 +251,8 @@ jobs:
           # `pilot` is a cost/runtime measurement rig: its splits are sized for measurement,
           # so its rewards are not comparable to anything, and the aggregate job publishes
           # EVERY leg to benchmark-history. Letting "all" pick it up would put meaningless
-          # numbers on the benchmarks page. A `benchmark-pilot` label still works, because
-          # that names the tier deliberately.
+          # numbers on the benchmarks page. A `benchmark-pilot-<bench>` label still works,
+          # because that names both the tier and the bench deliberately.
           # `full_verified` is a REAL comparison tier, unlike pilot — it is excluded for COST,
           # not for honesty. A benchmark populating both whole-set tiers would put two of them
           # in every `all` dispatch, and each is a full-length run on its own. Run it by name:
@@ -303,13 +308,34 @@ jobs:
           # stdout fails the whole step with "Invalid format", which took down every
           # dispatch and every labelled PR (the legs were selected correctly; only the
           # reporting was wrong).
-          if not legs and any(l.startswith("benchmark-") for l in labels):
+          # ZERO LEGS IS A FAILURE, not a quiet success. `has_legs=false` skips the `bench`
+          # job, so without this the whole workflow reports green having measured nothing —
+          # the failure mode run 30682558719 was, and the one removing `all` makes reachable
+          # again: `all` used to mask a selection that matched nothing by running everything.
+          #
+          # Keyed on the OUTCOME, not on how the request arrived: a dispatch that names a
+          # tier the benchmark does not populate (tier=pilot + bench=tau2) selects nothing
+          # just as surely as a retired bare label does, and dispatch is now the only route
+          # to the benches that have no per-bench label.
+          #
+          # `requested` exists so an ordinary PR is never failed by this. The trust gate above
+          # is a SUBSTRING test on the joined label list, so it also admits a PR whose labels
+          # merely contain "benchmark-" somewhere (`no-benchmark-needed`). Those reach the
+          # planner, select nothing correctly, and must exit 0 — the prefix test here is what
+          # separates "asked for benchmarks and got none" from "never asked".
+          requested = (event == "workflow_dispatch"
+                       or any(l.startswith("benchmark-") for l in labels))
+          if not legs and requested:
+              how = (f"tier={tier_sel!r} benchmark={bench_sel!r}"
+                     if event == "workflow_dispatch" else f"labels={sorted(labels)}")
               print(
-                  f"::error::no legs matched {sorted(labels)} — bare `benchmark-<tier>` labels are "
-                  f"no longer honoured; use `benchmark-<tier>-<bench>` "
-                  f"(e.g. benchmark-smoke-tau2)",
+                  f"::error::no legs selected for {how} — nothing would run. Check that the "
+                  f"benchmark populates that tier (ci/benchmarks/<bench>/<tier>/tasks.json), "
+                  f"and that a PR label names a bench: benchmark-<tier>-<bench>, "
+                  f"e.g. benchmark-smoke-tau2.",
                   file=sys.stderr, flush=True,
               )
+              sys.exit(1)
 
           print("matrix=" + json.dumps(legs))
           print("has_legs=" + ("true" if legs else "false"))

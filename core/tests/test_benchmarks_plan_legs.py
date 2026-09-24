@@ -34,8 +34,13 @@ def _plan_script() -> str:
     return script
 
 
-def _run_plan_full(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
-    """Like _run_plan but also returns the stderr string."""
+def _run_plan_full(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None,
+                   expect_failure=False):
+    """Like _run_plan but also returns (legs, stderr, returncode).
+
+    Pass expect_failure=True for cases where a bare benchmark-* label is expected to cause
+    sys.exit(1) — without it the helper asserts returncode==0 as a safety net.
+    """
     env = dict(os.environ, EVENT=event)
     if tier_sel is not None:
         env["TIER_SEL"] = tier_sel
@@ -46,16 +51,17 @@ def _run_plan_full(*, event, tier_sel=None, bench_sel=None, labels=None, interve
     env["LABELS"] = json.dumps(labels or [])
     proc = subprocess.run([sys.executable, "-c", _plan_script()], capture_output=True,
                           text=True, cwd=str(REPO), env=env)
-    assert proc.returncode == 0, proc.stderr
+    if not expect_failure:
+        assert proc.returncode == 0, proc.stderr
+    # matrix= line is only written when the script reaches the print() after sys.exit check
     m = re.search(r"^matrix=(.*)$", proc.stdout, re.M)
-    assert m, proc.stdout
-    legs = [(leg["tier"], leg["bench"]) for leg in json.loads(m.group(1))]
-    return legs, proc.stderr
+    legs = [(leg["tier"], leg["bench"]) for leg in json.loads(m.group(1))] if m else []
+    return legs, proc.stderr, proc.returncode
 
 
 def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
-    legs, _ = _run_plan_full(event=event, tier_sel=tier_sel, bench_sel=bench_sel,
-                             labels=labels, intervention=intervention)
+    legs, _, _ = _run_plan_full(event=event, tier_sel=tier_sel, bench_sel=bench_sel,
+                                labels=labels, intervention=intervention)
     return legs
 
 
@@ -78,9 +84,25 @@ def test_single_bench_and_tier_dispatch(tier, bench):
 
 
 def test_all_is_not_a_valid_bench_sel():
-    """`all` is no longer a valid bench_sel — it must produce no legs."""
-    legs = _run_plan(event="workflow_dispatch", tier_sel="smoke", bench_sel="all")
+    """`all` is no longer a valid bench_sel. It selects nothing, and selecting nothing is a
+    FAILURE — a stale saved dispatch still naming `all` must not report green."""
+    legs, stderr, rc = _run_plan_full(event="workflow_dispatch", tier_sel="smoke",
+                                      bench_sel="all", expect_failure=True)
     assert legs == [], f"bench_sel='all' should produce no legs, got {legs}"
+    assert rc == 1 and "::error::" in stderr
+
+
+def test_a_dispatch_for_an_unpopulated_tier_fails_the_step():
+    """The path `all` used to mask, and the one that matters most now that dispatch is the only
+    route to the benches with no per-bench label: tau2 ships no pilot tier, so this selects
+    nothing. Zero legs skips the `bench` job, so without a non-zero exit the whole workflow
+    reports success having measured nothing."""
+    legs, stderr, rc = _run_plan_full(event="workflow_dispatch", tier_sel="pilot",
+                                      bench_sel="tau2", expect_failure=True)
+    assert legs == []
+    assert rc == 1, "a dispatch that selects nothing must fail, not report green"
+    assert "::error::" in stderr
+    assert "pilot" in stderr and "tau2" in stderr, "the annotation must name the selection"
 
 
 def test_tier_all_does_not_sweep_in_the_pilot():
@@ -151,23 +173,37 @@ def test_per_bench_label_unchanged():
     assert legs == [("full", "spreadsheetbench")]
 
 
-def test_bare_label_selects_nothing():
-    """bare `benchmark-smoke` / `benchmark-full` labels are no longer honoured."""
-    assert _run_plan(event="pull_request", labels=["benchmark-smoke"]) == []
-    assert _run_plan(event="pull_request", labels=["benchmark-full"]) == []
-
-
-def test_bare_label_emits_error_annotation():
-    """A bare benchmark-* label that matches no legs emits a GitHub ::error:: annotation
-    instead of silently succeeding — a bare label after the removal of 'all' would otherwise
-    look like a green no-op.  An unrelated label ('documentation') produces no annotation
-    because it is not a benchmark-* label at all."""
-    _, stderr = _run_plan_full(event="pull_request", labels=["benchmark-smoke"])
+def test_bare_label_fails_the_step():
+    """A bare benchmark-* label that matches no legs exits 1 and emits a ::error::
+    annotation — so the failure is visible rather than a silent green no-op.
+    An unrelated label ('documentation') produces no annotation and exits 0."""
+    _, stderr, rc = _run_plan_full(event="pull_request", labels=["benchmark-smoke"],
+                                   expect_failure=True)
+    assert rc == 1, f"bare label must exit 1, got {rc}"
     assert "::error::" in stderr, "bare label must emit a ::error:: annotation"
     assert "benchmark-smoke-tau2" in stderr, "annotation must suggest the correct form"
 
-    _, stderr_unrelated = _run_plan_full(event="pull_request", labels=["documentation"])
+    # both bare labels, not just one: they are separate labels on the repo and each is
+    # applyable on its own.
+    _, stderr_full, rc_full = _run_plan_full(event="pull_request", labels=["benchmark-full"],
+                                             expect_failure=True)
+    assert rc_full == 1 and "::error::" in stderr_full
+
+    _, stderr_unrelated, rc_unrelated = _run_plan_full(event="pull_request",
+                                                       labels=["documentation"])
+    assert rc_unrelated == 0, "non-benchmark label must exit 0"
     assert "::error::" not in stderr_unrelated, "non-benchmark label must not emit annotation"
+
+
+def test_a_label_merely_containing_benchmark_does_not_fail_the_pr():
+    """The trust gate is a SUBSTRING test on the joined label list, so a PR labelled
+    `no-benchmark-needed` reaches the planner. It correctly selects nothing — and must exit 0.
+    Keying the refusal on a prefix rather than on "did we reach here" is what prevents an
+    ordinary PR being failed by a benchmark guard it never asked for."""
+    legs, stderr, rc = _run_plan_full(event="pull_request", labels=["no-benchmark-needed"])
+    assert legs == []
+    assert rc == 0, "a PR that never asked for benchmarks must not be failed"
+    assert "::error::" not in stderr
 
 
 def test_unrelated_label_selects_nothing():
@@ -180,16 +216,27 @@ def test_pilot_label_reaches_only_the_bench_named():
     assert legs == [("pilot", "spreadsheetbench")]
 
 
-def test_pilot_label_for_an_unpopulated_bench_selects_nothing():
-    assert _run_plan(event="pull_request", labels=["benchmark-pilot-tau2"]) == []
+def test_pilot_label_for_an_unpopulated_bench_fails_the_step():
+    """benchmark-pilot-tau2 is a well-formed label but tau2 has no pilot tier — zero legs
+    selected, so the step exits 1 rather than silently reporting success.
+
+    Asserts the ANNOTATION too, not just the exit code: `legs == []` and `rc == 1` are both
+    satisfied by a planner that crashed outright (a traceback exits 1 and prints no matrix=
+    line), so without this the test would pass against a broken script."""
+    legs, stderr, rc = _run_plan_full(event="pull_request", labels=["benchmark-pilot-tau2"],
+                                      expect_failure=True)
+    assert legs == []
+    assert rc == 1
+    assert "::error::" in stderr, "must be the deliberate refusal, not an arbitrary crash"
 
 
 # ---- the pilot tier itself --------------------------------------------------
 
 def test_which_benches_ship_a_pilot_tier():
-    """Pinned deliberately: if another benchmark adds one, the assertions above need
-    revisiting too, because `tier=pilot` and the `benchmark-pilot` label fan out over
-    exactly the benches that ship the tier.
+    """Pinned deliberately: a benchmark that gains a pilot tier becomes reachable by
+    `tier=pilot` and by a `benchmark-pilot-<bench>` label, and one that has none now FAILS
+    such a dispatch rather than quietly selecting nothing — so this list is what decides
+    which selections are legitimate.
 
     swebench gained one when the harbor switch made a 250-task full run a multi-day,
     four-figure proposition: 50 stratified tasks (every repo represented, proportions
@@ -200,12 +247,11 @@ def test_which_benches_ship_a_pilot_tier():
     `pilot/tasks.json` so the tier is runnable *locally* (`TIER=pilot bash
     ci/benchmarks/lib/run_suite.sh parsec`), but it is deliberately absent from
     `benchmarks.yml`'s `BENCHES`, so the planner never enumerates it and the
-    `benchmark-pilot` / `tier=pilot` fan-out assertions above are unaffected — see
-    `test_pilot_label_reaches_only_the_benchmarks_that_ship_it`, which still lists two
-    benches. It stays out of CI because neither its task trees (internal Red Hat) nor
-    its kaegis simulators (`github.ibm.com/kaegis/simulation-harness`) exist outside
-    IBM/RH; revisit both this list and the fan-out assertions if that ever changes and
-    parsec becomes CI-dispatchable.
+    pilot assertions above are unaffected — see
+    `test_pilot_label_reaches_only_the_bench_named` and
+    `test_pilot_label_for_an_unpopulated_bench_fails_the_step`. It stays out of CI because
+    neither its task trees (internal Red Hat) nor its kaegis simulators exist outside
+    IBM/RH; revisit this list if that ever changes and parsec becomes CI-dispatchable.
     """
     shipped = sorted(p.parent.parent.name
                      for p in (REPO / "ci" / "benchmarks").glob("*/pilot/tasks.json"))

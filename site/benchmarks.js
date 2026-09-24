@@ -259,7 +259,7 @@ function render() {
     empty.hidden = false;
     empty.innerHTML = RECORDS.length
       ? "No runs match the current filters — try widening the time range."
-      : "No runs recorded yet — trigger the suite (add a <code>benchmark-smoke</code> label to a PR, or Actions → Benchmarks).";
+      : "No runs recorded yet — trigger the suite (add a <code>benchmark-smoke-&lt;bench&gt;</code> label to a PR, or Actions → Benchmarks).";
   } else {
     empty.hidden = true;
   }
