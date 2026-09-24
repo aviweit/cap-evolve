@@ -38,8 +38,8 @@ on:
       benchmark:
         description: "Which benchmark to run"
         type: choice
-        default: all
-        options: [all, tau2, swebench, skillsbench, spreadsheetbench, rfe-creator, tau2-custom]
+        default: tau2
+        options: [tau2, swebench, skillsbench, spreadsheetbench, rfe-creator, tau2-custom]
       intervention:
         description: "How the candidate reaches the model."
         type: choice
@@ -182,16 +182,15 @@ jobs:
     # Trust guard: run PR code from ANY repo (same-repo or a fork) on the self-hosted
     # runner only when the PR author is a known collaborator — never for outside/
     # first-time contributors, who could otherwise run arbitrary code with secrets.
-    # PR trigger: any label containing 'benchmark-smoke' or 'benchmark-full'
-    # (an all-label or a per-bench one); the step below picks the exact tier×bench.
+    # PR trigger: any label starting with 'benchmark-'; the step below picks the
+    # exact tier×bench.
     # Guarding `plan` (not just `bench`) means an untrusted PR never even reaches the
     # planner, and `bench` inherits the guard transitively via `needs`.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) &&
-        (contains(join(github.event.pull_request.labels.*.name, ','), 'benchmark-smoke') ||
-         contains(join(github.event.pull_request.labels.*.name, ','), 'benchmark-full')))
+        contains(join(github.event.pull_request.labels.*.name, ','), 'benchmark-'))
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       # An empty matrix is an error to GitHub, not a no-op, so `bench` keys its own `if:`
@@ -211,7 +210,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TIER_SEL: ${{ github.event.inputs.tier || 'smoke' }}
-          BENCH_SEL: ${{ github.event.inputs.benchmark || 'all' }}
+          BENCH_SEL: ${{ github.event.inputs.benchmark || 'tau2' }}
           INTERVENTION_SEL: ${{ github.event.inputs.intervention || 'direct' }}
           # toJSON (not a ','-join) so labels stay exactly comparable: label names may
           # themselves contain commas, and the PR gate below is an exact-match test.
@@ -243,9 +242,6 @@ jobs:
           ARM_OF = {"direct": "tau2_custom_direct", "blackbox": "tau2_custom_blackbox"}
           # Both arms are one benchmark on disk: ci/benchmarks/tau2_custom/<arm>/<tier>/.
           BENCH_DIR = {v: "tau2_custom/" + k for k, v in ARM_OF.items()}
-          # `all` sweeps both arms regardless of `intervention`: it means every leg, and the two
-          # arms are the comparison they exist for.
-
           # Tiers that `tier=all` must NOT sweep in — they only run when named explicitly.
           # `pilot` is a cost/runtime measurement rig: its splits are sized for measurement,
           # so its rewards are not comparable to anything, and the aggregate job publishes
@@ -266,7 +262,7 @@ jobs:
 
           event = os.environ["EVENT"]
           tier_sel = os.environ.get("TIER_SEL") or "smoke"
-          bench_sel = os.environ.get("BENCH_SEL") or "all"
+          bench_sel = os.environ.get("BENCH_SEL") or "tau2"
           intervention = (os.environ.get("INTERVENTION_SEL") or "direct").strip().lower()
           labels = set(json.loads(os.environ.get("LABELS") or "[]") or [])
 
@@ -281,10 +277,9 @@ jobs:
                   if event == "workflow_dispatch":
                       tier_ok = (tier_sel == tier
                                  or (tier_sel == "all" and tier not in EXPLICIT_ONLY_TIERS))
-                      run = tier_ok and bench_sel in ("all", bench)
+                      run = tier_ok and bench_sel == bench
                   else:
-                      # pull_request: benchmark-<tier> (all of tier) OR benchmark-<tier>-<bench>
-                      run = f"benchmark-{tier}" in labels or f"benchmark-{tier}-{bench}" in labels
+                      run = f"benchmark-{tier}-{bench}" in labels
                   # A tier only exists for a benchmark that populates it. run_suite.sh already
                   # no-ops on a missing tasks.json, but emitting the leg anyway claims a slot on
                   # the single serialized self-hosted runner just to warn and exit — precisely
@@ -308,6 +303,14 @@ jobs:
           # stdout fails the whole step with "Invalid format", which took down every
           # dispatch and every labelled PR (the legs were selected correctly; only the
           # reporting was wrong).
+          if not legs and any(l.startswith("benchmark-") for l in labels):
+              print(
+                  f"::error::no legs matched {sorted(labels)} — bare `benchmark-<tier>` labels are "
+                  f"no longer honoured; use `benchmark-<tier>-<bench>` "
+                  f"(e.g. benchmark-smoke-tau2)",
+                  file=sys.stderr, flush=True,
+              )
+
           print("matrix=" + json.dumps(legs))
           print("has_legs=" + ("true" if legs else "false"))
           print(f"selected {len(legs)} leg(s): {json.dumps(legs)}", file=sys.stderr, flush=True)

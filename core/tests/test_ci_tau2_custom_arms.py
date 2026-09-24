@@ -42,9 +42,9 @@ def _arm_case() -> str:
 
 def test_both_arms_are_dispatchable_and_planned():
     """A bench in the picker but not in BENCHES is unselectable; the reverse is worse — it
-    runs under `benchmark=all` with no way to run it alone."""
+    would run on every dispatch with no way to run it alone."""
     wf = WORKFLOW.read_text(encoding="utf-8")
-    options = re.search(r"options: \[all, tau2,(.*?)\]", wf, re.S).group(1)
+    options = re.search(r"benchmark:.*?options: \[(.*?)\]", wf, re.S).group(1)
     benches = re.search(r"BENCHES = \[(.*?)\]", wf, re.S).group(1)
     assert "tau2-custom" in options, "the picker must offer tau2-custom"
     for arm in ARMS:

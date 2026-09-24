@@ -99,8 +99,7 @@ the only difference is how a candidate reaches the agent:
 Pick them with **`benchmark: tau2-custom`** plus **`intervention: direct | blackbox`**, which maps
 straight onto the spec key of the same name. `intervention` is ignored by every other benchmark —
 they all run direct. Internally each arm stays its own leg (`tau2_custom_direct` /
-`tau2_custom_blackbox`) so it keeps its own tier task lists, history row and concurrency group, and
-`benchmark=all` sweeps both regardless of `intervention`.
+`tau2_custom_blackbox`) so each keeps its own tier task lists, history row and concurrency group.
 
 Their rewards are comparable **to each other**, and *not* to the plain `tau2` leg: that one
 also optimizes `policy.md` and installs the public `sierra-research/tau2-bench`, while the arms
@@ -155,12 +154,13 @@ Runs come in several **tiers** (a first-class dimension in the workflow, same wo
     `ANTHROPIC_AUTH_TOKEN`); no extra credentials (the eval runs `--dry-run`, no Jira).
 
 The tier surfaces everywhere: PR checks read **`<tier> / <bench>`** (e.g. `smoke / tau2`,
-`full / swebench`), the report header reads **`## <Tier> suite — <bench>`**, and the history page
-has a **Type** column + filter.
+`full / swebench`), the report header reads **`## <Tier> suite — <bench>`**, and the history
+page has a **Type** column + filter.
 
-- **Manually:** Actions → **Benchmarks** → Run workflow → pick the **benchmark** (`all` / one) and
-  **tier** (`smoke` default / `full` / `all`), plus any of these knobs (all optional, sensible
-  defaults):
+- **Manually:** Actions → **Benchmarks** → Run workflow → pick the **benchmark** (one of:
+  `tau2` / `swebench` / `skillsbench` / `spreadsheetbench` / `rfe-creator` / `tau2-custom`)
+  and **tier** (`smoke` default / `full` / `pilot` / `full_verified`), plus any of these knobs
+  (all optional, sensible defaults):
 
   | input | default | applies to |
   |---|---|---|
@@ -209,8 +209,6 @@ Two consequences worth knowing before you compare numbers:
 `runmeta.json` records the `algorithm`, so the history page never compares a hill-climb number
 against an agent-optimize one as though they were the same run type.
 - **On a PR — labels:**
-  - **`benchmark-smoke`** / **`benchmark-full`** → run every benchmark of that tier, the two
-    delivery arms included.
   - **`benchmark-smoke-<bench>`** / **`benchmark-full-<bench>`** (`tau2` · `swebench` ·
     `skillsbench` · `spreadsheetbench` · `rfe-creator` · `tau2_custom_direct` ·
     `tau2_custom_blackbox`) → run just that one (combine labels to run a subset).

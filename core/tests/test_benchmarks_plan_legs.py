@@ -34,7 +34,8 @@ def _plan_script() -> str:
     return script
 
 
-def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
+def _run_plan_full(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
+    """Like _run_plan but also returns the stderr string."""
     env = dict(os.environ, EVENT=event)
     if tier_sel is not None:
         env["TIER_SEL"] = tier_sel
@@ -48,39 +49,54 @@ def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None, intervention
     assert proc.returncode == 0, proc.stderr
     m = re.search(r"^matrix=(.*)$", proc.stdout, re.M)
     assert m, proc.stdout
-    return [(leg["tier"], leg["bench"]) for leg in json.loads(m.group(1))]
+    legs = [(leg["tier"], leg["bench"]) for leg in json.loads(m.group(1))]
+    return legs, proc.stderr
+
+
+def _run_plan(*, event, tier_sel=None, bench_sel=None, labels=None, intervention=None):
+    legs, _ = _run_plan_full(event=event, tier_sel=tier_sel, bench_sel=bench_sel,
+                             labels=labels, intervention=intervention)
+    return legs
 
 
 # The two tau2_custom_* entries are the tau2 airline benchmark's DELIVERY ARMS (direct =
 # in-process, blackbox = Store + Proxy-Agent), not two more benchmarks. They are listed here because
 # the planner treats them as ordinary benches: each populates smoke/integration/full, so every
-# fan-out assertion below holds for them unchanged.
+# per-bench assertion below holds for them unchanged.
 ALL_BENCHES = ["tau2", "swebench", "skillsbench", "spreadsheetbench", "rfe-creator",
                "tau2_custom_direct", "tau2_custom_blackbox"]
 
 
-# ---- adding `pilot` must not disturb existing selections ---------------------
+# ---- per-bench dispatch selects exactly that bench ---------------------------
 
 @pytest.mark.parametrize("tier", ["smoke", "full"])
-def test_single_tier_dispatch_unchanged(tier):
-    legs = _run_plan(event="workflow_dispatch", tier_sel=tier, bench_sel="all")
-    assert sorted(legs) == sorted((tier, b) for b in ALL_BENCHES)
+@pytest.mark.parametrize("bench", ALL_BENCHES)
+def test_single_bench_and_tier_dispatch(tier, bench):
+    """Each bench dispatched individually returns exactly that one leg."""
+    legs = _run_plan(event="workflow_dispatch", tier_sel=tier, bench_sel=bench)
+    assert legs == [(tier, bench)], f"bench_sel={bench!r} tier_sel={tier!r} -> {legs}"
+
+
+def test_all_is_not_a_valid_bench_sel():
+    """`all` is no longer a valid bench_sel — it must produce no legs."""
+    legs = _run_plan(event="workflow_dispatch", tier_sel="smoke", bench_sel="all")
+    assert legs == [], f"bench_sel='all' should produce no legs, got {legs}"
 
 
 def test_tier_all_does_not_sweep_in_the_pilot():
-    """`tier=all` must stay exactly what it was: smoke+full for every benchmark.
+    """`tier=all` must only sweep smoke+full — never pilot or full_verified.
 
     pilot is a measurement rig whose rewards are not comparable, and the aggregate job
     publishes every leg to benchmark-history — so "all" must not pick it up.
     """
-    legs = _run_plan(event="workflow_dispatch", tier_sel="all", bench_sel="all")
+    legs = _run_plan(event="workflow_dispatch", tier_sel="all", bench_sel="tau2")
     assert [b for t, b in legs if t == "pilot"] == [], "pilot leaked into tier=all"
-    assert sorted(legs) == sorted((t, b) for t in ("smoke", "full") for b in ALL_BENCHES)
+    assert sorted(legs) == [("full", "tau2"), ("smoke", "tau2")]
 
 
 def test_pilot_runs_only_when_named_explicitly():
-    legs = _run_plan(event="workflow_dispatch", tier_sel="pilot", bench_sel="all")
-    assert sorted(legs) == [("pilot", "spreadsheetbench"), ("pilot", "swebench")]
+    legs = _run_plan(event="workflow_dispatch", tier_sel="pilot", bench_sel="spreadsheetbench")
+    assert legs == [("pilot", "spreadsheetbench")]
 
 
 def test_single_bench_dispatch_unchanged():
@@ -88,9 +104,10 @@ def test_single_bench_dispatch_unchanged():
     assert legs == [("smoke", "tau2")]
 
 
-def test_default_dispatch_is_still_smoke_everywhere():
+def test_default_dispatch_is_smoke_tau2():
+    """The default bench is now `tau2` — a single-bench dispatch, not a fan-out."""
     legs = _run_plan(event="workflow_dispatch")
-    assert sorted(legs) == sorted(("smoke", b) for b in ALL_BENCHES)
+    assert legs == [("smoke", "tau2")]
 
 
 # ---- tau2-custom + intervention resolves to a real, populated leg ------------
@@ -123,9 +140,10 @@ def test_an_unknown_intervention_falls_back_to_direct():
 
 # ---- pull_request labels ----------------------------------------------------
 
-def test_tier_label_unchanged():
-    legs = _run_plan(event="pull_request", labels=["benchmark-smoke"])
-    assert sorted(legs) == sorted(("smoke", b) for b in ALL_BENCHES)
+def test_per_bench_label_selects_exactly_that_bench():
+    """Only benchmark-<tier>-<bench> labels are accepted; bare labels have no effect."""
+    legs = _run_plan(event="pull_request", labels=["benchmark-smoke-tau2"])
+    assert legs == [("smoke", "tau2")]
 
 
 def test_per_bench_label_unchanged():
@@ -133,13 +151,33 @@ def test_per_bench_label_unchanged():
     assert legs == [("full", "spreadsheetbench")]
 
 
+def test_bare_label_selects_nothing():
+    """bare `benchmark-smoke` / `benchmark-full` labels are no longer honoured."""
+    assert _run_plan(event="pull_request", labels=["benchmark-smoke"]) == []
+    assert _run_plan(event="pull_request", labels=["benchmark-full"]) == []
+
+
+def test_bare_label_emits_error_annotation():
+    """A bare benchmark-* label that matches no legs emits a GitHub ::error:: annotation
+    instead of silently succeeding — a bare label after the removal of 'all' would otherwise
+    look like a green no-op.  An unrelated label ('documentation') produces no annotation
+    because it is not a benchmark-* label at all."""
+    _, stderr = _run_plan_full(event="pull_request", labels=["benchmark-smoke"])
+    assert "::error::" in stderr, "bare label must emit a ::error:: annotation"
+    assert "benchmark-smoke-tau2" in stderr, "annotation must suggest the correct form"
+
+    _, stderr_unrelated = _run_plan_full(event="pull_request", labels=["documentation"])
+    assert "::error::" not in stderr_unrelated, "non-benchmark label must not emit annotation"
+
+
 def test_unrelated_label_selects_nothing():
     assert _run_plan(event="pull_request", labels=["documentation"]) == []
 
 
-def test_pilot_label_reaches_only_the_benchmarks_that_ship_it():
-    legs = _run_plan(event="pull_request", labels=["benchmark-pilot"])
-    assert sorted(legs) == [("pilot", "spreadsheetbench"), ("pilot", "swebench")]
+def test_pilot_label_reaches_only_the_bench_named():
+    """Use benchmark-pilot-<bench> — bare labels are no longer honoured."""
+    legs = _run_plan(event="pull_request", labels=["benchmark-pilot-spreadsheetbench"])
+    assert legs == [("pilot", "spreadsheetbench")]
 
 
 def test_pilot_label_for_an_unpopulated_bench_selects_nothing():
@@ -192,9 +230,14 @@ def _run_plan_in(cwd, *, event, tier_sel=None, bench_sel=None, labels=None):
 def test_planner_fails_open_without_a_checked_out_tree(tmp_path):
     """The bug: the plan job had no checkout, so the tasks.json filter matched NOTHING and a
     dispatch selected zero legs while still reporting success. Filtering must only apply when
-    there is a tree to inspect."""
-    legs, err = _run_plan_in(tmp_path, event="workflow_dispatch", tier_sel="smoke", bench_sel="all")
-    assert sorted(legs) == sorted(("smoke", b) for b in ALL_BENCHES), (
+    there is a tree to inspect.
+
+    Uses an explicit bench (tau2) — `all` is no longer a valid value. The property being
+    tested is that a bench with no tasks.json on disk is still selected (unfiltered), not
+    that every bench is selected at once.
+    """
+    legs, err = _run_plan_in(tmp_path, event="workflow_dispatch", tier_sel="smoke", bench_sel="tau2")
+    assert legs == [("smoke", "tau2")], (
         f"planner selected {legs} with no checkout — it must fall back to unfiltered selection"
     )
     assert "filter disabled" in err
