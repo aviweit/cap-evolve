@@ -32,6 +32,19 @@ All notable changes to cap-evolve are documented here. The format follows
   `iterations`/`trials` already followed and that `test_an_explicit_iterations_dispatch_reaches_smoke`
   documents; a new test pins it for **every** input in the file, so the next one added cannot
   repeat it.
+- **An agent-optimize wave of parallel siblings silently spent the whole `iterations` budget.**
+  The derived `stop_condition` defines a round as "one candidate taken to a full-val gate
+  decision", so siblings gated together each consume one — but nothing said so, and the very
+  next clause reads as encouragement to go wide ("Use every round the budget allows"). On run
+  35861572021 (`iterations=3`) the agent proposed three siblings in one wave, booked all three
+  rounds, and finished with none left — having produced a clear result it could not act on: the
+  same knowledge scored 0.511 on the `prompt.md` prose surface (with two task regressions) and
+  0.600 on `task_template.md`, with the composition between them at 0.556. The obvious next
+  round, re-testing the winning surface alone, was unavailable. The briefing now states that
+  siblings each cost a round and asks the agent to keep rounds in reserve for what a wave
+  shows; the `iterations` input description now says what one iteration buys in each
+  orchestration mode. No change to the accounting itself — `iterations` still bounds gate
+  decisions, which is what bounds cost and what `spend.py`/`grow.py` reason about.
 
 ### Added
 - **`full_verified`: a tier on a benchmark's verified/curated re-release — for SpreadsheetBench,
