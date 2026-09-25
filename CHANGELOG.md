@@ -20,6 +20,18 @@ All notable changes to cap-evolve are documented here. The format follows
   `grow.py` exists to buy replication only for candidates that look promising. `run_suite.sh`
   now also prints the planned rollout count next to the split it was computed from, so an
   over-budget dispatch is visible in the first seconds of the log instead of at hour 24.
+- **`optimizer_usd_per_iter`'s `"0"` default made every spend ceiling unreachable.** In a
+  GitHub `||` chain only the EMPTY string is falsy — `"0"` is truthy — so the input always won
+  and `${{ inputs.optimizer_usd_per_iter || (matrix.tier == 'smoke' && '50' || '0') }}` could
+  never reach its own smoke branch. Smoke's $50/iteration cap was dead code, and since `0`
+  means *unlimited* (`run_suite.sh` omits the spend clause from the derived agent-mode
+  `stop_condition` entirely at 0) every blank dispatch ran with **no dollar ceiling** — on run
+  35861572021 the operator had to pass the cap by hand to bound an Opus 5 agent loop. The
+  default is now `""`, so blank means "the tier default" ($50 on smoke, unlimited elsewhere,
+  unchanged) while an explicit `0` still disables the cap deliberately. This is the rule
+  `iterations`/`trials` already followed and that `test_an_explicit_iterations_dispatch_reaches_smoke`
+  documents; a new test pins it for **every** input in the file, so the next one added cannot
+  repeat it.
 
 ### Added
 - **`full_verified`: a tier on a benchmark's verified/curated re-release — for SpreadsheetBench,
