@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # cap-evolve run on tau2-bench airline, blackbox arm: the candidate becomes a Skillberry Store
 # skill and the Proxy-Agent injects it into the agent's LLM calls.
-# Prereq: bash examples/tau2_custom/blackbox/setup.sh
+# Prereq: bash examples/tau2_airline/blackbox/setup.sh
 #
 #   bash run.sh                 # the pinned spec (capevolve.yaml)
 #   bash run.sh --smoke         # the cheap smoke spec over the same stack
-#   SPEC=capevolve.itest.yaml bash run.sh     # any spec already copied into the project
+#   SPEC=capevolve.yaml bash run.sh     # any spec already copied into the project
 #
 # STARTS the stack (it was provisioned by setup.sh) and leaves it running: SPA binds ONE
 # skill at start, and restarting it mid-evaluation would swap the skill under a running
