@@ -12,10 +12,18 @@ benchmark — the intake/integration step should CLONE + INSTALL it (not assume 
 exists). Here is everything intake needs:
 
 # 1. CAPABILITY TO OPTIMIZE  (a copy is edited each iteration; the original is never touched)
-- type:         [system-prompt, tools]      # the airline POLICY and the TOOLS, jointly
+- type:         [tools]                     # the agent's TOOL SURFACE only
 - tools means:  edit tool docstrings/descriptions; edit tool behavior/code; and
                 ADD/REMOVE tools, including composite tools that call existing tools
-- seed:         tau2-bench's canonical airline policy + its airline tool set
+- seed:         tau2-bench's canonical airline tool set
+- the POLICY is NOT part of the capability and is NEVER edited. It is the benchmark's own
+                specification of the task — the rules the agent is GRADED against — so seal it in
+                the spec (`protected_paths: ["policy/*"]`). Letting a candidate rewrite it is
+                letting it edit the exam: soften an inconvenient rule and the reward rises,
+                because the same text is what judges the agent. It stays PRESENT (the agent needs
+                it) and unmodified. NOTE `capabilities:` does NOT gate writes — it selects which
+                validate() runs and which guidance is surfaced — so the seal is what closes this,
+                not the capability list.
 - seed tools:   the seed tools file must be CLEAN, runnable code as intake would
                 produce it — real tool bodies, no baked-in optimizer/editing
                 instructions in its docstrings (what the optimizer may change to the
@@ -29,7 +37,16 @@ exists). Here is everything intake needs:
 # 2. BENCHMARK / DATASET  (the eval) — INSTALL IT DURING INTAKE
 - benchmark:    tau2-bench, airline domain
 - repo:         https://github.com/sierra-research/tau2-bench   (latest main; record the resolved commit)
-- install:      git clone into vendor/tau2-bench, then `pip install -e vendor/tau2-bench`
+- install:      git clone into vendor/tau2-bench, then
+                  pip install -e vendor/tau2-bench "websockets>=13.0"
+                WHY the extra package: tau2's data_model imports its voice stack
+                UNCONDITIONALLY, but `websockets` ships only in the [voice] extra — so a base
+                install cannot even `import tau2`. `websockets` alone is enough; do NOT install
+                [voice], which drags in livekit, boto3 and google-cloud-aiplatform.
+- UNMODIFIED:   install the benchmark AS PUBLISHED. Do NOT fork it and do not edit the checkout —
+                a benchmark edited to suit the harness stops being comparable to anyone else's
+                numbers, including our own earlier ones. If you believe it must be changed, STOP
+                and say so rather than changing it.
 - tasks:        "adapter" — the adapter loads all 50 airline tasks from tau2
                 (tau2.domains.airline.environment.get_tasks)
 - splits:       all 50 tasks as train = val = test  (no-holdout fit metric; the engine
@@ -104,7 +121,7 @@ exists). Here is everything intake needs:
                 depth, and impose a DEPTH MANDATE: state the GOAL (maximize the eval score) and require
                 each iteration to be a substantial multi-cluster, multi-edit-class sweep — improve
                 multiple tools' code + validation + enriched returns/errors, add new tools, sharpen
-                many tool docs, AND fix the prompt, together in ONE candidate, with each fix scoped to
+                many tool docs, together in ONE candidate, with each fix scoped to
                 protect passing tasks (non-regression). "Freedom" does NOT mean do little — a single
                 small edit is an under-used iteration; diagnose ALL clusters and fix as many as
                 possible. CRITICAL — the authored INSTRUCTIONS MUST demand BREADTH: each iteration
@@ -123,7 +140,7 @@ exists). Here is everything intake needs:
                 clusters), Phase 2 implement fan-out (one edit-subagent per ISSUE, each in its own
                 worktree, each PREFERRING to edit the EXISTING tool's code body to enforce its rule), then
                 merge all edits into ONE candidate. The authored INSTRUCTIONS MUST also encode: (iv) the
-                NON-OVERFITTING guardrail — every prompt/tool edit must be a GENERAL rule/policy/validation
+                NON-OVERFITTING guardrail — every tool edit must be a GENERAL rule/validation
                 that generalizes across the class of inputs; NEVER hardcode a task-specific
                 id/value/date/name/answer (a guard fires on the general condition, e.g. "payment_id not on
                 the user's profile", NOT `if reservation_id == "ABC123"`); a literal special-case overfits,
@@ -147,16 +164,10 @@ exists). Here is everything intake needs:
                 require MULTIPLE edit classes per iteration and ADD at least one NEW code-bearing tool
                 (composite atomic-WRITE / loop / validation) whenever a CAPABILITY-GAP or action-STALL
                 cluster is present — adding new tools is ENCOURAGED, not an exception.
-- scope to the SELECTED capabilities: BOTH system-prompt and tools are selected here, so the
-                instructions reference BOTH skills and the optimizer may edit EITHER. (Generic rule: if
-                only ONE capability were selected, the instructions, the guidance, and the editable
-                files must cover ONLY that one — e.g. tools-only ⇒ no prompt-editing guidance, no
-                system-prompt skill, the prompt is not presented as editable.)
-- EDIT BOTH the prompt AND the tools — they are EQUALLY fair game; pick whatever fixes the clusters:
-    * PROMPT (system-prompt), per ./guidance/system-prompt/SKILL.md: rewrite/clarify a rule, add the
-      WHY, consolidate redundant rules, add a missing rule grounded in the trajectories, add an
-      example, tighten the output contract. NEVER drop a needed rule (change/consolidate/add, don't
-      delete). The prompt is HIGH-VALUE — not a last resort.
+- scope to the SELECTED capability: tools ONLY is selected here, so the instructions, the
+                guidance and the editable files must cover ONLY that one — no prompt-editing
+                guidance, no system-prompt skill, and the policy is NOT presented as editable.
+- EDIT THE TOOLS:
     * TOOLS, per ./guidance/tools/SKILL.md: prefer CODE-BEARING changes — a validation tool that
       enforces a rule in code then calls the existing tool and removes the raw one; a workflow/loop
       tool that collapses a recurring sequence; a composite WRITE tool that performs a stalled
@@ -183,6 +194,14 @@ exists). Here is everything intake needs:
 - max_usd: 400      max_optimizer_usd: 400
 - gate:             paired (per-task paired SE — banks real 1-task gains), k_se 0.2
 - store:            git          (every iteration committed for an inspectable process)
+- ALSO author a cheap SMOKE spec beside the full one (capevolve.smoke.yaml + its own pinned
+                split): 2 tasks, num_trials 1, max_iterations 1, max_usd ~10. It exists to prove
+                the WHOLE loop end to end — intake, deploy, rollout, score, gate, sealed test,
+                report — for a couple of dollars, before anyone spends the full budget. Keep every
+                other key identical to the full spec so the smoke exercises the same wiring; only
+                the SCALE differs. Wire it so one flag selects it and VERIFY that flag actually
+                resolves to the smoke spec: a `--smoke` that silently falls back to the full spec
+                turns a $10 check into a $400 run, and nothing in the output says so.
 ```
 
 > The bundled `examples/tau2_airline/` is the **result** of following this prompt:
