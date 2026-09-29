@@ -608,6 +608,11 @@ _PKG_MANAGERS = (
 _PKG_NAME = {"make": "make", "git": "git"}
 
 
+#: Why ensure_tools() could not act, for require_tools() to append. Set on every skipped path so the
+#: error distinguishes "we did not try" from "we tried and failed".
+_AUTO_INSTALL_SKIPPED: Optional[str] = None
+
+
 def _privileged_prefix() -> Optional[list]:
     """How to run a package install, or None if this process cannot.
 
@@ -634,15 +639,23 @@ def ensure_tools() -> None:
     Whatever remains missing afterwards is reported by :func:`require_tools`, so the failure still
     names the command and the fix rather than surfacing somewhere unrelated.
     """
+    global _AUTO_INSTALL_SKIPPED
     if sys.platform not in ("linux", "linux2"):
-        return                                  # see _PKG_MANAGERS: no safe auto-install elsewhere
+        _AUTO_INSTALL_SKIPPED = (
+            f"auto-install is not attempted on {sys.platform}: Homebrew installs GNU make as "
+            f"`gmake`, which would leave `make` unsatisfied. Install it by hand.")
+        return
     missing = [t for t in _REQUIRED_TOOLS if not shutil.which(t)]
     installable = [t for t in missing if t in _PKG_NAME]
     if not installable:
         return                                  # nothing to do — the idempotent fast path
     prefix = _privileged_prefix()
     if prefix is None:
-        return                                  # require_tools() will name them and the fix
+        _AUTO_INSTALL_SKIPPED = (
+            f"auto-install of {installable} was skipped: this process is not root and has no "
+            f"passwordless sudo, so it cannot install system packages. Put the tool in the runner "
+            f"image, or grant the runner user NOPASSWD sudo for the package manager.")
+        return
     for name, base in _PKG_MANAGERS:
         if not shutil.which(name):
             continue
@@ -656,8 +669,9 @@ def ensure_tools() -> None:
         else:
             # Do not raise here: require_tools() owns the error text, and a failed auto-install
             # must not hide WHICH tool is still missing behind a package-manager transcript.
-            print(f"  could not auto-install {still or pkgs} via {name} (rc={rc}): "
-                  f"{out[-300:]}", file=sys.stderr)
+            _AUTO_INSTALL_SKIPPED = (
+                f"auto-install of {still or pkgs} via {name} failed (rc={rc}): {out[-300:]}")
+            print(f"  {_AUTO_INSTALL_SKIPPED}", file=sys.stderr)
         return
 
 
@@ -681,6 +695,8 @@ def require_tools() -> None:
     for tool, why in missing:
         lines.append(f"  - {tool}: needed to {why}")
         lines.append(f"      install: {_install_hint(tool)}")
+    if _AUTO_INSTALL_SKIPPED:
+        lines.append(f"  NOTE: {_AUTO_INSTALL_SKIPPED}")
     lines.append("Install them on this machine (or bake them into the runner image) and re-run.")
     raise RuntimeError("\n".join(lines))
 
@@ -698,8 +714,12 @@ def _install_service(d: Path) -> None:
         if rc != 0:
             raise RuntimeError(f"could not create py3.11 venv in {d}: {out}")
         _run(["uv", "pip", "install", "pip", "--python", ".venv/bin/python"], cwd=d)
-    rc, out = _run(". .venv/bin/activate && (make install-requirements || pip install -e .)",
-                   cwd=d)
+    # Fallback order matters. `uv pip` honours the project's [tool.uv.sources] / [[tool.uv.index]],
+    # which is the ONLY way `torch==2.10.0+cpu` resolves (a local version served solely by
+    # download.pytorch.org); plain pip cannot see those tables and fails on that pin. uv is already
+    # required here, so this fallback works on a machine that has no make.
+    rc, out = _run(". .venv/bin/activate && (make install-requirements || "
+                   "uv pip install -e . || pip install -e .)", cwd=d)
     if rc != 0:
         # Name the cause rather than whatever line happened to land in the tail. `make` missing is
         # the case that masquerades as a dependency-resolution failure: the shell falls through to

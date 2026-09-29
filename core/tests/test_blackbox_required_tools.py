@@ -154,3 +154,31 @@ def test_the_install_failure_names_make_when_that_is_the_cause():
     assert "make: command not found" in body, "the masking case must be detected explicitly"
     assert "torch" in body, "and the message must explain why pip then fails on torch"
     assert "out[-" in body, "show a useful tail, not an arbitrary slice of the middle"
+
+
+# --- why nothing was installed ----------------------------------------------------------
+
+def test_the_error_says_WHY_auto_install_did_not_happen(monkeypatch):
+    """A silent no-op followed by "not on PATH" reads as if no attempt was made. On the CI runner
+    (user `skillberry`, no passwordless sudo) that is exactly what happened, and the message gave
+    the operator no way to tell a privilege problem from a missing package manager."""
+    monkeypatch.setattr(E.shutil, "which", lambda c, *a, **kw: None if c == "make" else "/usr/bin/x")
+    monkeypatch.setattr(E, "_privileged_prefix", lambda: None)
+    monkeypatch.setattr(E.sys, "platform", "linux")
+    monkeypatch.setattr(E, "_AUTO_INSTALL_SKIPPED", None)
+    with pytest.raises(RuntimeError) as ei:
+        E.require_tools()
+    msg = str(ei.value)
+    assert "skipped" in msg
+    assert "sudo" in msg, "must name the privilege reason, not just that it failed"
+
+
+def test_install_does_not_depend_on_make_because_uv_reads_the_torch_index():
+    """`uv pip` honours the project's [tool.uv.sources]/[[tool.uv.index]], which is the only way
+    `torch==2.10.0+cpu` resolves; plain pip cannot see those tables. uv is already required, so the
+    fallback works on a machine with no make."""
+    i = SRC.index("def _install_service(")
+    body = SRC[i:SRC.index("\ndef ", i + 10)]
+    assert "uv pip install -e ." in body
+    assert body.index("uv pip install -e .") < body.index("pip install -e .)"), \
+        "uv must be tried BEFORE plain pip, which fails on the +cpu local version"
