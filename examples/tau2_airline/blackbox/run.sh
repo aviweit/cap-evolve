@@ -97,7 +97,7 @@ fi
 say "2/3  The Skillberry stack (Store, then Proxy-Agent)"
 # ORDER MATTERS: the store must be healthy before SPA starts, and SPA binds ONE skill by
 # name at start. Both starts are idempotent — a healthy service is reported, not restarted.
-"$PY" - <<'PYEOF' || die "could not start the Skillberry stack"
+( cd "$REPO" && "$PY" - <<'PYEOF'
 import json, sys
 sys.path.insert(0, "skills/interventions/llm-proxies/blackbox/scripts")
 import blackbox_env
@@ -105,6 +105,7 @@ blackbox_env.start_store()
 blackbox_env.start_spa("my_skill")
 print("  " + json.dumps(blackbox_env.status()))
 PYEOF
+) || die "could not start the Skillberry stack"
 
 say "3/3  cap-evolve run  (spec: $SPEC)"
 # The tau2 commit is part of the MEASUREMENT, not decoration: the benchmark owns the policy the
@@ -123,5 +124,5 @@ rc=$?
 # Left running on purpose (a later run reuses a healthy stack). To stop:
 #   python -c "import sys; sys.path.insert(0,'skills/interventions/llm-proxies/blackbox/scripts'); import blackbox_env; blackbox_env.stop_all()"
 printf '\nstack left running. stop it with:\n  %s -c "import sys; sys.path.insert(0,%s); import blackbox_env; blackbox_env.stop_all()"\n' \
-  "$PY" "'skills/interventions/llm-proxies/blackbox/scripts'"
+  "$PY" "'$REPO/skills/interventions/llm-proxies/blackbox/scripts'"
 exit $rc
