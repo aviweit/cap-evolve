@@ -206,10 +206,28 @@ def probe(model: str | None = None, *, max_tokens: int = 2048) -> dict:
     with the RESOLVED id. ``max_tokens`` is generous on purpose: a reasoning model spends
     a tight budget on thinking and returns HTTP 200 with EMPTY content, which looks like
     a broken model rather than a truncated reply.
+
+    DEFAULTS TO THE USER-SIMULATOR MODEL, NOT THE AGENT'S. Under this arm the agent model is
+    the SPA sentinel, which ``normalize()`` deliberately leaves unprefixed so the proxy route
+    stays an exact string match — so litellm would have no provider for it and this probe would
+    RAISE instead of probing. It is also the wrong thing to ask: the sentinel is not a gateway
+    model at all, and what needs proving here is the GATEWAY credential path. ``user_model()``
+    is the arm's guaranteed-real gateway id (it refuses the sentinel itself), which makes it
+    both the working choice and the meaningful one. SPA's own health is the intervention
+    skill's check, not this one's.
     """
+    # Guard BEFORE importing litellm, so an explicitly-passed sentinel is refused by NAME and
+    # offline, rather than surfacing as litellm's opaque "LLM Provider NOT provided" error.
+    m = normalize(model) if model else user_model()
+    if is_spa_route(m):
+        raise RuntimeError(
+            f"probe() cannot use the proxy sentinel {m!r}: it is a ROUTE, not a gateway model, "
+            f"so litellm has no provider for it. probe() exists to prove the GATEWAY credential "
+            f"path — pass a real gateway id, or leave it unset to use the user-simulator model. "
+            f"The proxy's own health is checked by the blackbox intervention skill.")
+
     import litellm
 
-    m = normalize(model or (os.environ.get("TAU2_AGENT_MODEL") or DEFAULT_GATEWAY_MODEL))
     base, _ = gateway_credentials()
     register_zero_cost(m)
     resp = litellm.completion(
@@ -235,6 +253,15 @@ if __name__ == "__main__":  # self-check: routing is a credential path
     # normalizing it to openai/ibm/skillberry-local would silently disable the blackbox arm.
     assert normalize(SPA_AGENT_MODEL) == SPA_AGENT_MODEL
     assert is_spa_route(SPA_AGENT_MODEL) and not is_spa_route(DEFAULT_GATEWAY_MODEL)
+    # probe() must REFUSE the sentinel by name, offline, before it reaches litellm. It used to
+    # default to TAU2_AGENT_MODEL, which under this arm IS the sentinel — so the credential probe
+    # raised litellm's "LLM Provider NOT provided" instead of probing anything.
+    try:
+        probe(SPA_AGENT_MODEL)
+    except RuntimeError as e:
+        assert "ROUTE, not a gateway model" in str(e), f"wrong refusal: {e}"
+    else:
+        raise AssertionError("probe() accepted the proxy sentinel — it cannot resolve")
     # Neutralize the operator's .env for the DEFAULTING checks below. Without this the first
     # agent_model() call lazily loads the repo-root .env, which re-supplies the TAU2_* vars we
     # just popped (`setdefault`), and the assertion silently tests the operator's machine

@@ -1,19 +1,38 @@
-"""Project adapter — optimize tau2-bench AIRLINE (system-prompt POLICY + TOOLS) via the ETE gateway.
+"""Project adapter — optimize tau2-bench AIRLINE (the TOOL SURFACE) delivered through the proxy.
 
-Wires cap-evolve to the tau2 airline domain:
+This is the BLACKBOX arm. The candidate is not loaded from disk by the benchmark: it is deployed
+as ONE skill package in the Skillberry Store, and the Skillberry Proxy-Agent injects it into the
+agent's LLM calls, so tau2 never sees skill files. The capability is ``[tools]`` ONLY — the
+airline POLICY is the benchmark's own exam text, reaches the agent unchanged, and is never an
+artifact the optimizer can edit. The sibling ``../../adapters/adapter.py`` is the DIRECT arm of
+the same benchmark; delivery is the only thing that differs.
 
   * ``tasks``      -> all 50 airline tasks (stable, non-empty for every split).
-  * ``run_batch``  -> tau2's own batch runner (``run_tasks``) with a gateway-backed
-                      ``TextRunConfig``; maps each ``SimulationRun`` to a ``Rollout``.
+  * ``run_batch``  -> tau2's own batch runner (``run_tasks``) with a ``TextRunConfig`` naming
+                      this arm's domain + agent (``airline_skillberry`` / ``llm_agent_skillberry``,
+                      both registered by ``tau2_tailoring``, not by the benchmark) and the proxy
+                      sentinel as the agent model; maps each ``SimulationRun`` to a ``Rollout``.
+  * ``run_trials`` -> all N trials in ONE ``run_tasks`` call, grouped by ``sim.trial``.
   * ``run_target`` -> thin wrapper over ``run_batch`` for one task.
   * ``score``      -> tau2's own reward in [0,1] (deterministic given a rollout);
                       gold-AWARE but gold-SAFE, ARGUMENT-LEVEL feedback: for each
                       failing check it names the wrong argument key + the AGENT'S OWN
                       wrong value (never the gold value) and what was available on the
                       user's own profile/state, so the optimizer can localize the fix.
-  * ``apply``      -> makes a candidate LIVE by overriding the registry's airline
-                      env constructor (candidate policy + candidate tools). Idempotent;
-                      always resets to a pristine snapshot before applying.
+  * ``trajectories``-> tau2's native per-simulation results, which under this arm must contain
+                      BOTH the primitive calls and the compound skill calls. Only one of the two
+                      means a merge window is wrong (see ``tau2_tailoring``) — a WIRING bug, not
+                      a weak candidate.
+  * ``apply``      -> installs the outside-in tailoring (``tau2_tailoring.install()``: the domain,
+                      the agent factory, and the two trajectory-merge wrappers), then makes the
+                      candidate live in the STORE — frozen primitives first so a skill redeploy
+                      cannot cascade into the protected substrate, then the skill, then the proxy
+                      is rebound onto it. Idempotent.
+                      It MUST NOT RAISE: cap-evolve enters ``live()`` inline, so an exception
+                      would abort the run with the budget half spent over one flaky restart.
+                      A deploy failure is RECORDED and the rollouts come back errored, so the
+                      harness EXCLUDES the candidate rather than scoring it 0.0 — a failed
+                      deployment is infrastructure noise, not a verdict on the capability.
 
 ``cap-evolve check`` does NO live LLM call: ``tasks``/``score``/``materialize`` are
 network-free, and gateway credential resolution is lazy (only on a real ``run_batch``).

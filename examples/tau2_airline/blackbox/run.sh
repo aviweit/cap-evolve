@@ -107,7 +107,10 @@ print("  " + json.dumps(blackbox_env.status()))
 PYEOF
 
 say "3/3  cap-evolve run  (spec: $SPEC)"
-echo "  benchmark: $(git -C "$REPO/vendor/skillberry-benchmarks" rev-parse --short HEAD 2>/dev/null || echo '?')"
+# The tau2 commit is part of the MEASUREMENT, not decoration: the benchmark owns the policy the
+# agent reads, the task set and the reward checks, so a reward is comparable only against a named
+# commit. Say UNKNOWN loudly rather than printing a bare '?' that reads as cosmetic.
+echo "  benchmark: tau2-bench @ $(git -C "$REPO/vendor/tau2-bench" rev-parse --short HEAD 2>/dev/null || echo 'UNKNOWN (vendor/tau2-bench is not a git checkout)')"
 echo "  agent: $TAU2_AGENT_MODEL (via SPA) | user sim: $TAU2_USER_MODEL (direct to gateway) | concurrency $TAU2_MAX_CONCURRENCY"
 echo "------ pre-run cost preview (spends nothing) ------"
 "$VENV/bin/cap-evolve" estimate --spec "$PROJECT/$SPEC" --project "$PROJECT" || true
