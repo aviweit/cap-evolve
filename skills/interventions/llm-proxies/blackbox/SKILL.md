@@ -141,6 +141,17 @@ infrastructure noise and not a verdict on the capability.
   fails at config time instead of as a wall of 401s. Observed for real on a benchmark
   baseline. Scrub defensively too — persisted traces are the last place to discover this.
 
+## Prerequisites on the machine
+
+`provision()` and every service start call `require_tools()`, which needs `uv` (per-service py3.11
+venvs), `make` (`make install-requirements` / `make run` / `make stop` — the only supported
+lifecycle) and `git` (cloning both services).
+
+Missing `make`/`git` are installed for you on **Linux** when the process can do it unattended (root
+or passwordless `sudo`); already-present tools cost one `which` and run nothing. **macOS installs
+nothing** — `make` normally ships with the Command Line Tools. Whatever is still missing is reported
+by name with the fix for the current platform.
+
 ## Pinned versions
 
 `scripts/blackbox_env.py` holds the pins (store tag `0.2.1`, agent commit `e359494`), each

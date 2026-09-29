@@ -34,6 +34,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -552,6 +553,138 @@ def _patch_agent_logging(d: Path, ref: str) -> None:
         ref=ref, what="agent basicConfig", marker=_PATCH_MARKER)
 
 
+#: External commands both services need, and what each is for. `make` is NOT optional despite the
+#: pip fallback below: BOTH services ship a Makefile, `make run`/`make stop` are the only supported
+#: lifecycle, and the store resolves `torch==2.10.0+cpu` through `[tool.uv.sources]` in its
+#: pyproject — which its `make` target honours and plain `pip` cannot see, because `+cpu` is a local
+#: version that exists only on download.pytorch.org. So a missing `make` does not merely skip a
+#: convenience: it drops to a pip path that CANNOT resolve the pinned torch, and the resulting
+#: "No matching distribution found for torch==2.10.0+cpu" names the wrong cause entirely.
+def _install_hint(tool: str) -> str:
+    """How to get ``tool`` on THIS platform.
+
+    macOS deliberately does not say "brew install make": Homebrew installs GNU make as ``gmake``
+    and leaves ``make`` resolving to the system one (or to nothing), so following that advice would
+    not satisfy the check it was given for. The Command Line Tools provide ``make`` under its own
+    name, which is what this stack shells out to.
+    """
+    if sys.platform == "darwin":
+        return {
+            "uv": "brew install uv   # or https://docs.astral.sh/uv/",
+            "make": "xcode-select --install   # Command Line Tools; NOT `brew install make`, "
+                    "which installs GNU make as `gmake` and leaves `make` unsatisfied",
+            "git": "xcode-select --install   # or brew install git",
+        }[tool]
+    return {
+        "uv": "https://docs.astral.sh/uv/",
+        "make": "apt-get install -y make   # or dnf/yum/zypper/apk equivalent",
+        "git": "apt-get install -y git   # or dnf/yum/zypper/apk equivalent",
+    }[tool]
+
+
+_REQUIRED_TOOLS = {
+    "uv":   "create the services' py3.11 venvs",
+    "make": "install and run both services (make install-requirements / make run / make stop)",
+    "git":  "clone both services at their pinned refs",
+}
+
+
+#: Non-interactive install command per package manager, in preference order. Each is IDEMPOTENT by
+#: the manager's own semantics: installing an already-present package is a no-op that exits 0.
+#:
+#: LINUX ONLY, on purpose. Homebrew is absent because `brew install make` installs GNU make as
+#: `gmake` and leaves `make` unsatisfied — an auto-install that appears to succeed and changes
+#: nothing the check can see is worse than no auto-install. macOS gets a correct hint instead
+#: (see `_install_hint`), and on macOS `make` normally arrives with the Command Line Tools anyway.
+_PKG_MANAGERS = (
+    ("apt-get", ["apt-get", "install", "-y", "--no-install-recommends"]),
+    ("dnf", ["dnf", "install", "-y"]),
+    ("yum", ["yum", "install", "-y"]),
+    ("zypper", ["zypper", "--non-interactive", "install"]),
+    ("apk", ["apk", "add", "--no-cache"]),
+)
+
+#: Package name per tool where it differs from the command name.
+_PKG_NAME = {"make": "make", "git": "git"}
+
+
+def _privileged_prefix() -> Optional[list]:
+    """How to run a package install, or None if this process cannot.
+
+    Root needs no prefix. Otherwise only PASSWORDLESS sudo is acceptable: `sudo -n` fails
+    immediately rather than blocking on a password prompt, which in CI would hang the job until the
+    step timeout with no indication why.
+    """
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return []
+    if shutil.which("sudo") and _run(["sudo", "-n", "true"], timeout=20)[0] == 0:
+        return ["sudo", "-n"]
+    return None
+
+
+def ensure_tools() -> None:
+    """Make the tools this stack needs present. IDEMPOTENT, and safe to call repeatedly.
+
+    Tools already on PATH are skipped without running anything — that is the common case and it
+    costs one `which` per tool. Only genuinely missing ones are installed, and only when this
+    process can do so unattended (root, or passwordless sudo). `uv` is deliberately NOT auto
+    installed: it is a Python-toolchain choice with its own installer, and silently pulling it from
+    a system package manager could shadow a deliberately pinned one.
+
+    Whatever remains missing afterwards is reported by :func:`require_tools`, so the failure still
+    names the command and the fix rather than surfacing somewhere unrelated.
+    """
+    if sys.platform not in ("linux", "linux2"):
+        return                                  # see _PKG_MANAGERS: no safe auto-install elsewhere
+    missing = [t for t in _REQUIRED_TOOLS if not shutil.which(t)]
+    installable = [t for t in missing if t in _PKG_NAME]
+    if not installable:
+        return                                  # nothing to do — the idempotent fast path
+    prefix = _privileged_prefix()
+    if prefix is None:
+        return                                  # require_tools() will name them and the fix
+    for name, base in _PKG_MANAGERS:
+        if not shutil.which(name):
+            continue
+        pkgs = [_PKG_NAME[t] for t in installable]
+        if name == "apt-get":
+            _run(prefix + ["apt-get", "update", "-qq"], timeout=600)
+        rc, out = _run(prefix + base + pkgs, timeout=1200)
+        still = [t for t in installable if not shutil.which(t)]
+        if rc == 0 and not still:
+            print(f"  ✓ installed missing tool(s) via {name}: {', '.join(pkgs)}")
+        else:
+            # Do not raise here: require_tools() owns the error text, and a failed auto-install
+            # must not hide WHICH tool is still missing behind a package-manager transcript.
+            print(f"  could not auto-install {still or pkgs} via {name} (rc={rc}): "
+                  f"{out[-300:]}", file=sys.stderr)
+        return
+
+
+def require_tools() -> None:
+    """Fail by name if an external command this stack needs is still missing. IDEMPOTENT.
+
+    A pure check with no side effects, so calling it from several entry points costs one `which`
+    per tool and nothing else. It runs :func:`ensure_tools` first, so a machine that merely lacks a
+    build tool is fixed rather than refused — and a machine that cannot be fixed unattended gets an
+    error naming the command and the install line.
+
+    Two failure modes, both confusing after the fact, which is why this is called from more than one
+    place: at install a missing `make` degrades to a pip path that fails on an unrelated-looking
+    torch pin, and at start there is no fallback at all.
+    """
+    ensure_tools()
+    missing = [(t, why) for t, why in _REQUIRED_TOOLS.items() if not shutil.which(t)]
+    if not missing:
+        return
+    lines = [f"the blackbox stack needs {len(missing)} command(s) that are not on PATH:"]
+    for tool, why in missing:
+        lines.append(f"  - {tool}: needed to {why}")
+        lines.append(f"      install: {_install_hint(tool)}")
+    lines.append("Install them on this machine (or bake them into the runner image) and re-run.")
+    raise RuntimeError("\n".join(lines))
+
+
 def _install_service(d: Path) -> None:
     """Create the service's own py3.11 venv and install it.
 
@@ -559,9 +692,7 @@ def _install_service(d: Path) -> None:
     venv must live at ``<service>/.venv`` and be activated by the same shell that runs
     make — not merely referenced by interpreter path.
     """
-    if not shutil.which("uv"):
-        raise RuntimeError("uv is required to create the service venvs "
-                           "(https://docs.astral.sh/uv/)")
+    require_tools()
     if not (d / ".venv").is_dir():
         rc, out = _run(["uv", "venv", "-p", "3.11", ".venv"], cwd=d)
         if rc != 0:
@@ -570,7 +701,16 @@ def _install_service(d: Path) -> None:
     rc, out = _run(". .venv/bin/activate && (make install-requirements || pip install -e .)",
                    cwd=d)
     if rc != 0:
-        raise RuntimeError(f"install failed in {d}: {out}")
+        # Name the cause rather than whatever line happened to land in the tail. `make` missing is
+        # the case that masquerades as a dependency-resolution failure: the shell falls through to
+        # `pip install -e .`, which cannot see the store's `[tool.uv.sources]` torch index.
+        hint = ""
+        if "make: command not found" in out or "make: not found" in out:
+            hint = ("\n  CAUSE: `make` is not on PATH, so the shell fell back to plain "
+                    "`pip install -e .` — which cannot resolve this service's pinned torch "
+                    "(`+cpu` is a local version served only by download.pytorch.org, declared "
+                    "via [tool.uv.sources] that pip ignores). Install make and re-run.")
+        raise RuntimeError(f"install failed in {d}:{hint}\n--- last output ---\n{out[-1200:]}")
     print(f"  ✓ installed {d.name}")
 
 
@@ -592,6 +732,7 @@ def provision(*, store_ref: Optional[str] = None, agent_ref: Optional[str] = Non
     (measured before this existed: 1.10 MB/min for the agent, ~660MB per 10 hours).
     """
     load_env()
+    require_tools()          # before any clone: fail in seconds, not after two checkouts
     sd, ad = store_dir(), agent_dir()
     sref = store_ref or os.environ.get("SKILLBERRY_STORE_REF") or STORE_REF
     aref = agent_ref or os.environ.get("SKILLBERRY_AGENT_REF") or AGENT_REF
@@ -698,6 +839,9 @@ def _start_detached(d: Path, env: dict, service_log, *, extra: str = "",
     Make's own stdout (which also carries a ``tail -F`` mirror of the service log) goes to a
     transient start-capture, resolved by the caller via _resolve_start_capture.
     """
+    # No fallback exists here: `make run` is the only supported lifecycle, so a missing make would
+    # surface as a health-check timeout on a service that was never launched.
+    require_tools()
     service_log = Path(service_log)
     service_log.parent.mkdir(parents=True, exist_ok=True)
     if rotate:
