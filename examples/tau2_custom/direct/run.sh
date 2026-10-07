@@ -12,6 +12,23 @@
 set -uo pipefail
 EX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$EX_DIR/../../.." && pwd)"
+
+load_dotenv(){
+  local f="$1" line key val
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in ''|\#*) continue ;; *=*) ;; *) continue ;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+    case "$val" in \"*\") val="${val#\"}"; val="${val%\"}" ;; \'*\') val="${val#\'}"; val="${val%\'}" ;; esac
+    [ -n "${!key+x}" ] || export "$key=$val"
+  done < "$f"
+}
+load_dotenv "$REPO/.env"
+
 BASE="${BASE:-$REPO/.capevolve}"
 PROJECT="${PROJECT:-$BASE/project}"
 VENV="${VENV:-$REPO/.venv}"

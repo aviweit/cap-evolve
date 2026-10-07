@@ -13,6 +13,28 @@
 set -uo pipefail
 EX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$EX_DIR/../../.." && pwd)"
+
+load_dotenv(){
+  local f="$1" line key val
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in ''|\#*) continue ;; *=*) ;; *) continue ;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+    case "$val" in \"*\") val="${val#\"}"; val="${val%\"}" ;; \'*\') val="${val#\'}"; val="${val%\'}" ;; esac
+    [ -n "${!key+x}" ] || export "$key=$val"
+  done < "$f"
+}
+# On THIS arm the agent "model" is the SPA sentinel, not a model id, so a TAU2_AGENT_MODEL
+# in .env would route the agent straight to the gateway and quietly turn the blackbox arm
+# into the direct one — measuring an agent with no capability injected at all. Remember
+# whether the CALLER set it; .env alone must not redirect the agent past the proxy.
+TAU2_AGENT_MODEL_EXPLICIT="${TAU2_AGENT_MODEL+1}"
+load_dotenv "$REPO/.env"
+
 BASE="${BASE:-$REPO/.capevolve-blackbox}"
 PROJECT="${PROJECT:-$BASE/project}"
 VENV="${VENV:-$REPO/.venv}"
@@ -51,7 +73,8 @@ export TAU2_INFRA_RETRIES="${TAU2_INFRA_RETRIES:-2}"
 # The AGENT is the SPA sentinel — tau2 routes that exact string to the proxy. The USER
 # SIMULATOR goes STRAIGHT to the gateway: proxying it would inject the capability into the
 # very thing measuring the agent. gateway.py refuses the sentinel for the simulator.
-export TAU2_AGENT_MODEL="${TAU2_AGENT_MODEL:-ibm/skillberry-local}"
+[ -n "$TAU2_AGENT_MODEL_EXPLICIT" ] || TAU2_AGENT_MODEL="ibm/skillberry-local"
+export TAU2_AGENT_MODEL
 export TAU2_USER_MODEL="${TAU2_USER_MODEL:-aws/gpt-oss-120b}"
 export SPA_REMOTE_ENV_URL="${SPA_REMOTE_ENV_URL:-http://127.0.0.1:8004}"
 ENV_PORT="${ENV_PORT:-8004}"
