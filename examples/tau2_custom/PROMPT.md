@@ -13,6 +13,8 @@ Use only information in this current cap-evolve repo root folder on the current 
 Do not use external documentation, web searches, prior knowledge, other repositories, branches, tags, or commits.
 Treat this repository as the sole source of truth. If required information is missing, state that it is missing rather than guessing.
 Start with RUN.md and follow it exactly.
+A file this prompt names may be absent from the working tree. If so, read it from the
+current branch with `git show HEAD:<path>`; that is still this repository.
 
 
 Follow RUN.md to run a cap-evolve optimization. Onboard this as a brand-new
@@ -92,6 +94,8 @@ exists). Here is everything intake needs:
 # 2. BENCHMARK / DATASET  (the eval) — INSTALL IT DURING INTAKE
 - cap-evolve itself: there is NO virtualenv and nothing installed — create one first
                 (uv venv -p 3.11 .venv) and `pip install -e core`.
+- skills dir:   `export CAPEVOLVE_SKILLS_DIR=$PWD/skills` in EVERY shell that runs cap-evolve.
+                Read skills from the repo's `skills/`, not from a globally installed Skill tool.
 - benchmark:    tau2-bench, airline domain
 - repo:         https://github.com/skillberry-ai/skillberry-benchmarks.git
                 pin commit a3a83266008275e9d800fd709927fa3dc4f23ec5 → vendor/skillberry-benchmarks
@@ -104,9 +108,10 @@ exists). Here is everything intake needs:
 - domain:       direct → "airline";  blackbox → "airline_skillberry"
 - tasks:        "adapter" — all 50 airline tasks from
                 tau2.domains.airline.environment.get_tasks; no network in tasks()
-- splits:       all 50 as train = val = test (no-holdout fit metric; the engine logs a
-                splits_warning and the report flags the test number as a fit metric). Pin them
-                in split_ids.json.
+- splits:       TWO split files, both no-holdout (train = val = test; the engine logs a
+                splits_warning and the report flags the test number as a fit metric):
+                  split_ids.json        all 50 tasks, for a later full run
+                  split_ids_task9.json  task 9 only; THIS run's split_ids_file (section 6)
 
 # 2b. THE BENCHMARK'S ENVIRONMENT SERVICE  [BLACKBOX ONLY — skip entirely for direct]
 - tau2 HAS one — the Environment Manager. The intervention skill requires such a service
@@ -151,6 +156,12 @@ exists). Here is everything intake needs:
                 openai/aws/gpt-oss-120b). [BLACKBOX ONLY] the AGENT's model is the SPA-routed name
                 (default `ibm/skillberry-local`) while the user simulator stays on the gateway
                 model — the intervention skill states why that boundary is a correctness rule.
+- [BLACKBOX ONLY] SPA's upstream model: the proxy forwards the agent's calls to
+                `SPA_MODEL_NAME`, not to TAU2_AGENT_MODEL. It MUST name the same model as the
+                agent under test, in litellm form (`openai/<model>`). Pass it explicitly when
+                starting the proxy. If it is unset, the proxy falls back to its built-in
+                default (`openai/gpt-oss-120b`), and the arm measures a different model with no
+                error.
 - concurrency:  TAU2_MAX_CONCURRENCY=125 on the direct arm. [BLACKBOX ONLY] start LOW (e.g. 4) —
                 every agent call funnels through one proxy and one store process.
 
@@ -166,8 +177,11 @@ exists). Here is everything intake needs:
 - the OPTIMIZER's credentials are SEPARATE and already handled: the `claude-code` optimizer
                 inherits them from the run owner's Claude Code environment. Nothing about them
                 belongs in the spec or the adapter.
-- agent AND user simulator:  aws/gpt-oss-120b  (TAU2_AGENT_MODEL / TAU2_USER_MODEL), routed as
-                the litellm string `openai/aws/gpt-oss-120b`. Normalize to that form ONCE and
+- agent AND user simulator:  the values of TAU2_AGENT_MODEL / TAU2_USER_MODEL (and, on
+                blackbox, SPA_MODEL_NAME) in the shell or the repo `.env` WIN. Precedence:
+                shell > `.env` > this prompt. `aws/gpt-oss-120b` is only the fallback for an
+                unset key, and the gateway may not serve it. Record the resolved model in
+                PROJECT.md. Route it as the litellm string `openai/<model>`. Normalize to that form ONCE and
                 idempotently — `openai/openai/…` 404s. Model ids are gateway ALIASES and
                 CASE-SENSITIVE (`Azure/…` and `azure/…` can coexist), so confirm the alias
                 against the gateway's own catalog before the first run rather than assuming it.
@@ -216,11 +230,15 @@ exists). Here is everything intake needs:
                 reward_info only to know WHICH action/argument failed (the gold action's arg KEYS are
                 safe, its VALUES are not). Fall back to the tool-name message when a piece isn't safely
                 derivable.
+- pairing:      pair each tool result with its call BY POSITION (the n-th result after an
+                assistant turn answers its n-th tool call), not by id. On the blackbox arm the
+                environment service records every call and result with an EMPTY id, so
+                pairing by id collapses all calls onto one result.
 - objective:    maximize mean reward on the VAL split
 
 # 4b. TRAJECTORIES  (the FULL traces the optimizer reads) — PATH IS AN INPUT
 - where:        persist tau2's native per-task results (full transcript + reward_info) via
-                run_tasks(save_path=...) into a per-eval dir UNDER THE RUN, at the ONE path
+                tau2.run.run_tasks(save_to=...) into a per-eval dir UNDER THE RUN, at the ONE path
                 format every tau2 adapter in this repo shares:
                 <run_dir>/native_sims/<tag>/<split>/results_<YYYYmmdd_HHMMSS>_<pid>.json
                 (<tag> is the candidate dir from ctx, under EITHER name the harness uses —
