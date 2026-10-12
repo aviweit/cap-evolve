@@ -16,10 +16,10 @@ protected_paths: ["primitive_tools/*", "my_skill/SKILL.md", "reference/*"] # the
 optimizer_skill: claude-code
 optimizer_model: claude-opus-4-8
 optimizer_max_turns: 400                 # generous; the $ cap below is the real ceiling
-optimizer_usd_per_iter: 40               # per-iteration $ cap (claude --max-budget-usd)
+optimizer_usd_per_iter: 50               # per-iteration $ cap (claude --max-budget-usd)
 optimizer_instructions_file: optimizer/INSTRUCTIONS.md # authored from the template, scoped to this arm
 runner_repo_path: ../../vendor/tau2-bench # the tau2 clone, read-only context for the optimizer
-target_model: aws/claude-sonnet-5        # the gateway model the agent under test runs on
+target_model: aws/claude-haiku-4-5       # the gateway model the agent under test runs on
 target_profile_file: ""
 
 # --- how to iterate ------------------------------------------------------------
@@ -37,7 +37,7 @@ split_test: 0.25
 split_ids_file: split_ids_budget.json    # pinned no-holdout split (train = val = test)
 
 # --- scoring -------------------------------------------------------------------
-num_trials: 5
+num_trials: 5                            # trials per task (mean + SE + pass^k)
 metrics_display: []
 metric_primary: ""                       # blank = the tau2 reward
 metric_directions: []
@@ -47,7 +47,7 @@ gate_mode: paired                        # per-task paired SE
 gate_k_se: 0.2
 
 # --- budget --------------------------------------------------------------------
-max_iterations: 2
+max_iterations: 3                        # three real optimizer iteration proves optimize -> gate -> finalize
 stall: 3                                 # stop after N consecutive rejects
 max_metric_calls: 0                      # 0 = unlimited
 max_usd: 400                             # binds only on cost the adapter reports
