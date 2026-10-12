@@ -27,6 +27,15 @@ PY="$VENV/bin/python"
 BASE="${BASE:-$REPO/.capevolve-blackbox}"
 PROJECT="$BASE/project"
 BB="$REPO/skills/interventions/llm-proxies/blackbox/scripts"
+WITH_DASHBOARD="${WITH_DASHBOARD:-1}"
+for arg in "$@"; do
+  case "$arg" in
+    --dashboard)    WITH_DASHBOARD=1 ;;
+    --no-dashboard) WITH_DASHBOARD=0 ;;
+    -h|--help) echo "usage: setup.sh [--dashboard|--no-dashboard]  (default: --dashboard)"; exit 0 ;;
+    *) echo "unknown option: $arg  (use --dashboard | --no-dashboard)" >&2; exit 2 ;;
+  esac
+done
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mSETUP FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -63,6 +72,12 @@ say "3/6  Install cap-evolve + tau2 into the venv"
 # `voice` extra, so install it explicitly with tau2's own constraint.
 VIRTUAL_ENV="$VENV" uv pip install -q -e "$REPO/core" -e "$TAU2_DIR" "websockets>=13.0" \
   || die "uv pip install failed"
+# The live dashboard is optional: without it `cap-evolve run` simply skips it.
+if [ "$WITH_DASHBOARD" = "1" ]; then
+  VIRTUAL_ENV="$VENV" uv pip install -q -e "$REPO/dashboard/backend" \
+    && echo "  dashboard installed (cap-evolve run picks a free port per run base and prints the URL)" \
+    || echo "  (optional) dashboard not installed — runs still work"
+fi
 N="$("$PY" -c "from tau2.domains.airline.environment import get_tasks; print(len(get_tasks('base')))")" \
   || die "tau2 import failed"
 [ "$N" = "50" ] || die "expected 50 airline tasks, got $N"
