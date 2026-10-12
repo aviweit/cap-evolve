@@ -30,7 +30,7 @@ load_dotenv "$REPO/.env"
 VENV="${VENV:-$REPO/.venv}"
 case "$VENV" in /*) ;; *) VENV="$REPO/$VENV" ;; esac
 PY="$VENV/bin/python"
-PROJECT="${BASE:-$REPO/.capevolve}/project"
+PROJECT="${BASE:-$REPO/.capevolve-blackbox}/project"   # same default as setup.sh
 BB="$REPO/skills/interventions/llm-proxies/blackbox/scripts"
 ENV_PORT=8004
 # /tmp, like the Skillberry services' logs; rotated by the intervention skill's helper.

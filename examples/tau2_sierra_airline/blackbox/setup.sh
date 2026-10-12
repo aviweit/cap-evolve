@@ -23,7 +23,8 @@ TAU2_REFERENCE_SHA="4ce7c0397c1eb65c9bbe59aeacfe1ca44a1cd699"
 VENV="${VENV:-$REPO/.venv}"
 case "$VENV" in /*) ;; *) VENV="$REPO/$VENV" ;; esac
 PY="$VENV/bin/python"
-BASE="${BASE:-$REPO/.capevolve}"
+# Its OWN base: the two arms are separate onboardings. Runs land here too.
+BASE="${BASE:-$REPO/.capevolve-blackbox}"
 PROJECT="$BASE/project"
 BB="$REPO/skills/interventions/llm-proxies/blackbox/scripts"
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
