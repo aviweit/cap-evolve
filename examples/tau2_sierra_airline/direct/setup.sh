@@ -57,7 +57,10 @@ if [ "$SHA" = "$TAU2_REFERENCE_SHA" ]; then echo "  tau2 @ $SHA (= TAU2_REFERENC
 else echo "  WARNING: tau2 @ $SHA != TAU2_REFERENCE_SHA — the snapshot's tailoring may need re-locating (PROMPT.md #2c)"; fi
 
 say "3/5  Install cap-evolve + tau2 into the venv"
-VIRTUAL_ENV="$VENV" uv pip install -q -e "$REPO/core" -e "$TAU2_DIR" || die "uv pip install failed"
+# tau2 imports websockets unconditionally (tau2/__init__ -> voice) but declares it only in its
+# `voice` extra, so install it explicitly with tau2's own constraint.
+VIRTUAL_ENV="$VENV" uv pip install -q -e "$REPO/core" -e "$TAU2_DIR" "websockets>=13.0" \
+  || die "uv pip install failed"
 N="$("$PY" -c "from tau2.domains.airline.environment import get_tasks; print(len(get_tasks('base')))")" \
   || die "tau2 import failed"
 [ "$N" = "50" ] || die "expected 50 airline tasks, got $N"
