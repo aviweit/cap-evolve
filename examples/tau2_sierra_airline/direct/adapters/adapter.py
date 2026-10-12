@@ -64,7 +64,13 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
 def _bare_model(env_key: str) -> str:
-    return (os.environ.get(env_key) or "").strip() or FALLBACK_MODEL
+    m = (os.environ.get(env_key) or "").strip()
+    if not m and env_key == "TAU2_AGENT_MODEL":
+        # PROMPT.md #2b/#3b: TAU2_AGENT_MODEL is the one source; if it is unset but
+        # SPA_MODEL_NAME is set, the agent model is SPA_MODEL_NAME without `openai/`.
+        # Same rule as the blackbox arm, so both arms run the same agent model.
+        m = (os.environ.get("SPA_MODEL_NAME") or "").strip().removeprefix("openai/")
+    return m or FALLBACK_MODEL
 
 
 def _litellm_model(bare: str) -> str:
