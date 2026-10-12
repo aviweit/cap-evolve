@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Onboard VANILLA tau2-bench (sierra-research, latest main) for the blackbox arm.
+# Onboard VANILLA tau2-bench (sierra-research, latest main) for the direct arm.
 #
 # HAND-WRITTEN REPLAY, not generated output. The files beside this script (adapters/,
 # seed_capability/, optimizer/, capevolve*.yaml, split_ids*.json, PROJECT.md) were produced by
 # a coding agent following ../PROMPT.md alone. This script replays the setup steps that agent
 # ran, in the prompt's R1 order, and then installs THOSE files instead of regenerating them:
 #
-#   bash examples/tau2/blackbox/setup.sh
-#   bash examples/tau2/blackbox/run.sh --smoke     # then:  bash examples/tau2/blackbox/run.sh
+#   bash examples/tau2_sierra_airline/direct/setup.sh
+#   bash examples/tau2_sierra_airline/direct/run.sh --smoke     # then:  bash examples/tau2_sierra_airline/direct/run.sh
 #
-# The clone is NEVER edited: everything the blackbox arm needs from tau2 is supplied from
-# outside by adapters/tau2_tailoring.py.
+# The direct arm needs no services. The clone is NEVER edited: the candidate's tools reach tau2
+# through adapters/tau2_tailoring.py (a public `airline_candidate` domain + pristine gold).
 set -uo pipefail
 
 EX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,16 +25,15 @@ case "$VENV" in /*) ;; *) VENV="$REPO/$VENV" ;; esac
 PY="$VENV/bin/python"
 BASE="${BASE:-$REPO/.capevolve}"
 PROJECT="$BASE/project"
-BB="$REPO/skills/interventions/llm-proxies/blackbox/scripts"
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mSETUP FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
-say "1/6  Tools + venv (tau2 needs Python >=3.12,<3.14)"
-for t in git uv curl make; do command -v "$t" >/dev/null || die "'$t' not found on PATH"; done
+say "1/5  Tools + venv (tau2 needs Python >=3.12,<3.14)"
+for t in git uv curl; do command -v "$t" >/dev/null || die "'$t' not found on PATH"; done
 [ -x "$PY" ] || uv venv -q -p 3.12 "$VENV" || die "uv venv -p 3.12 failed"
 "$PY" --version
 
-say "2/6  Clone tau2 — always compare with upstream main first"
+say "2/5  Clone tau2 — always compare with upstream main first"
 UPSTREAM_SHA="$(git ls-remote "$TAU2_REPO" main | cut -f1)"
 [ -n "$UPSTREAM_SHA" ] || die "git ls-remote $TAU2_REPO main returned nothing"
 if [ ! -d "$TAU2_DIR/.git" ]; then
@@ -57,14 +56,14 @@ echo "$SHA" > "$REPO/vendor/tau2-bench.COMMIT"
 if [ "$SHA" = "$TAU2_REFERENCE_SHA" ]; then echo "  tau2 @ $SHA (= TAU2_REFERENCE_SHA)"
 else echo "  WARNING: tau2 @ $SHA != TAU2_REFERENCE_SHA — the snapshot's tailoring may need re-locating (PROMPT.md #2c)"; fi
 
-say "3/6  Install cap-evolve + tau2 into the venv"
+say "3/5  Install cap-evolve + tau2 into the venv"
 VIRTUAL_ENV="$VENV" uv pip install -q -e "$REPO/core" -e "$TAU2_DIR" || die "uv pip install failed"
 N="$("$PY" -c "from tau2.domains.airline.environment import get_tasks; print(len(get_tasks('base')))")" \
   || die "tau2 import failed"
 [ "$N" = "50" ] || die "expected 50 airline tasks, got $N"
 echo "  50 airline tasks"
 
-say "4/6  Install the snapshot as the project"
+say "4/5  Install the snapshot as the project"
 "$PY" "$REPO/skills/phases/intake/scripts/run.py" --base "$BASE" --workdir "$REPO" --force >/dev/null \
   || die "intake scaffold failed"
 rm -rf "$PROJECT/seed_capability"
@@ -73,15 +72,7 @@ cp "$EX_DIR/capevolve.yaml" "$EX_DIR/capevolve.smoke.yaml" "$EX_DIR"/split_ids*.
    "$EX_DIR/PROJECT.md" "$PROJECT/"
 echo "  project at $PROJECT"
 
-say "5/6  Provision the Skillberry stack (provision only — run.sh starts it)"
-"$PY" - <<PYEOF || die "Skillberry stack provisioning failed"
-import json, sys
-sys.path.insert(0, "$BB")
-import blackbox_env
-print("  " + json.dumps(blackbox_env.provision()))
-PYEOF
-
-say "6/6  Hard gate — implement-and-check (cap-evolve check + instructions render self-test)"
+say "5/5  Hard gate — implement-and-check (cap-evolve check + instructions render self-test)"
 for v in OPENAI_BASE_URL OPENAI_API_KEY; do
   [ -n "${!v:-}" ] || grep -q "^$v=" "$REPO/.env" 2>/dev/null \
     || echo "  WARNING: $v not set and not in $REPO/.env — every rollout needs it."
