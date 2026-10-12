@@ -24,7 +24,7 @@ from cap_evolve import CapabilityAdapter, Rollout, Score, Task
 SKILL_NAME = "my_skill"
 FROZEN_TAG = "tau2_airline_primitives"
 N_PRIMITIVES = 14
-MAX_CONCURRENCY = 4
+MAX_CONCURRENCY = 5
 FALLBACK_MODEL = "aws/gpt-oss-120b"
 
 _HERE = Path(__file__).resolve()
