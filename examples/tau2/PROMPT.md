@@ -293,7 +293,7 @@ Here is everything intake needs:
                 the launcher is ours. It holds one airline environment per `env_id` and records
                 every tool call made on it.
 - start it:     port 8004, from the project venv:
-                  LITELLM_LOCAL_MODEL_COST_MAP=True nohup .venv/bin/python -c "import asyncio; from tau2.orchestrator.environment_manager import EnvironmentManager; asyncio.run(EnvironmentManager(host='127.0.0.1', port=8004).run())" > env_manager.log 2>&1 &
+                  LITELLM_LOCAL_MODEL_COST_MAP=True nohup .venv/bin/python -c "import asyncio; from tau2.orchestrator.environment_manager import EnvironmentManager; asyncio.run(EnvironmentManager(host='127.0.0.1', port=8004).run())" > /tmp/env_manager.log 2>&1 &
                 (ONE line: an indented `-c` body is a Python IndentationError.)
                 ~10s to start; POLL, don't sleep. LITELLM_LOCAL_MODEL_COST_MAP=True skips
                 litellm's remote cost-map fetch, which otherwise stalls startup — export it in
@@ -826,7 +826,7 @@ Here is everything intake needs:
 # 7. FAILURE SIGNATURES  (symptom → cause → fix; read this before retrying anything, R3)
 - every baseline reward 0 instantly, rollout.error set
                 → rollouts errored (credentials, model alias, or a seam) → read rollout.error and,
-                  on blackbox, env_manager.log; fix the named cause
+                  on blackbox, /tmp/env_manager.log; fix the named cause
 - the optimizer prompt says the capability is EMPTY
                 → `{{EMPTY_SEED}}` left in INSTRUCTIONS.md → #5
 - the optimizer has no ./guidance/sources/data_model.py

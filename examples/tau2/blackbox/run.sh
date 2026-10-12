@@ -33,7 +33,8 @@ PY="$VENV/bin/python"
 PROJECT="${BASE:-$REPO/.capevolve}/project"
 BB="$REPO/skills/interventions/llm-proxies/blackbox/scripts"
 ENV_PORT=8004
-ENV_LOG="$REPO/env_manager.log"
+# /tmp, like the Skillberry services' logs; rotated by the intervention skill's helper.
+ENV_LOG=/tmp/env_manager.log
 say(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\n\033[1;31mRUN FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -60,6 +61,10 @@ say "1/3  tau2's environment service (port $ENV_PORT)"
 if curl -sf --max-time 3 "http://127.0.0.1:$ENV_PORT/status" >/dev/null; then
   echo "  already up"
 else
+  # Rotate ONLY when the service is down: rotating a log a running service holds open leaves it
+  # appending to a deleted inode.
+  "$PY" -c "import sys; sys.path.insert(0, '$BB'); import blackbox_env; blackbox_env.rotate_if_large('$ENV_LOG')" \
+    || echo "  WARNING: could not rotate $ENV_LOG (continuing)" >&2
   ( cd "$REPO" && nohup "$PY" -c "import asyncio; from tau2.orchestrator.environment_manager import EnvironmentManager; asyncio.run(EnvironmentManager(host='127.0.0.1', port=$ENV_PORT).run())" > "$ENV_LOG" 2>&1 & )
   for _ in $(seq 1 60); do curl -sf --max-time 2 "http://127.0.0.1:$ENV_PORT/status" >/dev/null && break; sleep 1; done
   curl -sf --max-time 3 "http://127.0.0.1:$ENV_PORT/status" >/dev/null || die "env service did not come up — see $ENV_LOG"
