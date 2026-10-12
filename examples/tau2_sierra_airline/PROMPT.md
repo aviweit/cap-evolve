@@ -219,7 +219,9 @@ Here is everything intake needs:
                 CHECK: `git -C vendor/tau2-bench rev-parse HEAD` → EXPECTED: the SHA you chose;
                 and `git -C vendor/tau2-bench status --porcelain` → EXPECTED: no output. A dirty
                 clone is NOT upstream: treat it as "!= TAU2_REFERENCE_SHA" and ASK (R6).
-- install:      VIRTUAL_ENV=.venv uv pip install -e core -e vendor/tau2-bench
+- install:      VIRTUAL_ENV=.venv uv pip install -e core -e vendor/tau2-bench "websockets>=13.0"
+                (`import tau2` needs websockets, which upstream declares only in its `voice` extra;
+                without it the CHECK below fails with ModuleNotFoundError: websockets.)
                 CHECK: `.venv/bin/python -c "from tau2.domains.airline.environment import
                 get_tasks; print(len(get_tasks('base')))"` → EXPECTED: 50
 - scaffold:     `.venv/bin/python skills/phases/intake/scripts/run.py --base .capevolve --workdir .`
