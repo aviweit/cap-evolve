@@ -10,7 +10,7 @@ protected_paths: ["reference/*"]         # the optimizer may not edit these
 
 # --- who proposes edits --------------------------------------------------------
 optimizer_skill: claude-code
-optimizer_model: claude-opus-4-8
+optimizer_model: claude-opus-5-5
 optimizer_max_turns: 400                 # generous; the $ cap below is the real ceiling
 optimizer_usd_per_iter: 50               # per-iteration $ cap (claude --max-budget-usd)
 optimizer_instructions_file: optimizer/INSTRUCTIONS.md # authored from the template, scoped to this arm
