@@ -160,7 +160,7 @@ class Adapter(CapabilityAdapter):
 
     def run_trials(self, tasks: list[Task], ctx, *, n_trials: int, base_seed: int) -> dict:
         known = self._tau2_task_map()
-        out: dict = {t.id: [Rollout(task_id=t.id, error="unknown task")] * n_trials
+        out: dict = {t.id: [Rollout(task_id=t.id, error="unknown task") for _ in range(n_trials)]
                      for t in tasks if t.id not in known}
         todo = [t for t in tasks if t.id in known]
         if not todo:
