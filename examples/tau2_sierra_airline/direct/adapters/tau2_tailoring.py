@@ -69,6 +69,17 @@ def set_candidate(tools_path) -> None:
     _state["tools_path"] = Path(tools_path).resolve() if tools_path else None
 
 
+def _finish_models(mod, name: str) -> None:
+    """Resolve forward references in pydantic models the candidate defines, while its module
+    is still registered: pydantic finds the module in sys.modules to do that, and without it
+    tau2's `openai_schema` (the schema the agent is sent) fails with "not fully defined"."""
+    from pydantic import BaseModel
+
+    for obj in list(vars(mod).values()):
+        if isinstance(obj, type) and issubclass(obj, BaseModel) and obj.__module__ == name:
+            obj.model_rebuild()
+
+
 def load_toolkit_class(tools_path):
     """Exec tools.py fresh (unique module name per load) and return a REMOVE_TOOLS-aware
     subclass of its AirlineTools. Filtering is done on the `tools` property (what live
@@ -79,13 +90,17 @@ def load_toolkit_class(tools_path):
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load candidate tools from {path}")
     mod = importlib.util.module_from_spec(spec)
-    # Registered so pydantic/typing can resolve string annotations against the module.
+    # Registered ONLY while the file executes, and while its own pydantic models are
+    # finished; always unregistered afterwards. A load runs once per trial in a process
+    # shared by the whole run, so an entry left per load would grow without bound. Nothing
+    # needs it later: tau2 builds tool schemas from the functions' annotation objects
+    # (environment/tool.py), not by looking the module up.
     sys.modules[name] = mod
     try:
         spec.loader.exec_module(mod)
-    except BaseException:
+        _finish_models(mod, name)
+    finally:
         sys.modules.pop(name, None)
-        raise
     base = getattr(mod, "AirlineTools", None)
     if base is None:
         raise ImportError(f"{path} defines no AirlineTools class")
