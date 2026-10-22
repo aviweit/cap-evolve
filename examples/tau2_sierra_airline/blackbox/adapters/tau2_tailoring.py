@@ -6,7 +6,8 @@ wrappers where tau2 offers none (``Orchestrator.get_trajectory`` and
 ``tau2.runner.batch.run_single_task``).
 
 Importing this module has NO side effects. The single entry point is :func:`install`, which is
-idempotent (each phase is a fresh process, but the algorithm loop's iterations share one).
+idempotent (each phase is a fresh process, but the algorithm loop's iterations share one). It
+first checks that tau2 is at ``TAU2_REFERENCE_SHA``, the commit this module was created from.
 
 One trial = one SESSION, tracked by a thread-local scope (B0):
   IDLE  -> no trial in progress (the default; the main thread always)
@@ -142,6 +143,46 @@ def sweep(log_path: Path) -> list[str]:
 
 class SeamError(RuntimeError):
     pass
+
+# The tau2 commit this module (and adapter.py beside it) was created from, when the benchmark
+# was onboarded with ../../PROMPT.md. Must equal TAU2_REFERENCE_SHA in ../setup.sh. install()
+# refuses any other commit: the seams were located and verified on this one only.
+TAU2_REFERENCE_SHA = "4ce7c0397c1eb65c9bbe59aeacfe1ca44a1cd699"
+
+
+def _tau2_head() -> str:
+    """HEAD of the tau2 checkout that `import tau2` resolves to, read from its .git (no git
+    subprocess). "" when tau2 is not a git checkout or HEAD cannot be read."""
+    try:
+        import tau2
+
+        root = Path(tau2.__file__).resolve().parents[2]
+        git = root / ".git"
+        if git.is_file():                                   # a worktree / submodule pointer
+            git = (root / git.read_text().split(":", 1)[1].strip()).resolve()
+        head = (git / "HEAD").read_text().strip()
+        if not head.startswith("ref:"):
+            return head                                     # detached: the SHA itself
+        ref = head.split(" ", 1)[1]
+        if (git / ref).is_file():
+            return (git / ref).read_text().strip()
+        for line in (git / "packed-refs").read_text().splitlines():
+            if line.endswith(" " + ref):
+                return line.split(" ", 1)[0]
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def assert_pinned_tau2() -> None:
+    """Refuse to tailor a tau2 other than TAU2_REFERENCE_SHA (run ../setup.sh to check it out)."""
+    head = _tau2_head()
+    if head != TAU2_REFERENCE_SHA:
+        raise SeamError(
+            f"tau2 is at {head or 'an unknown commit'}, but this snapshot was created from "
+            f"TAU2_REFERENCE_SHA {TAU2_REFERENCE_SHA}. Run its setup.sh to check that commit out; "
+            f"a newer tau2 needs a new onboarding with PROMPT.md.")
+
 
 
 def _sha() -> str:
@@ -452,6 +493,7 @@ def install(arm: str) -> None:
     if arm != "blackbox":
         raise ValueError(f"this project is onboarded for the blackbox arm only, not {arm!r}")
     with _install_lock:
+        assert_pinned_tau2()
         _assert_seams()
 
         global _spa_base_url_fn

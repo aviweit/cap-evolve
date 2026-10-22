@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Onboard VANILLA tau2-bench (sierra-research, latest main) for the blackbox arm.
+# Onboard VANILLA tau2-bench (sierra-research, pinned at TAU2_REFERENCE_SHA) for the blackbox arm.
 #
 # HAND-WRITTEN REPLAY, not generated output. The files beside this script (adapters/,
 # seed_capability/, optimizer/, capevolve*.yaml, split_ids*.json, PROJECT.md) were produced by
@@ -17,8 +17,9 @@ EX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$EX_DIR/../../.." && pwd)"
 TAU2_REPO="https://github.com/sierra-research/tau2-bench"
 TAU2_DIR="$REPO/vendor/tau2-bench"
-# The commit the snapshot's tailoring was generated and verified against. NOT a pin: the clone
-# is latest main. A different SHA means the seams must be re-located (PROMPT.md #2c).
+# The tau2 commit this arm's adapters/ (adapter.py and tau2_tailoring.py) were created from,
+# when the benchmark was onboarded with ../PROMPT.md. Step 2 clones tau2 at exactly this commit,
+# and the snapshot runs on no other: a newer tau2 needs a new onboarding with ../PROMPT.md.
 TAU2_REFERENCE_SHA="4ce7c0397c1eb65c9bbe59aeacfe1ca44a1cd699"
 VENV="${VENV:-$REPO/.venv}"
 case "$VENV" in /*) ;; *) VENV="$REPO/$VENV" ;; esac
@@ -44,28 +45,23 @@ for t in git uv curl make; do command -v "$t" >/dev/null || die "'$t' not found 
 [ -x "$PY" ] || uv venv -q -p 3.12 "$VENV" || die "uv venv -p 3.12 failed"
 "$PY" --version
 
-say "2/6  Clone tau2 — always compare with upstream main first"
-UPSTREAM_SHA="$(git ls-remote "$TAU2_REPO" main | cut -f1)"
-[ -n "$UPSTREAM_SHA" ] || die "git ls-remote $TAU2_REPO main returned nothing"
+say "2/6  Clone tau2 at TAU2_REFERENCE_SHA"
 if [ ! -d "$TAU2_DIR/.git" ]; then
-  git clone -q "$TAU2_REPO" "$TAU2_DIR" && git -C "$TAU2_DIR" checkout -q "$UPSTREAM_SHA" \
-    || die "clone of $TAU2_REPO failed"
-else
-  HEAD_SHA="$(git -C "$TAU2_DIR" rev-parse HEAD)"
-  DIRTY="$(git -C "$TAU2_DIR" status --porcelain)"
-  if [ "$HEAD_SHA" != "$UPSTREAM_SHA" ] || [ -n "$DIRTY" ]; then
-    # The prompt asks before re-cloning: a re-clone means re-tailoring. A script cannot ask,
-    # so it refuses and says how to opt in.
-    [ "${RECLONE:-0}" = "1" ] || die "vendor/tau2-bench is at ${HEAD_SHA:0:12}${DIRTY:+ (dirty)}, upstream main is ${UPSTREAM_SHA:0:12}. Re-run with RECLONE=1 to delete and re-clone (then re-tailor: PROMPT.md #2c)."
-    rm -rf "$TAU2_DIR"
-    git clone -q "$TAU2_REPO" "$TAU2_DIR" && git -C "$TAU2_DIR" checkout -q "$UPSTREAM_SHA" \
-      || die "re-clone of $TAU2_REPO failed"
-  fi
+  git clone -q "$TAU2_REPO" "$TAU2_DIR" || die "clone of $TAU2_REPO failed"
+fi
+# A local edit would change what the pinned commit means: refuse rather than run on it.
+[ -z "$(git -C "$TAU2_DIR" status --porcelain)" ] \
+  || die "vendor/tau2-bench has local changes; the snapshot runs only on a clean checkout. Commit or discard them, or delete vendor/tau2-bench."
+if [ "$(git -C "$TAU2_DIR" rev-parse HEAD)" != "$TAU2_REFERENCE_SHA" ]; then
+  git -C "$TAU2_DIR" cat-file -e "$TAU2_REFERENCE_SHA^{commit}" 2>/dev/null \
+    || git -C "$TAU2_DIR" fetch -q origin || die "git fetch in vendor/tau2-bench failed"
+  git -C "$TAU2_DIR" checkout -q --detach "$TAU2_REFERENCE_SHA" \
+    || die "cannot check out TAU2_REFERENCE_SHA $TAU2_REFERENCE_SHA in vendor/tau2-bench"
 fi
 SHA="$(git -C "$TAU2_DIR" rev-parse HEAD)"
+[ "$SHA" = "$TAU2_REFERENCE_SHA" ] || die "vendor/tau2-bench is at $SHA, expected TAU2_REFERENCE_SHA $TAU2_REFERENCE_SHA"
 echo "$SHA" > "$REPO/vendor/tau2-bench.COMMIT"
-if [ "$SHA" = "$TAU2_REFERENCE_SHA" ]; then echo "  tau2 @ $SHA (= TAU2_REFERENCE_SHA)"
-else echo "  WARNING: tau2 @ $SHA != TAU2_REFERENCE_SHA — the snapshot's tailoring may need re-locating (PROMPT.md #2c)"; fi
+echo "  tau2 @ $SHA (= TAU2_REFERENCE_SHA)"
 
 say "3/6  Install cap-evolve + tau2 into the venv"
 # tau2 imports websockets unconditionally (tau2/__init__ -> voice) but declares it only in its
