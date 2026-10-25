@@ -39,7 +39,7 @@ These hold on a correctly wired run:
   non-200, which means it was stopped.
 - **The writes reach the scorer.** At least one trial has `reward_info.db_check.db_match`
   true. If it is false on every trial, see
-  [Troubleshooting](06-troubleshooting.md#dbmatch-false-on-every-trial).
+  [Troubleshooting](06-troubleshooting.md#db_match-false-on-every-trial).
 - **Cost.** The proxy reports no token usage, so the agent's cost and tokens read 0. A 0 means
   not measured, and `max_usd` binds only on the user simulator's cost.
 
