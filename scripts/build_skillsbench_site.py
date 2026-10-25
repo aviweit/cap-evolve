@@ -30,6 +30,7 @@ MD_EXTENSIONS = ["tables", "fenced_code", "toc", "attr_list", "sane_lists"]
 
 NAV_ITEMS = [
     ("getting-started.html", "Get started"),
+    ("blackbox.html", "Blackbox"),
     ("run-end-to-end.html", "Run end-to-end"),
     ("results.html", "Results"),
     ("benchmarks.html", "Benchmarks"),
