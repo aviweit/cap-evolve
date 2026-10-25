@@ -14,7 +14,7 @@
 set -uo pipefail
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$LIB_DIR/../../.." && pwd)"
-BENCH="${1:?bench (tau2|swebench|skillsbench|spreadsheetbench|rfe-creator|parsec|tau2_custom_direct|tau2_custom_blackbox)}"
+BENCH="${1:?bench (tau2|swebench|skillsbench|spreadsheetbench|rfe-creator|parsec|tau2_sierra|tau2_sierra_blackbox)}"
 PY="${CAPEVOLVE_PY:-$REPO/.venv-e2e/bin/python}"; [ -x "$PY" ] || PY="python3"
 TIER="${TIER:-smoke}"
 
@@ -23,10 +23,7 @@ TIER="${TIER:-smoke}"
 # why this is a committed file rather than a repo variable.
 # shellcheck source=ci/benchmarks/lib/load_overrides.sh
 . "$LIB_DIR/load_overrides.sh"
-# The two tau2_custom arms are ONE benchmark with two delivery paths, so their tier lists live
-# under ci/benchmarks/tau2_custom/<arm>/ rather than a directory per leg token.
 BENCH_DIR="$BENCH"
-case "$BENCH" in tau2_custom_*) BENCH_DIR="tau2_custom/${BENCH#tau2_custom_}" ;; esac
 load_overrides "$REPO/ci/benchmarks/$BENCH_DIR/$TIER/overrides.env"
 
 # Remove a directory that may hold files a sandbox container created under ITS uid. Our account
@@ -54,8 +51,8 @@ GATE_K_SE="${GATE_K_SE:-1.0}"
 # tau2 legs, whose adapters write them and where a failed rollout is only readable from the
 # trajectory; no other adapter produces them. Env wins, so a dispatch can still force either way.
 case "$BENCH" in
-  tau2|tau2_custom_*) _NATIVE_SIMS_DEFAULT=1 ;;
-  *)                      _NATIVE_SIMS_DEFAULT=0 ;;
+  tau2|tau2_sierra|tau2_sierra_blackbox) _NATIVE_SIMS_DEFAULT=1 ;;
+  *)                                      _NATIVE_SIMS_DEFAULT=0 ;;
 esac
 export CAPEVOLVE_NATIVE_SIMS="${CAPEVOLVE_NATIVE_SIMS:-$_NATIVE_SIMS_DEFAULT}"
 
@@ -316,25 +313,25 @@ TEMPERATURE=0.0
 ENV
     export TAU2_MAX_CONCURRENCY=10
     ;;
-  tau2_custom_direct|tau2_custom_blackbox)
-    # The two DELIVERY ARMS of the tau2 airline benchmark. Same 50 airline tasks as the `tau2`
-    # leg above, same tier ids, but a different question: `tau2` asks "can the optimizer
-    # improve the agent's prompt+tools", these ask "does the candidate still land when it is
-    # delivered THIS way" — in the runner's own process (direct) or through the Skillberry
-    # Store + Proxy-Agent (blackbox). direct-vs-blackbox is the comparison; neither is comparable to the
-    # `tau2` leg, whose capability surface includes policy.md and whose tau2 build differs.
+  tau2_sierra|tau2_sierra_blackbox)
+    # The two DELIVERY ARMS of examples/tau2_sierra_airline, on vanilla sierra-research tau2
+    # pinned at the example's TAU2_REFERENCE_SHA. Same 50 airline tasks as the `tau2` leg above,
+    # same tier ids, but a different question: `tau2` asks "can the optimizer improve the agent's
+    # prompt+tools", these ask "does the candidate still land when it is delivered THIS way" — in
+    # the runner's own process (direct) or through the Skillberry Store + Proxy-Agent (blackbox).
+    # direct-vs-blackbox is the comparison; neither is comparable to the `tau2` leg, whose
+    # capability surface includes policy.md and whose tau2 checkout is unpinned.
     #
-    # The adapter comes from examples/, not templates/adapters/: a copy under templates/ would
-    # duplicate ~700 lines per arm and be free to drift from the example a reviewer reads. The
-    # tau2 leg already sources examples/tau2_airline/seed_capability, so this is the convention.
-    ARM="${BENCH#tau2_custom_}"                         # -> direct | blackbox
-    ARM_DIR="$REPO/examples/tau2_custom/$ARM"
+    # Everything comes from examples/, not templates/adapters/: the example is the single source
+    # of truth, and a copy under templates/ would be free to drift from the code a reviewer reads.
+    # tau2 itself is never edited — tau2_tailoring.py supplies what each arm needs from outside.
+    case "$BENCH" in
+      tau2_sierra)          ARM=direct ;;
+      tau2_sierra_blackbox) ARM=blackbox ;;
+    esac
+    ARM_DIR="$REPO/examples/tau2_sierra_airline/$ARM"
     [ -d "$ARM_DIR" ] || { echo "::error:: no such arm: $ARM_DIR"; exit 2; }
-    cp "$ARM_DIR/adapters/adapter.py" "$ARM_DIR/adapters/gateway.py" "$PROJ/adapters/"
-    # scoring.py is the mixin both arms include, deployed beside adapter.py exactly as their own
-    # setup.sh does it. Copied when present so this holds whether or not the arms share it yet.
-    [ -f "$REPO/examples/tau2_custom/scoring.py" ] \
-      && cp "$REPO/examples/tau2_custom/scoring.py" "$PROJ/adapters/"
+    cp "$ARM_DIR/adapters/adapter.py" "$ARM_DIR/adapters/tau2_tailoring.py" "$PROJ/adapters/"
     rm -rf "$PROJ/seed_capability"; cp -R "$ARM_DIR/seed_capability" "$PROJ/seed_capability"
     # The arm's own optimizer instructions, pinned ABSOLUTE. The generic template speaks of
     # policy.md + tools.py; the direct arm has no policy surface and the blackbox arm's artifact is a
@@ -344,25 +341,34 @@ ENV
     mkdir -p "$PROJ/optimizer"; cp "$ARM_DIR/optimizer/INSTRUCTIONS.md" "$PROJ/optimizer/"
     OPT_INSTRUCTIONS="$PROJ/optimizer/INSTRUCTIONS.md"
     CAPS="[tools]"          # both arms: the agent's TOOL SURFACE only, exactly as their specs say
-    # The pinned Skillberry benchmark checkout ci_setup.sh installed, as READ-ONLY context for
-    # the optimizer (real tool implementations, task definitions, reward checks). ABSOLUTE: the
-    # arms' committed specs use a project-relative '../../vendor/skillberry-benchmarks', which
-    # resolves to nothing from ci/benchmarks/.work/<...>/.capevolve/project.
-    SB_DIR="${SKILLBERRY_BENCH_DIR:-${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}/skillberry-benchmarks}"
+    # The pinned tau2 checkout ci_setup.sh installed, as READ-ONLY context for the optimizer
+    # (real tool implementations, task definitions, reward checks). ABSOLUTE: the arms' committed
+    # specs use a project-relative '../../vendor/tau2-bench', which resolves to nothing from
+    # ci/benchmarks/.work/<...>/.capevolve/project.
+    _CI_CACHE="${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}"
+    TAU2_DIR="${TAU2_SIERRA_DIR:-$_CI_CACHE/tau2-sierra}"
     # In CI the "Setup runner env" step always precedes "Run suite", so this only fires for a
     # local invocation — name the command rather than asking whether it ran.
-    [ -d "$SB_DIR/tau2/tau2-bench" ] || {
-      echo "::error:: no skillberry-benchmarks checkout at $SB_DIR"
+    [ -d "$TAU2_DIR/.git" ] || {
+      echo "::error:: no tau2-bench checkout at $TAU2_DIR"
       echo "::error:: Run the setup step for this bench first:"
       echo "::error::   bash ci/benchmarks/lib/ci_setup.sh $BENCH"
-      echo "::error:: It clones the pinned benchmark, installs tau2-bench[skillberry] into the"
-      echo "::error:: cached venv, and (for the blackbox arm) provisions the Skillberry stack."
+      echo "::error:: It clones sierra-research/tau2-bench at TAU2_REFERENCE_SHA, installs it into"
+      echo "::error:: the cached venv, and (for the blackbox arm) provisions the Skillberry stack."
       exit 1; }
-    # Credentials. The arms' gateway.py reads OPENAI_BASE_URL / OPENAI_API_KEY (litellm's
-    # `openai/` route), not the LITELLM_PROXY_* names the tau2 leg uses; the ete-litellm gateway
-    # answers both, so the same secret pair serves both. Written to .env AND exported: gateway.py
-    # walks to the nearest ancestor .env and `setdefault`s, so the export wins and the file is
-    # what `store: git` can show a reviewer.
+    # The pin again, right before any rollout: a cache moved between setup and run must not run.
+    TAU2_REF="$(sed -n 's/^TAU2_REFERENCE_SHA="\([0-9a-f]\{40\}\)"$/\1/p' "$ARM_DIR/setup.sh")"
+    [ -n "$TAU2_REF" ] && [ "$(git -C "$TAU2_DIR" rev-parse HEAD)" = "$TAU2_REF" ] || {
+      echo "::error:: $TAU2_DIR is at $(git -C "$TAU2_DIR" rev-parse HEAD 2>/dev/null), not the example's"
+      echo "::error:: TAU2_REFERENCE_SHA ${TAU2_REF:-<missing>} — re-run ci_setup.sh $BENCH"
+      exit 1; }
+    # tau2_tailoring names the tau2 commit in its errors from the project's vendor/tau2-bench.COMMIT.
+    mkdir -p "$WORK/vendor"; echo "$TAU2_REF" > "$WORK/vendor/tau2-bench.COMMIT"
+    # Credentials. The arms' adapters read OPENAI_BASE_URL / OPENAI_API_KEY (litellm's `openai/`
+    # route), not the LITELLM_PROXY_* names the tau2 leg uses; the ete-litellm gateway answers
+    # both, so the same secret pair serves both. Written to .env AND exported: the adapters walk
+    # to the nearest ancestor .env and `setdefault`, so the export wins and the file is what
+    # `store: git` can show a reviewer.
     cat > "$WORK/.env" <<ENV
 OPENAI_BASE_URL=$ANTHROPIC_BASE_URL
 OPENAI_API_BASE=$ANTHROPIC_BASE_URL
@@ -371,36 +377,36 @@ ENV
     export OPENAI_BASE_URL="$ANTHROPIC_BASE_URL" OPENAI_API_BASE="$ANTHROPIC_BASE_URL"
     export OPENAI_API_KEY="$ANTHROPIC_AUTH_TOKEN"
     export TAU2_USER_MODEL="$AGENT_MODEL_WIRE"          # the user simulator, both arms
+    # The agent under test is the GATEWAY model on both arms. The blackbox adapter routes the
+    # agent to the sentinel itself and passes this model to the Proxy-Agent as SPA_MODEL_NAME, so
+    # it must never be the sentinel here.
+    export TAU2_AGENT_MODEL="$AGENT_MODEL_WIRE"
     export TAU2_LLM_TIMEOUT="${TAU2_LLM_TIMEOUT:-240}"
     export TAU2_LLM_RETRIES="${TAU2_LLM_RETRIES:-2}"
     export TAU2_INFRA_RETRIES="${TAU2_INFRA_RETRIES:-2}"
     if [ "$ARM" = "direct" ]; then
       # In-process delivery: no service to start, so nothing here mirrors the blackbox block below.
-      # The agent under test IS the gateway model; gateway.py refuses the Blackbox sentinel here.
-      export TAU2_AGENT_MODEL="$AGENT_MODEL_WIRE"
       export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-10}"
       EXTRA_YAML="actions: [edit]
 capability_sources: [seed_capability/reference/data_model.py]
-runner_repo_path: \"$SB_DIR\""
+protected_paths: [\"reference/*\"]
+runner_repo_path: \"$TAU2_DIR\""
     else
       # Blackbox delivery via the Skillberry Proxy-Agent. Three services, and the run owns their lifecycle: ci_setup.sh provisioned
       # them but deliberately did not start them (starting on the operator's behalf during
       # provisioning is the anti-pattern the intervention skill calls out).
       #
-      # Concurrency 4 — the adapter's own default (adapter.py) and what the arm's run.sh uses.
       # Only ONE candidate is in flight per evaluation, so parallel rollouts all want the same
       # skill the proxy is already bound to.
-      export TAU2_AGENT_MODEL="${TAU2_AGENT_MODEL:-ibm/skillberry-local}"   # the Blackbox sentinel
       export TAU2_MAX_CONCURRENCY="${TAU2_MAX_CONCURRENCY:-4}"
-      # What the proxy calls upstream once the sentinel reaches it, and what runner_model()
-      # reports. Comes from the repo-root .env locally; CI has none, and unset falls back to
-      # gateway.DEFAULT_GATEWAY_MODEL, so a dispatched agent_model would be silently ignored.
-      # openai/ is the litellm route for a gateway id — adding it twice 404s.
+      # What the proxy calls upstream. The adapter passes it to restart_spa() on every deploy; set
+      # here too so the first start_spa() below binds the right model. openai/ is the litellm
+      # route for a gateway id — adding it twice 404s.
       case "$AGENT_MODEL_WIRE" in
         openai/*) export SPA_MODEL_NAME="${SPA_MODEL_NAME:-$AGENT_MODEL_WIRE}" ;;
         *)        export SPA_MODEL_NAME="${SPA_MODEL_NAME:-openai/$AGENT_MODEL_WIRE}" ;;
       esac
-      echo "  Blackbox upstream model: $SPA_MODEL_NAME (sentinel: $TAU2_AGENT_MODEL)"
+      echo "  Blackbox upstream model: $SPA_MODEL_NAME (agent model: $TAU2_AGENT_MODEL, via the sentinel)"
       # Same vendor dir ci_setup.sh provisioned into. blackbox_env recomputes this from the
       # environment in every process, so setup and run must agree or the run re-clones.
       export SPA_VENDOR_DIR="${SPA_VENDOR_DIR:-${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}/spa-vendor}"
@@ -422,10 +428,9 @@ PYEOF
       ENV_LOG=/tmp/env_manager.log
       # Fronts the airline env over HTTP; the store's executor calls it per rollout. Start only if
       # nothing is listening — a leg following another on this serialized runner finds a live one.
-      # Probe /docs or /, NOT /health: this FastAPI app serves no /health, so probing it reports a
-      # healthy service as dead and the poll below burns all 60 attempts.
-      if curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/docs" \
-         || curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/"; then
+      # Probe /status, as the arm's run.sh does: vanilla tau2's EnvironmentManager serves it
+      # (not /health), so probing anything else reports a healthy service as dead.
+      if curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/status"; then
         echo "  tau2 environment service already up on $ENV_PORT"
       else
         echo "  starting tau2 environment service -> $ENV_LOG"
@@ -446,12 +451,10 @@ asyncio.run(EnvironmentManager(host='127.0.0.1', port=$ENV_PORT).run())
         # POLL rather than sleep a fixed amount: importing tau2 pulls in litellm, so a cold
         # start is ~10s and a fixed sleep either wastes time or races the service.
         for _ in $(seq 1 60); do
-          curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$ENV_PORT/docs" && break
-          curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$ENV_PORT/" && break
+          curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:$ENV_PORT/status" && break
           sleep 1
         done
-        curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/docs" \
-          || curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/" \
+        curl -sf -o /dev/null --max-time 3 "http://127.0.0.1:$ENV_PORT/status" \
           || { echo "::error:: tau2 environment service did not come up on $ENV_PORT"
                tail -40 "$ENV_LOG" 2>/dev/null; exit 1; }
         echo "  healthy"
@@ -492,11 +495,11 @@ PYEOF
       }
       trap _blackbox_teardown EXIT
       EXTRA_YAML="actions: [edit]
-capability_sources: []
+capability_sources: [seed_capability/reference/data_model.py]
 intervention: blackbox
 skill_name: my_skill
-protected_paths: [\"primitive_tools/*\", \"my_skill/SKILL.md\"]
-runner_repo_path: \"$SB_DIR\""
+protected_paths: [\"primitive_tools/*\", \"my_skill/SKILL.md\", \"reference/*\"]
+runner_repo_path: \"$TAU2_DIR\""
     fi
     ;;
   swebench)

@@ -221,7 +221,7 @@ def run_suite_defaults(text: str) -> dict[str, str]:
 def task_pins(repo: Path) -> dict[str, set[str]]:
     """{'<bench>/<tier>': {pinned agent models}} across every tasks.json."""
     pins: dict[str, set[str]] = {}
-    # */*/ for a flat bench, */*/*/ for a nested one (tau2_custom/<arm>/<tier>/).
+    # */*/ for a flat bench (every bench today), */*/*/ for a nested <bench>/<sub>/<tier>/ one.
     for f in sorted([*(repo / "ci" / "benchmarks").glob("*/*/tasks.json"),
                      *(repo / "ci" / "benchmarks").glob("*/*/*/tasks.json")]):
         try:

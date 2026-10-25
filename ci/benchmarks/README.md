@@ -2,7 +2,7 @@
 
 Triggerable, real-model optimization regression over **tau2 · swebench · skillsbench ·
 spreadsheetbench · rfe-creator**, plus the two tau2-airline **delivery arms**
-(**tau2_custom_direct · tau2_custom_blackbox**),
+(**tau2_sierra · tau2_sierra_blackbox**),
 built on the [adapter templates](../../templates/adapters/). Each benchmark runs a curated
 set of **representative** tasks (calibrated for headroom — nonzero but not saturated at
 baseline) and reports **reward / latency / cost** base→opt from a single run, plus the
@@ -84,31 +84,40 @@ repo → Settings → Actions → Runners with the `ibm-vpc` label.
 
 ## The two tau2-airline delivery arms
 
-`tau2_custom_direct` and `tau2_custom_blackbox` are one benchmark measured twice, not two
-benchmarks. Both run the **same** airline task ids with the **same** tools-only capability
-surface, sourced from [`examples/tau2_custom/`](../../examples/tau2_custom/);
-the only difference is how a candidate reaches the agent:
+`tau2_sierra` and `tau2_sierra_blackbox` are one benchmark measured twice, not two benchmarks.
+Both run the **same** airline task ids with the **same** tools-only capability surface, sourced
+from [`examples/tau2_sierra_airline/`](../../examples/tau2_sierra_airline/). The only difference
+is how a candidate reaches the agent:
 
-| | `tau2_custom_direct` | `tau2_custom_blackbox` |
+| | `tau2_sierra` (direct) | `tau2_sierra_blackbox` |
 |---|---|---|
-| delivery | the runner imports the candidate tools in its own process | the Skillberry **Store** serves the candidate skill and the **Proxy-Agent** uses it |
-| tau2 agent model | the gateway model itself | the `ibm/skillberry-local` sentinel, which routes through the proxy to that same model |
+| delivery | the runner loads the candidate tools in its own process | the Skillberry **Store** serves the candidate skill and the **Proxy-Agent** injects it |
+| tau2 agent model | the gateway model | the gateway model, reached through the `ibm/skillberry-local` sentinel and the Proxy-Agent |
 | services started by the run | none | tau2 Environment Manager (`:8004`) + Store + Proxy-Agent, torn down on exit |
 | rollout concurrency | 10 | 4 |
 
-Pick them with **`benchmark: tau2-custom`** plus **`intervention: direct | blackbox`**, which maps
-straight onto the spec key of the same name. `intervention` is ignored by every other benchmark —
-they all run direct. Internally each arm stays its own leg (`tau2_custom_direct` /
-`tau2_custom_blackbox`) so each keeps its own tier task lists, history row and concurrency group.
+Both arms run **vanilla `sierra-research/tau2-bench`**, never edited, checked out at the
+example's **`TAU2_REFERENCE_SHA`**: the commit the arms' adapters and `tau2_tailoring.py` were
+created from when the benchmark was onboarded with
+[`PROMPT.md`](../../examples/tau2_sierra_airline/PROMPT.md).
+- `ci_setup.sh` reads that SHA from the arms' `setup.sh`, so CI keeps no copy of its own and has
+  no override.
+- It fails the job if the two arms disagree, or if the checkout is not at that commit.
+- `run_suite.sh` checks it again before the first rollout.
 
-Their rewards are comparable **to each other**, and *not* to the plain `tau2` leg: that one
-also optimizes `policy.md` and installs the public `sierra-research/tau2-bench`, while the arms
-install `skillberry-ai/skillberry-benchmarks` at the pin their own `setup.sh` uses (a test
-asserts the two pins stay equal). The `blackbox` arm additionally needs that build's
-`airline_skillberry` domain, which the public checkout does not have.
+Everything tau2 lacks for an arm is added from outside the benchmark by the arm's
+`adapters/tau2_tailoring.py`.
+
+Pick them with **`benchmark: tau2-sierra`** plus **`intervention: direct | blackbox`**, which maps
+straight onto the spec key of the same name. `intervention` is ignored by every other benchmark —
+they all run direct. Internally each arm stays its own leg (`tau2_sierra` /
+`tau2_sierra_blackbox`) so each keeps its own tier task lists, history row and concurrency group.
+
+Their rewards are comparable **to each other**, and *not* to the plain `tau2` leg. That one
+also optimizes `policy.md`, and installs an unpinned checkout of the same public tau2.
 
 Cheapest way to exercise an arm: **Integration tests** → Run workflow → `bench` =
-`tau2_custom_blackbox`. One task, 1 iteration, 1 trial.
+`tau2_sierra_blackbox`. One task, 1 iteration, 1 trial.
 
 ## Trigger the suite
 
@@ -159,7 +168,7 @@ The tier surfaces everywhere: PR checks read **`<tier> / <bench>`** (e.g. `smoke
 page has a **Type** column + filter.
 
 - **Manually:** Actions → **Benchmarks** → Run workflow → pick the **benchmark** (one of:
-  `tau2` / `swebench` / `skillsbench` / `spreadsheetbench` / `rfe-creator` / `tau2-custom`)
+  `tau2` / `swebench` / `skillsbench` / `spreadsheetbench` / `rfe-creator` / `tau2-sierra`)
   and **tier** (`smoke` default / `full` / `all` / `pilot` / `full_verified`), plus any of these knobs
   (all optional, sensible defaults):
 
@@ -211,8 +220,8 @@ Two consequences worth knowing before you compare numbers:
 against an agent-optimize one as though they were the same run type.
 - **On a PR — labels:**
   - **`benchmark-smoke-<bench>`** / **`benchmark-full-<bench>`** (`tau2` · `swebench` ·
-    `skillsbench` · `spreadsheetbench` · `rfe-creator` · `tau2_custom_direct` ·
-    `tau2_custom_blackbox`) → run just that one (combine labels to run a subset).
+    `skillsbench` · `spreadsheetbench` · `rfe-creator` · `tau2_sierra` ·
+    `tau2_sierra_blackbox`) → run just that one (combine labels to run a subset).
 
   (The tau2 pipeline regression is the **`integration-test`** label / **Integration tests**
   workflow — the same `run_suite.sh` path as above, scoped to a single-task `integration`

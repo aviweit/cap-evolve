@@ -9,8 +9,11 @@ const GH_API = "https://api.github.com/repos/skillberry-ai/cap-evolve";
 // Bench is matched GENERICALLY too, not against a hardcoded list: enumerating benches here
 // silently hid the two tau2-airline arms from this panel entirely.
 const JOB_RE = /^([a-z][a-z0-9_-]*) \/ ([a-z][a-z0-9_-]*)$/;
-// The arms are internal leg names; the picker calls them tau2-custom + intervention.
+// The arms are internal leg names; the picker calls them tau2-sierra + intervention. The retired
+// tau2_custom_* names stay so their rows already in benchmark-history keep a readable label.
 const BENCH_LABEL = {
+  tau2_sierra: "tau2-sierra (direct)",
+  tau2_sierra_blackbox: "tau2-sierra (blackbox)",
   tau2_custom_direct: "tau2-custom (direct)",
   tau2_custom_blackbox: "tau2-custom (blackbox)",
 };

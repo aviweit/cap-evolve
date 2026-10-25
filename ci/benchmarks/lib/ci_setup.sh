@@ -10,11 +10,12 @@
 set -euo pipefail
 BENCH="${1:?bench}"
 CACHE="${CAPEVOLVE_CI_CACHE:-$HOME/.cache/capevolve-ci}"
-# The arms get their OWN venv. They install tau2 from either skillberry-benchmarks or
-# the public sierra-research checkout. Same package name, two sources.
+# The tau2_sierra legs get their OWN venv: they install tau2 pinned at the example's
+# TAU2_REFERENCE_SHA, while the plain `tau2` leg installs an unpinned clone into the shared venv.
+# Same package name, two commits.
 case "$BENCH" in
-  tau2_custom_*) VENV="$CACHE/venv-tau2-custom" ;;
-  *)                 VENV="$CACHE/venv" ;;
+  tau2_sierra|tau2_sierra_blackbox) VENV="$CACHE/venv-tau2-sierra" ;;
+  *)                                VENV="$CACHE/venv" ;;
 esac
 CAPEVOLVE_PY="$VENV/bin/python"
 IDX="--index-url https://pypi.org/simple"
@@ -151,34 +152,44 @@ case "$BENCH" in
   tau2)
     [ -d "$CACHE/tau2-bench/.git" ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench "$CACHE/tau2-bench"
     uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$CACHE/tau2-bench" ;;
-  tau2_custom_direct|tau2_custom_blackbox)
-    # A DIFFERENT tau2 build from the `tau2` leg above. Both arms are onboarded against
-    # skillberry-ai/skillberry-benchmarks at a PINNED commit. ONE build for both arms is what keeps
-    # a direct-vs-blackbox comparison meaningful;
-    #
-    # The pin is the SAME default the arms own setup.sh scripts use, so a CI number and a
-    # local `bash examples/.../run.sh` number refer to the same benchmark code. 
-    BENCH_REF="${BENCH_REF:-a3a83266008275e9d800fd709927fa3dc4f23ec5}"
-    SB_DIR="$CACHE/skillberry-benchmarks"
-    if [ ! -d "$SB_DIR/.git" ]; then
-      git clone -q https://github.com/skillberry-ai/skillberry-benchmarks.git "$SB_DIR" || {
-        echo "::error:: could not clone skillberry-ai/skillberry-benchmarks."
-        echo "::error:: The repository is PUBLIC and needs no credentials, so this is almost"
-        echo "::error:: always transient — network, DNS, or a GitHub blip. Re-run the job."
-        echo "::error:: Without the checkout neither arm can run at all."
+  tau2_sierra|tau2_sierra_blackbox)
+    # The two DELIVERY ARMS (direct / blackbox) of examples/tau2_sierra_airline, on vanilla
+    # sierra-research tau2 — a DIFFERENT checkout from the unpinned `tau2` leg above. The commit is
+    # the one the example's adapters and tailoring were created from (TAU2_REFERENCE_SHA in each
+    # arm's setup.sh): CI reads it from there, keeps no copy of its own and has no override, so
+    # a CI number and a local `bash examples/tau2_sierra_airline/<arm>/run.sh` number run the
+    # same benchmark code. ONE checkout for both arms keeps direct-vs-blackbox comparable.
+    EX="$REPO/examples/tau2_sierra_airline"
+    ref_of() { sed -n 's/^TAU2_REFERENCE_SHA="\([0-9a-f]\{40\}\)"$/\1/p' "$EX/$1/setup.sh"; }
+    REF_DIRECT="$(ref_of direct)"; REF_BLACKBOX="$(ref_of blackbox)"
+    [ -n "$REF_DIRECT" ] || { echo "::error:: no 40-hex TAU2_REFERENCE_SHA in $EX/direct/setup.sh"; exit 1; }
+    [ "$REF_DIRECT" = "$REF_BLACKBOX" ] || {
+      echo "::error:: TAU2_REFERENCE_SHA differs between the arms: direct $REF_DIRECT, blackbox ${REF_BLACKBOX:-<none>}"
+      exit 1; }
+    TAU2_REF="$REF_DIRECT"
+    TAU2_DIR="$CACHE/tau2-sierra"
+    if [ ! -d "$TAU2_DIR/.git" ]; then
+      git clone -q https://github.com/sierra-research/tau2-bench "$TAU2_DIR" || {
+        echo "::error:: could not clone sierra-research/tau2-bench (public; usually transient — re-run)"
         exit 1; }
     fi
-    git -C "$SB_DIR" fetch -q --all || echo "::warning:: fetch failed; using the cached checkout"
-    git -C "$SB_DIR" checkout -q "$BENCH_REF" \
-      || { echo "::error:: checkout $BENCH_REF failed in $SB_DIR"; exit 1; }
-    uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$SB_DIR/tau2/tau2-bench[skillberry]" \
-      || { echo "::error:: pip install tau2-bench[skillberry] failed"; exit 1; }
-    "$CAPEVOLVE_PY" -c "import tau2; print('tau2 (skillberry build) OK')"
-    # run_suite.sh resolves the arm's `runner_repo_path` from this. It must be ABSOLUTE: the
-    # arms' committed specs use a project-relative '../../vendor/skillberry-benchmarks', which
-    # would resolve to nothing under ci/benchmarks/.work/.
-    echo "skillberry-benchmarks @ $(git -C "$SB_DIR" rev-parse HEAD)"
-    if [ "$BENCH" = "tau2_custom_blackbox" ]; then
+    [ -z "$(git -C "$TAU2_DIR" status --porcelain)" ] \
+      || { echo "::error:: $TAU2_DIR has local changes; delete it so it is re-cloned"; exit 1; }
+    if [ "$(git -C "$TAU2_DIR" rev-parse HEAD)" != "$TAU2_REF" ]; then
+      git -C "$TAU2_DIR" cat-file -e "$TAU2_REF^{commit}" 2>/dev/null \
+        || git -C "$TAU2_DIR" fetch -q origin || { echo "::error:: git fetch in $TAU2_DIR failed"; exit 1; }
+      git -C "$TAU2_DIR" checkout -q --detach "$TAU2_REF" \
+        || { echo "::error:: cannot check out TAU2_REFERENCE_SHA $TAU2_REF in $TAU2_DIR"; exit 1; }
+    fi
+    [ "$(git -C "$TAU2_DIR" rev-parse HEAD)" = "$TAU2_REF" ] \
+      || { echo "::error:: $TAU2_DIR is not at TAU2_REFERENCE_SHA $TAU2_REF"; exit 1; }
+    echo "$TAU2_REF" > "$CACHE/tau2-sierra.COMMIT"
+    # tau2 imports websockets unconditionally but declares it only in its `voice` extra.
+    uv pip install -p "$CAPEVOLVE_PY" -q $IDX -e "$TAU2_DIR" "websockets>=13.0" \
+      || { echo "::error:: pip install tau2-bench failed"; exit 1; }
+    "$CAPEVOLVE_PY" -c "import tau2; print('tau2 (sierra) OK')"
+    echo "tau2-bench @ $TAU2_REF (= TAU2_REFERENCE_SHA)"
+    if [ "$BENCH" = "tau2_sierra_blackbox" ]; then
       # Put the stack's clones in the CACHE, not the checkout. blackbox_env defaults its vendor dir
       # to <repo>/vendor, and actions/checkout wipes untracked files in the workspace — so the
       # default would re-clone and re-install BOTH services on every single run (minutes each),
@@ -200,13 +211,14 @@ PYEOF
       ) || { echo "::error:: Skillberry stack provisioning failed — the blackbox arm cannot run"; exit 1; }
     fi
     if [ -n "${GITHUB_ENV:-}" ]; then
-      echo "SKILLBERRY_BENCH_DIR=$SB_DIR" >> "$GITHUB_ENV"
+      echo "TAU2_SIERRA_DIR=$TAU2_DIR" >> "$GITHUB_ENV"
+      echo "TAU2_SIERRA_REF=$TAU2_REF" >> "$GITHUB_ENV"
       # MUST reach the "Run suite" step: blackbox_env recomputes its vendor dir from the environment
       # in that process too, and a run that disagreed with setup about where the stack lives
       # would re-provision from scratch mid-leg.
       if [ -n "${SPA_VENDOR_DIR:-}" ]; then echo "SPA_VENDOR_DIR=$SPA_VENDOR_DIR" >> "$GITHUB_ENV"; fi
     fi
-    export SKILLBERRY_BENCH_DIR="$SB_DIR" ;;
+    export TAU2_SIERRA_DIR="$TAU2_DIR" TAU2_SIERRA_REF="$TAU2_REF" ;;
   skillsbench)
     uv tool install $IDX benchflow >/dev/null 2>&1 || true
     [ -d "$CACHE/skillsbench-src/.git" ] || GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/benchflow-ai/skillsbench "$CACHE/skillsbench-src" ;;
