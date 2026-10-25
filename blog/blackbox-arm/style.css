@@ -28,10 +28,10 @@ p { margin: 0 0 22px; }
 a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 ol, ul { padding-left: 28px; margin: 0 0 22px; }
 li { margin-bottom: 10px; }
-code { font-family: var(--mono); font-size: 15px; background: #f2f2f2; padding: 2px 5px; border-radius: 3px; }
+code { font-family: var(--mono); font-size: .82em; background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
 pre { background: var(--soft); border: 1px solid var(--line); padding: 20px 22px; overflow-x: auto;
       font-size: 14px; line-height: 1.55; margin: 0 0 26px; border-radius: 3px; }
-pre code { background: none; padding: 0; font-size: 14px; }
+pre code { background: none; padding: 0; font-size: 13px; }
 pre .c { color: #8a8a8a; }
 blockquote { border-left: 3px solid var(--ink); margin: 0 0 26px; padding: 2px 0 2px 22px; font-style: italic; }
 .pull { border-left: 3px solid var(--accent); background: var(--soft); font-family: var(--mono);
