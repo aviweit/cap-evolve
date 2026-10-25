@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Figures — cap-evolve blackbox blog</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="topbar"><a href="index.html">← Back to the post</a><span>All figures</span></div>
+<main class="wrap">
+  <h1>Figures</h1>
+  <p class="subtitle">Every image the post uses, in order, with where its numbers come from.</p>
+
+  <h2>1 · Validation score per round, both arms</h2>
+  <figure><img src="images/fig1-climb-both-arms.png" alt="climb">
+    <figcaption>From the <code>evaluate</code> events of both run folders (mean of 7 tasks × 5 trials, ± SE).</figcaption></figure>
+
+  <h2>2 · Per-task score, seed vs best, both arms</h2>
+  <figure><img src="images/fig2-per-task-both-arms.png" alt="per task">
+    <figcaption>From <code>rollouts/val/&lt;task&gt;__&lt;candidate&gt;__t&lt;k&gt;.json</code> in both run folders.</figcaption></figure>
+
+  <h2>3 · Carry-over into plain τ²-bench</h2>
+  <figure><img src="images/fig3-carry-over.png" alt="carry-over">
+    <figcaption>Unpatched and patched τ²-bench <code>results.json</code>, plus the blackbox run's best val.</figcaption></figure>
+
+  <h2>4 · The blackbox run's Config tab</h2>
+  <figure><img src="images/fig4-config-tab.png" alt="config tab">
+    <figcaption>Dashboard screenshot of <code>run_20261013_121303</code>.</figcaption></figure>
+
+  <h2>5 · Both runs, overview</h2>
+  <figure><img src="images/fig5-dashboards-overview.png" alt="overview">
+    <figcaption>Dashboard screenshots: direct (left), blackbox (right).</figcaption></figure>
+
+  <h2>6 · Both runs, per task</h2>
+  <figure><img src="images/fig6-dashboards-tasks.png" alt="tasks">
+    <figcaption>Dashboard Tasks tab of both runs.</figcaption></figure>
+</main>
+</body>
+</html>
