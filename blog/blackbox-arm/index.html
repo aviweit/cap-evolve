@@ -19,11 +19,18 @@
   agent's prompt file, rewrite its tool code, then run it again and check the score. That works
   when the agent is a project on your laptop.</p>
 
-  <p>Real agents are often built differently. In a system like Skillberry, an agent's skills live in a
-  <em>store</em>, and a <em>proxy</em> that sits in front of the model decides what the model sees on every
-  call: which tools, which instructions. The agent's own code never changes. So here is the
-  question almost nobody asks: <em>if you improve a skill in one setup and ship it through another,
-  did you ever measure the version that actually runs?</em></p>
+  <p>Real agents are often built differently — especially in the enterprise. There, an agent's sources,
+  its prompts and its tools, usually aren't exposed to the team trying to improve it: they belong to
+  another team, ship as a packaged product, or sit behind a deployment nobody may edit. You can't open
+  the prompt file or rewrite the tool code.</p>
+
+  <p>A system like Skillberry gives a way in. The agent's skills live in a <em>store</em>, and a
+  <em>proxy</em> in front of the model decides what the model sees on every call — which tools, which
+  instructions — so you can improve what the agent gets without touching the agent itself.</p>
+
+  <p>That is what cap-evolve's <strong>blackbox arm</strong> optimizes. So here is the question almost
+  nobody asks: <em>if you improve a skill in one setup and ship it through another, did you ever
+  measure the version that actually runs?</em></p>
 
   <figure>
     <div class="card">
@@ -76,7 +83,8 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
   <p>The whole worked example then runs from three commands — they are walked through step by step
   further down.</p>
   <p>If this sounds useful, ⭐ <a href="https://github.com/skillberry-ai/cap-evolve">star cap-evolve on GitHub</a>.
-  It takes five seconds and helps other people find the project. Now the part that took longer: how
+  It takes five seconds and helps other people find the project.<br>
+  Now the part that took longer: how
   the two arms compare, and how a skill learned through a proxy ends up as plain code anyone can run.</p>
 
   <h2>What the blackbox arm is</h2>
