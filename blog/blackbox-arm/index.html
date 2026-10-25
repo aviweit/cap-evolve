@@ -181,21 +181,21 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
   <figure>
     <div class="card">
       <div class="eyebrow">examples/tau2_sierra_airline/blackbox</div>
+      <div class="mini"><b>1 · Setup</b><p>Installs cap-evolve and τ² (pinned), installs the project, provisions the store and proxy, and passes the <code>cap-evolve check</code> gate. Ends with <code>READY.</code></p></div>
+      <h3 style="margin-top:16px">2 · Run — pick one</h3>
       <div class="grid2">
-        <div class="mini"><b>1 · Setup</b><p>Installs cap-evolve and τ² (pinned), installs the project, provisions the store and proxy, and passes the <code>cap-evolve check</code> gate. Ends with <code>READY.</code></p></div>
-        <div class="mini"><b>2 · Smoke</b><p>One task, one trial, no optimizer spend. Starts τ²'s environment service and the store, deploys the seed skill; the preflight starts the proxy.</p></div>
-        <div class="mini amber"><b>3 · The full run</b><p>7 tasks × 5 trials, Claude Code optimizer, hill-climb, 3 rounds. The banner prints the dashboard URL.</p></div>
-        <div class="mini amber"><b>4 · Stop the stack</b><p>The services keep running after the run. Stop them before running another benchmark.</p></div>
+        <div class="mini"><b>Smoke · <code>run.sh --smoke</code></b><p>One task, one trial, no optimizer spend. Checks the wiring: starts τ²'s environment service and the store, deploys the seed skill; the preflight starts the proxy.</p></div>
+        <div class="mini amber"><b>Full run · <code>run.sh</code></b><p>7 tasks × 5 trials, Claude Code optimizer, hill-climb, 3 rounds. The run measured in this post. The banner prints the dashboard URL.</p></div>
       </div>
     </div>
   </figure>
 <pre><code><span class="c"># 1 · setup</span>
 bash examples/tau2_sierra_airline/blackbox/setup.sh
 
-<span class="c"># 2 · smoke: task 9, one trial, no optimizer spend</span>
+<span class="c"># 2 · run, one of:</span>
+<span class="c">#   smoke: task 9, one trial, no optimizer spend</span>
 bash examples/tau2_sierra_airline/blackbox/run.sh --smoke
-
-<span class="c"># 3 · the run measured in this post</span>
+<span class="c">#   full run: the run measured in this post</span>
 bash examples/tau2_sierra_airline/blackbox/run.sh
 </code></pre>
 
@@ -226,6 +226,9 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
     <li><strong>τ² is reached only through the frozen primitives.</strong> A new or composite tool is a new
     file.</li>
   </ul>
+  <p>The optimizer is told these rules up front: they are a section of its instructions,
+  <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/optimizer/INSTRUCTIONS.md">optimizer/INSTRUCTIONS.md</a>,
+  so every candidate is written with them in hand.</p>
 
   <h2>Reading the results: does it climb like the direct arm?</h2>
   <p>The real test of a delivery arm is not whether it improves an agent. It is whether it measures
