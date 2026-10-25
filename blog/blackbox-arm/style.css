@@ -87,3 +87,6 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
   h1 { font-size: 32px; } body { font-size: 18px; } .hero .nums { font-size: 40px; }
   .grid2 { grid-template-columns: 1fr; } .flow, .vrow { grid-template-columns: 1fr 22px 1fr 22px 1fr; }
 }
+.wip { display: inline-block; vertical-align: middle; margin-left: 8px; font-size: 12px; font-weight: 600;
+       color: var(--red); background: #fdecec; border: 1px solid #f3c2c2; border-radius: 99px; padding: 2px 10px; }
+.card ul { padding-left: 20px; margin: 4px 0 0; } .card li { margin-bottom: 6px; font-size: 13px; }

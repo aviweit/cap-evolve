@@ -73,21 +73,13 @@ intervention: blackbox      <span class="c"># deliver through the Skillberry Sto
 skill_name: my_skill        <span class="c"># the one skill the proxy serves</span>
 capabilities: [tools]       <span class="c"># what gets optimized: the agent's tools</span>
 </code></pre>
-  <p>And the whole worked example runs from three commands:</p>
-<pre><code><span class="c"># install, pin tau2, provision the store + proxy</span>
-bash examples/tau2_sierra_airline/blackbox/setup.sh
-
-<span class="c"># one task, one trial, no optimizer spend</span>
-bash examples/tau2_sierra_airline/blackbox/run.sh --smoke
-
-<span class="c"># the run measured in this post</span>
-bash examples/tau2_sierra_airline/blackbox/run.sh
-</code></pre>
+  <p>The whole worked example then runs from three commands — they are walked through step by step
+  further down.</p>
   <p>If this sounds useful, ⭐ <a href="https://github.com/skillberry-ai/cap-evolve">star cap-evolve on GitHub</a>.
   It takes five seconds and helps other people find the project. Now the part that took longer: how
   the two arms compare, and how a skill learned through a proxy ends up as plain code anyone can run.</p>
 
-  <h2>What "delivering a capability" actually means</h2>
+  <h2>What the blackbox arm is</h2>
   <p>cap-evolve keeps two questions apart, and they are easy to mix up:</p>
   <ol>
     <li><strong>What gets edited</strong>: the <em>capability</em>. The agent's prompt, its tools, or a
@@ -119,10 +111,13 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
     <figcaption>Only the delivery changes. Everything that decides the score is shared.</figcaption>
   </figure>
 
-  <h2>How the blackbox arm works</h2>
-  <p>We didn't fork τ²-bench to make this work. Everything the blackbox arm needs is added from outside
-  the benchmark, by a small tailoring module next to the adapter. Five things have to be right, and each
-  one fails silently when it isn't:</p>
+  <blockquote>Only the agent goes through the Proxy-Agent. The customer simulator, judges and verifiers
+  call the model directly, so only the agent under test sees the candidate.</blockquote>
+
+  <h2>How it works</h2>
+  <p>We didn't fork τ²-bench to make this work. τ² is never edited: everything the blackbox arm needs
+  is added from outside the benchmark, by a small tailoring module next to the adapter, built for one
+  pinned τ² commit.</p>
 
   <figure>
     <div class="card">
@@ -149,23 +144,60 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
     <figcaption>Each candidate is deployed to the store; the proxy injects it; its tools reach τ² over HTTP.</figcaption>
   </figure>
 
-  <ul>
-    <li><strong>Only the agent goes through the proxy.</strong> Its model calls use a sentinel model name
-    the proxy recognises. The customer simulator calls the model directly, so only the agent under test
-    sees the candidate.</li>
-    <li><strong>Every call says which trial it belongs to.</strong> Three context headers let the store
-    route each tool call to the right trial's environment.</li>
-    <li><strong>The tools reach τ² over HTTP.</strong> The skill's tools run inside the store, so they talk
-    to τ²'s own environment service, one environment per trial.</li>
-    <li><strong>One session per trial, always closed.</strong> Each trial opens an environment and, in a
-    <code>finally</code>, closes it and the proxy session — even when the trial fails.</li>
-    <li><strong>Two trajectories, merged at the right moments.</strong> The environment's record goes in
-    <em>before</em> scoring, so the scorer sees the real database writes. The proxy's record goes in
-    <em>after</em>, so the optimizer sees the skill's own calls. Get the order wrong and every trial scores
-    0, which looks exactly like a bad candidate.</li>
-  </ul>
+  <p><strong>One trial is one session:</strong></p>
+  <ol>
+    <li>The trial opens a remote environment: <code>POST :8004/start_environment</code> returns an
+    <code>env_id</code>.</li>
+    <li>The agent calls the sentinel model with three context headers (plugin, <code>env_id</code>,
+    <code>task_id</code>). The model calls the skill's tools, which run in the store against that
+    <code>env_id</code>.</li>
+    <li><strong>Before scoring</strong>, the environment's record is merged into τ²'s, so the scorer
+    replays the real database writes.</li>
+    <li><strong>After scoring</strong>, the proxy's record is merged, so the optimizer also sees the
+    skill's own composite calls.</li>
+    <li>In a <code>finally</code>, the proxy session and the environment are both closed — even when the
+    trial fails.</li>
+  </ol>
+  <p>Get the order of steps 3 and 4 wrong and every trial scores 0, which looks exactly like a bad
+  candidate rather than a wiring bug.</p>
 
-  <p>What the optimizer edits is <strong>one skill, <code>my_skill</code></strong>. Each file under its
+  <h2>Before you start</h2>
+  <figure>
+    <div class="card">
+      <div class="eyebrow">The only things you provide</div>
+      <ul>
+        <li><code>git</code>, <code>uv</code>, <code>curl</code> and <code>make</code>. <code>setup.sh</code> creates a Python 3.12 environment.</li>
+        <li>A repo-root <code>.env</code> with your model gateway (<code>OPENAI_BASE_URL</code>, <code>OPENAI_API_KEY</code>), the model the Proxy-Agent calls (<code>SPA_MODEL_NAME</code>) and the customer simulator's model (<code>TAU2_USER_MODEL</code>).</li>
+        <li>An optimizer: a logged-in Claude Code session, or <code>ANTHROPIC_API_KEY</code>.</li>
+      </ul>
+    </div>
+  </figure>
+
+  <h2>The run, step by step</h2>
+  <figure>
+    <div class="card">
+      <div class="eyebrow">examples/tau2_sierra_airline/blackbox</div>
+      <div class="grid2">
+        <div class="mini"><b>1 · Setup</b><p>Installs cap-evolve and τ² (pinned), installs the project, provisions the store and proxy, and passes the <code>cap-evolve check</code> gate. Ends with <code>READY.</code></p></div>
+        <div class="mini"><b>2 · Smoke</b><p>One task, one trial, no optimizer spend. Starts τ²'s environment service and the store, deploys the seed skill; the preflight starts the proxy.</p></div>
+        <div class="mini amber"><b>3 · The full run</b><p>7 tasks × 5 trials, Claude Code optimizer, hill-climb, 3 rounds. The banner prints the dashboard URL.</p></div>
+        <div class="mini amber"><b>4 · Stop the stack</b><p>The services keep running after the run. Stop them before running another benchmark.</p></div>
+      </div>
+    </div>
+  </figure>
+<pre><code><span class="c"># 1 · setup</span>
+bash examples/tau2_sierra_airline/blackbox/setup.sh
+
+<span class="c"># 2 · smoke: task 9, one trial, no optimizer spend</span>
+bash examples/tau2_sierra_airline/blackbox/run.sh --smoke
+
+<span class="c"># 3 · the run measured in this post</span>
+bash examples/tau2_sierra_airline/blackbox/run.sh
+</code></pre>
+
+  <h2>What the optimizer edits</h2>
+  <p>The seed is <strong>one skill, <code>my_skill</code></strong>, imported into the Skillberry Store — the
+  only skill the Proxy-Agent serves. Each file under its
   <code>scripts/</code> folder is one tool, and the starting files are τ²'s 14 airline tools: just a
   signature and a docstring calling a frozen <em>primitive</em> that runs τ²'s real code.</p>
 <pre><code>def get_user_details(user_id: str):
@@ -178,7 +210,20 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
     <figcaption>The run's Config tab: <code>intervention: blackbox</code>, <code>skill_name: my_skill</code>, and the paths the optimizer may not touch.</figcaption>
   </figure>
 
-  <h2>Does it climb the same way? Direct vs blackbox</h2>
+  <p>The optimizer rewrites these tools and adds new ones. Every tool must follow a few
+  <strong>delivery rules</strong>, and a tool that breaks one fails <em>silently</em> — the store still
+  accepts it:</p>
+  <ul>
+    <li><strong>One public function per file</strong>, named exactly like the file. Helpers are nested.</li>
+    <li><strong>The signature and docstring are the schema the model reads.</strong> The seed's 14 signatures
+    are frozen, because the scorer matches actions by name and arguments.</li>
+    <li><strong>Structured arguments are Pydantic models in the tool's own file</strong>, so the store
+    publishes a rich schema.</li>
+    <li><strong>τ² is reached only through the frozen primitives.</strong> A new or composite tool is a new
+    file.</li>
+  </ul>
+
+  <h2>Reading the results: does it climb like the direct arm?</h2>
   <p>The real test of a delivery arm is not whether it improves an agent. It is whether it measures
   the <em>same</em> improvement as the direct arm. So we ran one experiment twice, changing only the
   delivery: τ²-bench airline, 7 tasks, 5 trials each, the same models, the same optimizer (Claude Code,
@@ -237,6 +282,20 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
   the agent looked up earlier (like a payment-method id) is missing later; and the store strips quotes
   from tool results, which damages JSON-looking output. The next section shows what happens when both
   are out of the way.</p>
+
+  <figure>
+    <div class="card">
+      <div class="eyebrow">On a correctly wired blackbox run</div>
+      <h3>Four checks before trusting the number</h3>
+      <ul>
+        <li><b>One environment session per trial attempt</b> — 7 tasks × 5 trials gives 35, plus retries.</li>
+        <li><b>No session left open</b> — every environment the run started was stopped.</li>
+        <li><b>The writes reach the scorer</b> — some trials match the expected database.</li>
+        <li><b>The agent's cost reads 0</b> — the proxy reports no token usage, so 0 means "not measured".</li>
+      </ul>
+    </div>
+    <figcaption>All four held on the run measured here.</figcaption>
+  </figure>
 
   <blockquote>Honesty note: all three splits here are the same 7 tasks, so the test number is a fit, not
   a held-out result. The dashboard says so on every run, and so do we.</blockquote>
@@ -337,6 +396,31 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
   </ul>
   <p>Both rules cap-evolve is built on still hold on the blackbox arm: an edit is kept only if its gain
   beats the measured noise, and the test set is scored exactly once at the end.</p>
+
+  <h2>Troubleshooting</h2>
+  <figure>
+    <div class="card">
+      <div class="eyebrow">Symptom → fix</div>
+      <table>
+        <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>preflight says the store or proxy is not provisioned</td><td>run <code>setup.sh</code>; a run never provisions</td></tr>
+          <tr><td>every rollout errors with <code>deploy failed</code></td><td>read the message: the candidate could not be deployed</td></tr>
+          <tr><td>τ² is at an unexpected commit</td><td>run <code>setup.sh</code>, which checks out the pinned commit</td></tr>
+          <tr><td>the database never matches on any trial</td><td>the environment's record is not merged before scoring</td></tr>
+          <tr><td>the agent behaves like a different model</td><td>set <code>SPA_MODEL_NAME</code> before the store starts</td></tr>
+        </tbody>
+      </table>
+      <p class="src">Services left running from an earlier run pass the preflight while serving the old skill — stop the stack between benchmarks.</p>
+    </div>
+  </figure>
+
+  <h2>Going further <span class="wip">Work in progress</span></h2>
+  <p>To put your own benchmark on the blackbox arm, its runner must route only the agent to the proxy,
+  send the context headers, expose its environment over HTTP, merge both records at the right moments,
+  open and close a session per trial, and deploy each candidate before running it. The worked example
+  was produced by a coding agent following
+  <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">one onboarding prompt</a>.</p>
 
   <h2>Where the blackbox arm is honestly not there yet</h2>
   <p>This is a beta (version 0.x), and these gaps are written down on purpose — each one is a
