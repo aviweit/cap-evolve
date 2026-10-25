@@ -60,7 +60,7 @@
       <div class="nums"><span class="from">31.4%</span><span class="arrow">→</span><span class="to">88.6%</span></div>
       <span class="pill">▲ +57.2 points · the skill learned through the proxy, run in plain τ²-bench</span>
       <p class="desc">Task success on τ²-bench's airline benchmark: 7 tasks, 5 trials each. The agent is
-      <b>claude-haiku-4-5</b>; the simulated customer is <b>claude-sonnet-5</b>. cap-evolve learned the skill
+      <b>claude-haiku-4-5</b>; the simulated user is <b>claude-sonnet-5</b>. cap-evolve learned the skill
       through the Skillberry store and proxy, and we then patched it into an unmodified copy of τ²-bench.
       Database matches went from 11/35 to 31/35 (p ≈ 5·10⁻⁷).</p>
       <p class="src">Source: cap-evolve blackbox run <code>run_20261013_121303</code>, best candidate <code>cand_0003</code>, re-run in τ²-bench with its tools patched in. Same 7 tasks the optimizer searched on: a fit, not a held-out result.</p>
@@ -110,16 +110,16 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
         <tbody>
           <tr><td>Where the candidate lives</td><td>tool code the runner loads in its own process</td><td>a skill in the Skillberry Store</td></tr>
           <tr><td>What the agent calls</td><td>the model, directly</td><td>a sentinel model routed to the Proxy-Agent, which calls the model</td></tr>
-          <tr><td>Extra services</td><td>none</td><td>Store <code>:8000</code>, Proxy-Agent <code>:7000</code>, τ²'s environment service <code>:8004</code></td></tr>
-          <tr><td>The benchmark</td><td colspan="2">vanilla τ²-bench, pinned to one commit, <b>never edited</b> — on both arms</td></tr>
-          <tr><td>The simulated customer</td><td colspan="2">calls the model directly, never the proxy — on both arms</td></tr>
+          <tr><td>Extra services</td><td>none</td><td>Store (8000), Proxy-Agent (7000), τ²'s environment service (8004)</td></tr>
+          <tr><td>The benchmark</td><td colspan="2">vanilla τ²-bench, <b>never edited</b> — on both arms</td></tr>
+          <tr><td>The simulated user</td><td colspan="2">calls the model directly, never the proxy — on both arms</td></tr>
         </tbody>
       </table>
     </div>
-    <figcaption>Only the delivery changes. Everything that decides the score is shared.</figcaption>
+    <figcaption>Only the delivery changes. Everything that decides the score remains.</figcaption>
   </figure>
 
-  <blockquote>Only the agent goes through the Proxy-Agent. The customer simulator, judges and verifiers
+  <blockquote>Only the agent goes through the Proxy-Agent. The user simulator, judges and verifiers
   call the model directly, so only the agent under test sees the candidate.</blockquote>
 
   <h2>How it works</h2>
@@ -131,11 +131,11 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
     <div class="card">
       <div class="eyebrow">cap-evolve · docs/blackbox/02-architecture.md</div>
       <h3>One trial through the blackbox arm</h3>
-      <p class="lede">Solid arrows are requests, dashed are responses. The customer simulator never goes through the proxy.</p>
+      <p class="lede">Solid arrows are requests, dashed are responses. The user simulator never goes through the proxy.</p>
       <div class="flow">
         <div class="node"><b>Agent under test</b><small>τ²'s llm_agent</small></div>
         <div class="arr"><span class="s">→</span><span class="d">⇠</span></div>
-        <div class="node acc"><b>Proxy-Agent :7000</b><small>serves my_skill</small></div>
+        <div class="node acc"><b>Proxy-Agent (7000)</b><small>serves my_skill</small></div>
         <div class="arr"><span class="s">→</span><span class="d">⇠</span></div>
         <div class="node"><b>The real model</b><small>claude-haiku-4-5</small></div>
       </div>
@@ -143,11 +143,11 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
       <div class="flow">
         <div class="node acc"><b>cap-evolve</b><small>deploys each candidate</small></div>
         <div class="arr"><span class="s">→</span></div>
-        <div class="node acc"><b>Skillberry Store :8000</b><small>the skill's tools run here</small></div>
+        <div class="node acc"><b>Skillberry Store (8000)</b><small>the skill's tools run here</small></div>
         <div class="arr"><span class="s">→</span><span class="d">⇠</span></div>
-        <div class="node"><b>Env service :8004</b><small>τ², one environment per trial</small></div>
+        <div class="node"><b>Env service (8004)</b><small>τ², one environment per trial</small></div>
       </div>
-      <p class="src">Request: the agent's call carries a sentinel model name and three context headers (plugin, env_id, task_id). Response: the Proxy-Agent returns the model's reply, shaped by the skill.</p>
+      <p class="src">Request: the agent's call carries a sentinel model name and context headers (e.g. env_id, task_id). Response: the Proxy-Agent returns the model's reply, which gets returned to the caller agent as an optimized response.</p>
     </div>
     <figcaption>Each candidate is deployed to the store; the proxy injects it; its tools reach τ² over HTTP.</figcaption>
   </figure>
@@ -156,26 +156,22 @@ capabilities: [tools]       <span class="c"># what gets optimized: the agent's t
   <ol>
     <li>The trial opens a remote environment: <code>POST :8004/start_environment</code> returns an
     <code>env_id</code>.</li>
-    <li>The agent calls the sentinel model with three context headers (plugin, <code>env_id</code>,
-    <code>task_id</code>). The model calls the skill's tools, which run in the store against that
-    <code>env_id</code>.</li>
+    <li>The agent calls the sentinel model with a context header of env_id. The model calls the
+    skill's tools, which run in the store against that env_id.</li>
     <li><strong>Before scoring</strong>, the environment's record is merged into τ²'s, so the scorer
     replays the real database writes.</li>
     <li><strong>After scoring</strong>, the proxy's record is merged, so the optimizer also sees the
     skill's own composite calls.</li>
-    <li>In a <code>finally</code>, the proxy session and the environment are both closed — even when the
-    trial fails.</li>
+    <li>Finally, the proxy session and the environment are both closed — even when the trial fails.</li>
   </ol>
-  <p>Get the order of steps 3 and 4 wrong and every trial scores 0, which looks exactly like a bad
-  candidate rather than a wiring bug.</p>
 
   <h2>Before you start</h2>
   <figure>
     <div class="card">
       <div class="eyebrow">The only things you provide</div>
       <ul>
-        <li><code>git</code>, <code>uv</code>, <code>curl</code> and <code>make</code>. <code>setup.sh</code> creates a Python 3.12 environment.</li>
-        <li>A repo-root <code>.env</code> with your model gateway (<code>OPENAI_BASE_URL</code>, <code>OPENAI_API_KEY</code>), the model the Proxy-Agent calls (<code>SPA_MODEL_NAME</code>) and the customer simulator's model (<code>TAU2_USER_MODEL</code>).</li>
+        <li><code>git</code> and <code>make</code>. <code>setup.sh</code> creates a Python 3.12 environment.</li>
+        <li>A repo-root <code>.env</code> with your model gateway (<code>OPENAI_BASE_URL</code>, <code>OPENAI_API_KEY</code>), the model the Proxy-Agent calls (<code>SPA_MODEL_NAME</code>) and the user simulator's model (<code>TAU2_USER_MODEL</code>).</li>
         <li>An optimizer: a logged-in Claude Code session, or <code>ANTHROPIC_API_KEY</code>.</li>
       </ul>
     </div>
@@ -254,7 +250,7 @@ bash examples/tau2_sierra_airline/blackbox/run.sh
           <tr><td>Optimizer spend</td><td class="num">$6.07</td><td class="num">$8.95</td></tr>
         </tbody>
       </table>
-      <p class="src">Source: <code>.capevolve/run_20261013_094928</code> (direct) and <code>.capevolve-blackbox/run_20261013_121303</code> (blackbox). Agent claude-haiku-4-5, customer claude-sonnet-5, optimizer claude-opus-5-5. Train, val and test are the same 7 tasks.</p>
+      <p class="src">Source: <code>.capevolve/run_20261013_094928</code> (direct) and <code>.capevolve-blackbox/run_20261013_121303</code> (blackbox). Agent claude-haiku-4-5, user simulator claude-sonnet-5, optimizer claude-opus-5-5. Train, val and test are the same 7 tasks.</p>
     </div>
     <figcaption>Both arms start at exactly the same score and accept every round.</figcaption>
   </figure>
