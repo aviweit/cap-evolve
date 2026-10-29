@@ -68,32 +68,6 @@
   <div class="with-toc">
     <div class="doc-main">
 
-      <!-- ─────────────────────────── what ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="what">What the blackbox arm is</h2>
-        <p>
-          A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
-          <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
-          (<code>intervention:</code>). The two are independent. In the worked example both arms
-          optimize the airline agent's tools (<code>capabilities: [tools]</code>); only the
-          delivery differs.
-        </p>
-        <table>
-          <thead><tr><th></th><th>Direct</th><th>Blackbox</th></tr></thead>
-          <tbody>
-            <tr><td>Delivery</td><td>the runner loads the candidate's tool code in its own process</td><td>the candidate becomes a store skill; the Proxy-Agent injects it</td></tr>
-            <tr><td>What the agent calls</td><td>the gateway model</td><td>the sentinel <code>ibm/skillberry-local</code>; the Proxy-Agent calls the real model (<code>SPA_MODEL_NAME</code>)</td></tr>
-            <tr><td>Extra services</td><td>none</td><td>Store <code>:8000</code>, Proxy-Agent <code>:7000</code>, tau2's environment service <code>:8004</code></td></tr>          </tbody>
-        </table>
-        <div class="callout callout-accent">
-          <div class="callout-title">Only the agent goes through the Proxy-Agent</div>
-          <p>
-            The user simulator, judges and verifiers call the gateway directly, so only the agent
-            under test sees the candidate.
-          </p>
-        </div>
-      </section>
-
       <!-- ─────────────────────────── how ─────────────────────────── -->
       <section class="reveal">
         <h2 id="how">How it works</h2>
@@ -103,11 +77,11 @@
             <desc id="bb-desc">
               The agent under test calls the sentinel model with context headers. The Skillberry
               Proxy-Agent on port 7000 reads the one skill from the Skillberry Store on port 8000,
-              whose tools reach tau2's environment service on port 8004 for the trial's env_id.
+              whose tools reach the remote environment service on port 8004, one environment per rollout.
               The proxy calls the real model upstream. Dashed arrows are the responses: the
               environment result back to the tool, the tool result back to the Proxy-Agent, and
               the optimized response back to the agent. The user simulator calls the gateway
-              directly, never the proxy.
+              directly.
             </desc>
             <defs>
               <marker id="bb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -116,8 +90,7 @@
             </defs>
 
             <rect class="phase-box" x="20" y="40" width="150" height="56" rx="8" ry="8"/>
-            <text class="phase-label" x="95" y="64">agent under test</text>
-            <text class="phase-sub" x="95" y="80">tau2 llm_agent</text>
+            <text class="phase-label" x="95" y="72">agent under test</text>
 
             <rect class="phase-box-accent" x="285" y="40" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="360" y="64">Proxy-Agent :7000</text>
@@ -132,8 +105,8 @@
             <text class="phase-sub" x="360" y="190">the skill's tools run here</text>
 
             <rect class="phase-box" x="550" y="150" width="150" height="56" rx="8" ry="8"/>
-            <text class="phase-label" x="625" y="174">env service :8004</text>
-            <text class="phase-sub" x="625" y="190">tau2, one env per trial</text>
+            <text class="phase-label" x="625" y="174">remote env service :8004</text>
+            <text class="phase-sub" x="625" y="190">one env per rollout</text>
 
             <rect class="phase-box" x="20" y="232" width="150" height="48" rx="8" ry="8"/>
             <text class="phase-label" x="95" y="261">user simulator</text>
@@ -148,7 +121,7 @@
             <line class="arrow" x1="435" y1="172" x2="548" y2="172" marker-end="url(#bb-arrow)"/>
             <text class="caption" x="492" y="164">env_&lt;tool&gt;(…)</text>
             <line class="arrow" x1="170" y1="250" x2="548" y2="250" marker-end="url(#bb-arrow)"/>
-            <text class="caption" x="360" y="242">the gateway directly, never the proxy</text>
+            <text class="caption" x="360" y="242">the gateway directly</text>
 
             <!-- responses (dashed, opposite direction) -->
             <line class="arrow-accent flow-anim-dash" x1="283" y1="76" x2="172" y2="76" marker-end="url(#bb-arrow)"/>
@@ -182,6 +155,32 @@
           <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/adapters/tau2_tailoring.py"><code>tau2_tailoring.py</code></a>,
           built for the given tau2 commit.
         </p>
+      </section>
+
+      <!-- ─────────────────────────── what ─────────────────────────── -->
+      <section class="reveal">
+        <h2 id="what">What the blackbox arm is</h2>
+        <p>
+          A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
+          <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
+          (<code>intervention:</code>). The two are independent. In the worked example both arms
+          optimize the airline agent's tools (<code>capabilities: [tools]</code>); only the
+          delivery differs.
+        </p>
+        <table>
+          <thead><tr><th></th><th>Direct</th><th>Blackbox</th></tr></thead>
+          <tbody>
+            <tr><td>Delivery</td><td>the runner loads the candidate's tool code in its own process</td><td>the candidate becomes a store skill; the Proxy-Agent injects it</td></tr>
+            <tr><td>What the agent calls</td><td>the gateway model</td><td>the sentinel <code>ibm/skillberry-local</code>; the Proxy-Agent calls the real model (<code>SPA_MODEL_NAME</code>)</td></tr>
+            <tr><td>Extra services</td><td>none</td><td>Store <code>:8000</code>, Proxy-Agent <code>:7000</code>, tau2's environment service <code>:8004</code></td></tr>          </tbody>
+        </table>
+        <div class="callout callout-accent">
+          <div class="callout-title">Only the agent goes through the Proxy-Agent</div>
+          <p>
+            The user simulator, judges and verifiers call the gateway directly, so only the agent
+            under test sees the candidate.
+          </p>
+        </div>
       </section>
 
       <!-- ─────────────────────────── before ─────────────────────────── -->
@@ -391,8 +390,8 @@
 
     <nav class="toc" aria-label="On this page">
       <div class="toc-title">On this page</div>
-      <a href="#what">What the blackbox arm is</a>
       <a href="#how">How it works</a>
+      <a href="#what">What the blackbox arm is</a>
       <a href="#before">Before you start</a>
       <a href="#steps">The run, step by step</a>
       <a href="#candidate">What the optimizer edits</a>
