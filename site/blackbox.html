@@ -149,19 +149,42 @@
         </p>
       </section>
 
-      <!-- ─────────────────────────── what ─────────────────────────── -->
       <section class="reveal">
         <h2 id="what">Configure and run</h2>
         <p>
           A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
           <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
-          (<code>intervention:</code>). The two are independent. In the worked example both arms
-          optimize the airline agent's tools (<code>capabilities: [tools]</code>); only the
-          delivery differs.
+          (<code>intervention:</code>). Below is the worked τ²-bench example, which uses the blackbox approach to optimize the
+          airline agent's tools (<code>capabilities: [tools]</code>).
         </p>
+        <p>Environment variables, in the repo-root <code>.env</code>:</p>
+<pre><code># the model the Skillberry Proxy-Agent calls
+SPA_MODEL_NAME=&lt;proxy-agent model&gt;
+# the gateway model of the agent under test
+TAU2_AGENT_MODEL=&lt;agent model&gt;
+# the user simulator's model
+TAU2_USER_MODEL=&lt;user model&gt;</code></pre>
+        <p>
+          The run spec, <code>capevolve.yaml</code>: the keys that select the blackbox approach and the tools
+          capability, as in the smoke spec
+          (<a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/capevolve.smoke.yaml"><code>capevolve.smoke.yaml</code></a>):
+        </p>
+<pre><code># delivery
+intervention: blackbox
+skill_name: my_skill              # required: the one skill the Proxy-Agent serves
+
+# what to optimize
+capabilities: [tools]             # the agent's tool surface only
+capability_path: seed_capability  # the seed; a copy is optimized
+capability_sources: [seed_capability/reference/data_model.py]
+
+# smoke: task 9, one trial, one iteration, mock optimizer
+optimizer_skill: mock
+split_ids_file: split_ids_smoke.json
+num_trials: 1
+max_iterations: 1</code></pre>
       </section>
 
-      <!-- ─────────────────────────── before ─────────────────────────── -->
       <section class="reveal">
         <h2 id="before">Before you start</h2>
         <div class="callout callout-accent">
@@ -179,7 +202,6 @@
         </div>
       </section>
 
-      <!-- ─────────────────────────── steps ─────────────────────────── -->
       <section class="reveal">
         <h2 id="steps">The run, step by step</h2>
         <div class="steps">
