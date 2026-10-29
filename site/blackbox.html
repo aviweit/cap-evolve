@@ -59,7 +59,7 @@
   </p>
   <ul class="lead">
     <li><a href="https://github.com/skillberry-ai/skillberry-store"><strong>Skillberry Store</strong></a>: a smart repository of tools and skills for agentic workflows.</li>
-    <li><a href="https://github.com/skillberry-ai/skillberry-agent"><strong>Skillberry Proxy-Agent</strong></a>: the central coordinator for LLM communication, skill resolution and response optimization.</li>
+    <li><a href="https://github.com/skillberry-ai/skillberry-agent"><strong>Skillberry Proxy-Agent</strong></a>: a proxy that sits between the client agent and the LLM provider, uses the optimized skills and tools, and returns an optimized response to the agent.</li>
   </ul>
   <p class="lead">
     cap-evolve deploys the capabilities to optimize (system prompts, tools, skills) into the Skillberry Store, and the Skillberry
@@ -151,7 +151,7 @@
 
       <!-- ─────────────────────────── what ─────────────────────────── -->
       <section class="reveal">
-        <h2 id="what">What the blackbox arm is</h2>
+        <h2 id="what">Configure and run</h2>
         <p>
           A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
           <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
@@ -159,20 +159,6 @@
           optimize the airline agent's tools (<code>capabilities: [tools]</code>); only the
           delivery differs.
         </p>
-        <table>
-          <thead><tr><th></th><th>Direct</th><th>Blackbox</th></tr></thead>
-          <tbody>
-            <tr><td>Delivery</td><td>the runner loads the candidate's tool code in its own process</td><td>the candidate becomes a store skill; the Proxy-Agent injects it</td></tr>
-            <tr><td>What the agent calls</td><td>the gateway model</td><td>the sentinel <code>ibm/skillberry-local</code>; the Proxy-Agent calls the real model (<code>SPA_MODEL_NAME</code>)</td></tr>
-            <tr><td>Extra services</td><td>none</td><td>Store <code>:8000</code>, Proxy-Agent <code>:7000</code>, tau2's environment service <code>:8004</code></td></tr>          </tbody>
-        </table>
-        <div class="callout callout-accent">
-          <div class="callout-title">Only the agent goes through the Proxy-Agent</div>
-          <p>
-            The user simulator, judges and verifiers call the gateway directly, so only the agent
-            under test sees the candidate.
-          </p>
-        </div>
       </section>
 
       <!-- ─────────────────────────── before ─────────────────────────── -->
@@ -383,7 +369,7 @@
     <nav class="toc" aria-label="On this page">
       <div class="toc-title">On this page</div>
       <a href="#how">How it works</a>
-      <a href="#what">What the blackbox arm is</a>
+      <a href="#what">Configure and run</a>
       <a href="#before">Before you start</a>
       <a href="#steps">The run, step by step</a>
       <a href="#candidate">What the optimizer edits</a>
