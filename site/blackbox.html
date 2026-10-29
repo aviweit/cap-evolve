@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Blackbox arm — cap-evolve</title>
-  <meta name="description" content="Optimize a benchmark through the blackbox arm: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Step by step, on τ²-bench airline.">
+  <title>Blackbox approach — cap-evolve</title>
+  <meta name="description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <link rel="canonical" href="https://skillberry-ai.github.io/cap-evolve/blackbox.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="cap-evolve">
-  <meta property="og:title" content="Blackbox arm — cap-evolve">
-  <meta property="og:description" content="Optimize a benchmark through the blackbox arm: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Step by step, on τ²-bench airline.">
+  <meta property="og:title" content="Blackbox approach — cap-evolve">
+  <meta property="og:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <meta property="og:url" content="https://skillberry-ai.github.io/cap-evolve/blackbox.html">
   <meta property="og:image" content="https://skillberry-ai.github.io/cap-evolve/assets/dashboard.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Blackbox arm — cap-evolve">
-  <meta name="twitter:description" content="Optimize a benchmark through the blackbox arm: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Step by step, on τ²-bench airline.">
+  <meta name="twitter:title" content="Blackbox approach — cap-evolve">
+  <meta name="twitter:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <meta name="twitter:image" content="https://skillberry-ai.github.io/cap-evolve/assets/dashboard.png">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -36,13 +36,13 @@
     </button>
     <div class="nav-links" id="nav-links">
       <a href="getting-started.html">Get started</a>
-      <a href="blackbox.html" class="active" aria-current="page">Blackbox</a>
       <a href="run-end-to-end.html">Run end-to-end</a>
       <a href="results.html">Results</a>
       <a href="benchmarks.html">Benchmarks</a>
       <a href="architecture.html">Architecture</a>
       <a href="agent-orchestration.html">Agent mode</a>
       <a href="harbor.html">Harbor</a>
+      <a href="blackbox.html" class="active" aria-current="page">Blackbox</a>
       <a class="gh" href="https://github.com/skillberry-ai/cap-evolve">GitHub</a>
       <button class="theme-toggle" type="button" aria-label="Switch theme">
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
@@ -53,42 +53,34 @@
 </nav>
 
 <main class="page doc">
-  <h1>Optimize through the blackbox arm</h1>
+  <h1>Optimizing using the blackbox approach</h1>
   <p class="lead">
-    On the <strong>blackbox arm</strong> the candidate never touches the benchmark. cap-evolve
-    deploys it to the <strong>Skillberry Store</strong>, and the <strong>Skillberry
-    Proxy-Agent</strong> injects it into the agent's LLM calls: no skill files, no mounted
-    directory, no edited prompt. The worked example is <strong>τ²-bench airline</strong>.
+    In the <strong>blackbox approach</strong> the optimizer process never touches the benchmark.
   </p>
-
-  <div class="with-toc">
+  <h2 id="intro">Introduction</h2>
+  <p class="lead">
+    Some clients, such as enterprises, cannot share their agent's code, sources or behaviour - with an external optimization process. For them the optimization runs indirectly, without inspecting or directly modifying their agents.
+  </p>
+  <p class="lead">
+    The approach introduces two additional services:
+  </p>
+  <ul class="lead">
+    <li><a href="https://github.com/skillberry-ai/skillberry-store"><strong>Skillberry Store</strong></a>: a smart repository of tools and skills for agentic workflows.</li>
+    <li><a href="https://github.com/skillberry-ai/skillberry-agent"><strong>Skillberry Proxy-Agent</strong></a>: a proxy that sits between the client agent and the LLM provider, uses the optimized skills and tools, and returns an optimized response to the agent.</li>
+  </ul>
+  <p class="lead">
+    In the blackbox approach, cap-evolve deploys the capabilities to optimize (system prompts, tools, skills) into the Skillberry Store, and the Skillberry
+    Proxy-Agent reads them and injects them into the agent's LLM calls. The benchmark agent is left unchanged; it receives the optimized response from Skillberry.
+  </p>
+  <p class="lead">The optimized capabilities can be used in two ways:</p>
+  <ol class="lead">
+    <li><strong>Through the Skillberry service</strong> (a paid service): the client never changes its benchmark.
+      The benchmark is optimized through the responses the Skillberry Proxy-Agent returns.</li>
+    <li><strong>By exporting the optimized capabilities</strong> from the Skillberry Store and patching them back into
+      the client's benchmark.</li>
+  </ol>
+  <div>
     <div class="doc-main">
-
-      <!-- ─────────────────────────── what ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="what">What the blackbox arm is</h2>
-        <p>
-          A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
-          <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
-          (<code>intervention:</code>). The two are independent. In the worked example both arms
-          optimize the airline agent's tools (<code>capabilities: [tools]</code>); only the
-          delivery differs.
-        </p>
-        <table>
-          <thead><tr><th></th><th>Direct</th><th>Blackbox</th></tr></thead>
-          <tbody>
-            <tr><td>Delivery</td><td>the runner loads the candidate's tool code in its own process</td><td>the candidate becomes a store skill; the Proxy-Agent injects it</td></tr>
-            <tr><td>What the agent calls</td><td>the gateway model</td><td>the sentinel <code>ibm/skillberry-local</code>; the Proxy-Agent calls the real model (<code>SPA_MODEL_NAME</code>)</td></tr>
-            <tr><td>Extra services</td><td>none</td><td>Store <code>:8000</code>, Proxy-Agent <code>:7000</code>, tau2's environment service <code>:8004</code></td></tr>          </tbody>
-        </table>
-        <div class="callout callout-accent">
-          <div class="callout-title">Only the agent goes through the Proxy-Agent</div>
-          <p>
-            The user simulator, judges and verifiers call the gateway directly, so only the agent
-            under test sees the candidate.
-          </p>
-        </div>
-      </section>
 
       <!-- ─────────────────────────── how ─────────────────────────── -->
       <section class="reveal">
@@ -99,11 +91,11 @@
             <desc id="bb-desc">
               The agent under test calls the sentinel model with context headers. The Skillberry
               Proxy-Agent on port 7000 reads the one skill from the Skillberry Store on port 8000,
-              whose tools reach tau2's environment service on port 8004 for the trial's env_id.
+              whose tools reach the remote environment service on port 8004, which hosts the benchmark's tool execution.
               The proxy calls the real model upstream. Dashed arrows are the responses: the
               environment result back to the tool, the tool result back to the Proxy-Agent, and
               the optimized response back to the agent. The user simulator calls the gateway
-              directly, never the proxy.
+              directly.
             </desc>
             <defs>
               <marker id="bb-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -112,8 +104,7 @@
             </defs>
 
             <rect class="phase-box" x="20" y="40" width="150" height="56" rx="8" ry="8"/>
-            <text class="phase-label" x="95" y="64">agent under test</text>
-            <text class="phase-sub" x="95" y="80">tau2 llm_agent</text>
+            <text class="phase-label" x="95" y="72">agent under test</text>
 
             <rect class="phase-box-accent" x="285" y="40" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="360" y="64">Proxy-Agent :7000</text>
@@ -121,15 +112,16 @@
 
             <rect class="phase-box" x="550" y="40" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="625" y="64">the real model</text>
-            <text class="phase-sub" x="625" y="80">SPA_MODEL_NAME</text>
+            <text class="phase-sub" x="625" y="80">routes requests to the LLM</text>
 
             <rect class="phase-box-accent" x="285" y="150" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="360" y="174">Store :8000</text>
             <text class="phase-sub" x="360" y="190">the skill's tools run here</text>
 
             <rect class="phase-box" x="550" y="150" width="150" height="56" rx="8" ry="8"/>
-            <text class="phase-label" x="625" y="174">env service :8004</text>
-            <text class="phase-sub" x="625" y="190">tau2, one env per trial</text>
+            <text class="phase-label" x="625" y="170">remote env service :8004</text>
+            <text class="phase-sub" x="625" y="185">hosts benchmark</text>
+            <text class="phase-sub" x="625" y="197">tool execution</text>
 
             <rect class="phase-box" x="20" y="232" width="150" height="48" rx="8" ry="8"/>
             <text class="phase-label" x="95" y="261">user simulator</text>
@@ -144,7 +136,7 @@
             <line class="arrow" x1="435" y1="172" x2="548" y2="172" marker-end="url(#bb-arrow)"/>
             <text class="caption" x="492" y="164">env_&lt;tool&gt;(…)</text>
             <line class="arrow" x1="170" y1="250" x2="548" y2="250" marker-end="url(#bb-arrow)"/>
-            <text class="caption" x="360" y="242">the gateway directly, never the proxy</text>
+            <text class="caption" x="360" y="242">the gateway directly</text>
 
             <!-- responses (dashed, opposite direction) -->
             <line class="arrow-accent flow-anim-dash" x1="283" y1="76" x2="172" y2="76" marker-end="url(#bb-arrow)"/>
@@ -165,237 +157,52 @@
             <text class="caption" x="170" y="17">response</text>
           </svg>
         </figure>
-        <p>One trial is one session:</p>
-        <ol>
-          <li>The trial opens a remote environment session: <code>POST :8004/start_environment</code> returns an <code>env_id</code>.</li>
-          <li>The agent calls the sentinel model with the <code>skillberry-context-plugin</code>, <code>-env_id</code> and <code>-task_id</code> headers. The model calls the skill's tools, which run in the store against that <code>env_id</code>.</li>
-          <li><strong>Before evaluation</strong>, the environment's trajectory is merged into tau2's, so the scorer replays the real database writes.</li>
-          <li><strong>After evaluation</strong>, the proxy's trajectory is merged, so the optimizer also sees the store skill's composite calls.</li>
-          <li>In a <code>finally</code>: <code>POST :7000/disconnect</code>, then <code>POST :8004/{env_id}/stop_environment</code>.</li>
-        </ol>
         <p>
-          tau2 is never edited. All of this is added from outside the benchmark by the example's
-          <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/adapters/tau2_tailoring.py"><code>tau2_tailoring.py</code></a>,
-          built for the given tau2 commit.
+          The diagram above shows the flow between the benchmark agent and the real model it reaches. The agent
+          receives an optimized response without being modified.
         </p>
       </section>
 
-      <!-- ─────────────────────────── before ─────────────────────────── -->
       <section class="reveal">
-        <h2 id="before">Before you start</h2>
-        <div class="callout callout-accent">
-          <div class="callout-title">The only things you provide</div>
-          <ul>
-            <li><code>git</code> and <code>make</code>. <code>setup.sh</code> creates a Python 3.12 venv.</li>
-            <li>
-              A repo-root <code>.env</code> with <code>OPENAI_BASE_URL</code> and
-              <code>OPENAI_API_KEY</code> (your gateway), <code>SPA_MODEL_NAME</code> (the model the
-              Proxy-Agent calls, as <code>openai/&lt;model&gt;</code>) and <code>TAU2_USER_MODEL</code>.
-              <code>TAU2_AGENT_MODEL</code> is optional.
-            </li>
-            <li>An optimizer: a logged-in Claude Code session, or <code>ANTHROPIC_API_KEY</code>.</li>
-          </ul>
-        </div>
-      </section>
-
-      <!-- ─────────────────────────── steps ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="steps">The run, step by step</h2>
-        <div class="steps">
-          <div class="step">
-            <h3>Setup: install, provision, pass the hard gate</h3>
-<pre><code>bash examples/tau2_sierra_airline/blackbox/setup.sh</code></pre>
-            <p>Six numbered steps, ending with <code>READY.</code>:</p>
-            <ul>
-              <li>tools + venv;</li>
-              <li>clone tau2 into <code>vendor/tau2-bench</code> at <code>TAU2_REFERENCE_SHA</code>;</li>
-              <li>install cap-evolve and tau2 (50 airline tasks load);</li>
-              <li>install the snapshot as the project in <code>.capevolve-blackbox/project</code>;</li>
-              <li>provision the Skillberry store and proxy under <code>vendor/</code> (nothing is started);</li>
-              <li><code>cap-evolve check</code>, the hard gate.</li>
-            </ul>
-            <p>Look for <code>READY.</code> and no <code>SETUP FAILED:</code>. Add <code>--no-dashboard</code> to skip the dashboard.</p>
-          </div>
-          <div class="step">
-            <h3>Smoke: task 9, one trial, no optimizer spend</h3>
-<pre><code>bash examples/tau2_sierra_airline/blackbox/run.sh --smoke</code></pre>
-            <p>
-              <code>run.sh</code> starts tau2's environment service on <code>:8004</code> (log:
-              <code>/tmp/env_manager.log</code>), starts the store, imports the 14 frozen primitive
-              tools and deploys the seed skill (<code>primitives in store: 14</code>). Then it runs
-              <code>cap-evolve run</code>, whose preflight starts the proxy.
-            </p>
-            <p>
-              A good smoke has task-9 rollouts with <code>error</code> null and a real reward. The
-              mock optimizer makes no edits, so this checks the pipeline, not the score.
-            </p>
-          </div>
-          <div class="step">
-            <h3>The full run</h3>
-<pre><code>bash examples/tau2_sierra_airline/blackbox/run.sh</code></pre>
-            <p>
-              <code>capevolve.yaml</code>: the 7 budget tasks × 5 trials, agent
-              <code>aws/claude-haiku-4-5</code>, optimizer Claude Code
-              <code>claude-opus-5-5</code>, hill-climb, 3 iterations. The run lands in
-              <code>.capevolve-blackbox/run_&lt;ts&gt;/</code>, and the banner prints the dashboard
-              URL.
-            </p>
-          </div>
-          <div class="step">
-            <h3>Stop the stack</h3>
-            <p>
-              The services keep running after the run. Stop them with
-              <code>blackbox_env.stop_all()</code> and
-              <code>pkill -f tau2.orchestrator.environment_manager</code>. Always stop them before running another benchmark.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <!-- ─────────────────────────── candidate ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="candidate">What the optimizer edits</h2>
+        <h2 id="what">Configure and run</h2>
         <p>
-          The seed is <strong>one skill, <code>my_skill</code></strong>. It is imported into the
-          Skillberry Store, and it is the only skill the Proxy-Agent serves
-          (<code>skill_name: my_skill</code>). Its tools live in
-          <code>my_skill/scripts/</code>, one file per tool, and <strong>each file is one of
-          tau2's 14 airline tools</strong> (<code>book_reservation</code>,
-          <code>cancel_reservation</code>, <code>get_user_details</code>, …). A seed tool is just
-          tau2's signature and docstring, calling its primitive:
-        </p>
-<pre><code>def get_user_details(user_id: str):
-    """Get the details of a user, including their reservations. ..."""
-    return env_get_user_details(user_id=user_id)</code></pre>
-        <p>
-          The optimizer rewrites these tools and adds new ones. <code>my_skill/SKILL.md</code>
-          (empty), <code>primitive_tools/</code> (the 14 <code>env_&lt;tool&gt;</code> functions) and
-          <code>reference/</code> are sealed by <code>protected_paths</code>. Editing one voids the
-          candidate.
+          A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
+          <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
+          (<code>intervention:</code>).
         </p>
         <p>
-          Every tool must follow the <strong>delivery rules</strong> below. They are given to the
-          optimizer in
-          <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/optimizer/INSTRUCTIONS.md"><code>optimizer/INSTRUCTIONS.md</code></a>.
+          Below is a worked example, which uses the blackbox approach to optimize Tau2 airline
+          customer-service agent's tools (<code>capabilities: [tools]</code>).
         </p>
-        <ul>
-          <li><strong>One public top-level <code>def</code> per file, named exactly like the file.</strong> Every top-level <code>def</code> becomes its own tool, so helpers are nested and <code>_</code>-prefixed.</li>
-          <li><strong>The signature and docstring are the schema the model reads.</strong> The seed's 14 signatures are frozen, because the scorer matches actions by name and arguments. The <code>def</code> line stays on one line.</li>
-          <li><strong>A structured parameter's Pydantic class goes in the tool's own file</strong>, with only <code>typing</code>/<code>pydantic</code> imports and no self-referencing model, so the store publishes a rich schema.</li>
-          <li><strong>The environment is reached only through the <code>env_&lt;tool&gt;</code> primitives</strong>, called by bare name. Never call <code>_make_api_call</code>.</li>
-          <li><strong>A new or composite tool is a new file</strong> under <code>my_skill/scripts/</code>; removing a tool means deleting its file.</li>
-        </ul>
+        <p>Environment variables, in the repo-root <code>.env</code>:</p>
+<pre><code># the model of the agent under test
+TAU2_AGENT_MODEL=&lt;agent model&gt;
+# the user simulator's model
+TAU2_USER_MODEL=&lt;user model&gt;</code></pre>
         <p>
-          The worked run's best candidate added, among others,
-          <code>find_same_day_reservations</code> (groups a user's flights by day, so the agent
-          cancels exactly the right duplicates), <code>book_reservations_in_order</code> (books
-          several reservations in a fixed order), and a check that routes an insurance-only
-          cancellation through <code>cancel_reservation_with_insurance(reservation_id,
-          reason)</code>.
+          The run spec, <code>capevolve.yaml</code>: the keys that select the blackbox approach and the tools
+          capability, as in the smoke spec
+          (<a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/capevolve.smoke.yaml"><code>capevolve.smoke.yaml</code></a>):
         </p>
+<pre><code># delivery
+intervention: blackbox
+skill_name: my_skill              # required: the one skill the Proxy-Agent serves
+
+# what to optimize
+capabilities: [tools]             # the agent's tool surface only
+capability_path: seed_capability  # the seed; a copy is optimized
+capability_sources: [seed_capability/reference/data_model.py]
+
+# smoke: task 9, one trial, one iteration, mock optimizer
+optimizer_skill: mock
+split_ids_file: split_ids_smoke.json
+num_trials: 1
+max_iterations: 1</code></pre>
       </section>
 
-      <!-- ─────────────────────────── results ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="results">Reading the results</h2>
-        <p>
-          Open the dashboard with <code>cap-evolve dashboard --base .capevolve-blackbox</code>.
-          Each run's <strong>Config</strong> tab shows how the candidate was delivered, under
-          "Delivery":
-        </p>
-        <figure class="shot">
-          <img src="assets/blackbox-config.png" alt="The dashboard's Config tab for a blackbox run, showing intervention: blackbox and skill_name: my_skill under Delivery">
-          <figcaption class="shot-cap">
-            The run's Config tab: the candidate was delivered through the Skillberry store and
-            proxy (<code>intervention: blackbox</code>, <code>skill_name: my_skill</code>).
-          </figcaption>
-        </figure>
-        <p>On a correctly wired run:</p>
-        <ul>
-          <li><strong>one environment session per trial attempt</strong></li>
-          <li><strong>no session left open:</strong> every logged <code>env_id</code> answers <code>GET :8004/{env_id}/info</code> with a non-200;</li>
-          <li><strong>the writes reach the scorer:</strong> some trials have <code>db_match</code> true;</li>
-          <li><strong>cost reads 0 for the agent:</strong> the proxy-agent reports no token usage, so that 0 means not measured.</li>
-        </ul>
-
-        <div class="beforeafter">
-          <div><div class="ba-num base">0.286</div><div class="ba-label">Baseline val · seed</div></div>
-          <div class="ba-arrow">→</div>
-          <div><div class="ba-num best">0.771</div><div class="ba-label">Best val · cand_0003</div></div>
-        </div>
-        <div class="stat-strip">
-          <div class="stat"><div class="stat-num">0.771</div><div class="stat-label">sealed test, cand_0003</div></div>
-          <div class="stat"><div class="stat-num">0.371</div><div class="stat-label">sealed test, seed</div></div>
-          <div class="stat"><div class="stat-num amber">3 / 3</div><div class="stat-label">iterations accepted by the gate</div></div>
-          <div class="stat"><div class="stat-num">7 × 5</div><div class="stat-label">tasks × trials, haiku-4-5 agent</div></div>
-        </div>
-        <div class="callout callout-amber">
-          <div class="callout-title">This is a fit metric, not a held-out result</div>
-          <p>
-            The worked run (<code>run_20261013_121303</code>) uses the same 7 tasks for train, val
-            and test (<code>split_ids_budget.json</code>). For a held-out number, pin disjoint
-            splits.
-          </p>
-        </div>
-      </section>
-
-      <!-- ─────────────────────────── troubleshooting ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="troubleshooting">Troubleshooting</h2>
-        <p>Check <code>rollout.error</code> in <code>rollouts/val/*__seed__t0.json</code> first.</p>
-        <table>
-          <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
-          <tbody>
-            <tr><td><code>intervention preflight failed: … is not provisioned</code></td><td>run <code>setup.sh</code>; a run never provisions</td></tr>
-            <tr><td><code>… needs skill_name</code></td><td>set <code>skill_name: my_skill</code> in the spec</td></tr>
-            <tr><td>every rollout errors with <code>deploy failed: …</code></td><td>read the message: the adapter could not deploy the candidate</td></tr>
-            <tr><td><code>SeamError: tau2 is at …</code></td><td>run <code>setup.sh</code>, which checks out <code>TAU2_REFERENCE_SHA</code></td></tr>
-            <tr><td><code>db_match</code> false on every trial</td><td>the environment's trajectory is not merged before evaluation</td></tr>
-            <tr><td><code>no env_id in the execution context</code></td><td>the agent's calls are missing the context headers</td></tr>
-            <tr><td>the agent behaves like a different model</td><td>set <code>SPA_MODEL_NAME</code> in <code>.env</code> before the store starts</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <!-- ─────────────────────────── further ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="further">Going further <span class="badge failure">Work in progress</span></h2>
-        <p>
-          To put your own benchmark on the blackbox arm, its runner must route only the agent to
-          the sentinel, send the context headers, expose its environment over HTTP, merge both
-          trajectories in the right windows, open and close a session per trial, and deploy the
-          candidate in <code>apply()</code>. The example was produced by an agent following an
-          onboarding prompt.
-        </p>
-        <div class="card-grid">
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/tree/main/docs/blackbox">
-            <div class="card-title">The blackbox docs</div>
-            <div class="card-desc">Concepts, architecture, quickstart, the candidate, results and troubleshooting, in full.</div>
-          </a>
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">
-            <div class="card-title">The onboarding prompt</div>
-            <div class="card-desc">The PROMPT.md a coding agent follows to onboard vanilla tau2 on either arm.</div>
-          </a>
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/blob/main/skills/interventions/llm-proxies/blackbox/SKILL.md">
-            <div class="card-title">The intervention skill</div>
-            <div class="card-desc">Provisioning, the store and proxy lifecycle, and the facts that cost someone a debugging session.</div>
-          </a>
-        </div>
-      </section>
 
     </div>
 
-    <nav class="toc" aria-label="On this page">
-      <div class="toc-title">On this page</div>
-      <a href="#what">What the blackbox arm is</a>
-      <a href="#how">How it works</a>
-      <a href="#before">Before you start</a>
-      <a href="#steps">The run, step by step</a>
-      <a href="#candidate">What the optimizer edits</a>
-      <a href="#results">Reading the results</a>
-      <a href="#troubleshooting">Troubleshooting</a>
-      <a href="#further">Going further</a>
-    </nav>
   </div>
 </main>
 
