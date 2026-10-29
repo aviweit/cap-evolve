@@ -53,14 +53,18 @@
 </nav>
 
 <main class="page doc">
-  <h1>Optimize through the blackbox arm</h1>
+  <h1>Optimizing using the blackbox approach</h1>
   <p class="lead">
-    On the <strong>blackbox arm</strong> the candidate never touches the benchmark. cap-evolve
-    deploys it to the <strong>Skillberry Store</strong>, and the <strong>Skillberry
-    Proxy-Agent</strong> injects it into the agent's LLM calls: no skill files, no mounted
-    directory, no edited prompt. The worked example is <strong>τ²-bench airline</strong>.
+    In the <strong>blackbox approach</strong> the optimizer process never touches the benchmark. This approach introduces two additional services:
   </p>
-
+  <ul class="lead">
+    <li><a href="https://github.com/skillberry-ai/skillberry-store"><strong>Skillberry Store</strong></a>: a smart repository of tools and skills for agentic workflows.</li>
+    <li><a href="https://github.com/skillberry-ai/skillberry-agent"><strong>Skillberry Proxy-Agent</strong></a>: the central coordinator for LLM communication, skill resolution and response optimization.</li>
+  </ul>
+  <p class="lead">
+    cap-evolve deploys the capabilities to optimize (system prompts, tools, skills) into the Skillberry Store, and the Skillberry
+    Proxy-Agent reads them and injects them into the agent's LLM calls. The benchmark agent is left unchanged: it receives the optimized response from Skillberry.
+  </p>
   <div class="with-toc">
     <div class="doc-main">
 
