@@ -4,17 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Blackbox approach — cap-evolve</title>
-  <meta name="description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Worked example on τ²-bench airline.">
+  <meta name="description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <link rel="canonical" href="https://skillberry-ai.github.io/cap-evolve/blackbox.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="cap-evolve">
   <meta property="og:title" content="Blackbox approach — cap-evolve">
-  <meta property="og:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Worked example on τ²-bench airline.">
+  <meta property="og:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <meta property="og:url" content="https://skillberry-ai.github.io/cap-evolve/blackbox.html">
   <meta property="og:image" content="https://skillberry-ai.github.io/cap-evolve/assets/dashboard.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Blackbox approach — cap-evolve">
-  <meta name="twitter:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. Worked example on τ²-bench airline.">
+  <meta name="twitter:description" content="Optimize a benchmark with the blackbox approach: the candidate is deployed to the Skillberry Store and the Skillberry Proxy-Agent injects it into the agent's LLM calls. With a worked airline customer-service example.">
   <meta name="twitter:image" content="https://skillberry-ai.github.io/cap-evolve/assets/dashboard.png">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -57,8 +57,9 @@
   <p class="lead">
     In the <strong>blackbox approach</strong> the optimizer process never touches the benchmark.
   </p>
+  <h2 id="intro">Introduction</h2>
   <p class="lead">
-    Some clients, such as enterprises, cannot share their agent's code, sources or behaviour with an external optimization process. For them the optimization runs indirectly, without inspecting or directly modifying their agents.
+    Some clients, such as enterprises, cannot share their agent's code, sources or behaviour - with an external optimization process. For them the optimization runs indirectly, without inspecting or directly modifying their agents.
   </p>
   <p class="lead">
     The approach introduces two additional services:
@@ -68,17 +69,17 @@
     <li><a href="https://github.com/skillberry-ai/skillberry-agent"><strong>Skillberry Proxy-Agent</strong></a>: a proxy that sits between the client agent and the LLM provider, uses the optimized skills and tools, and returns an optimized response to the agent.</li>
   </ul>
   <p class="lead">
-    cap-evolve deploys the capabilities to optimize (system prompts, tools, skills) into the Skillberry Store, and the Skillberry
-    Proxy-Agent reads them and injects them into the agent's LLM calls. The benchmark agent is left unchanged: it receives the optimized response from Skillberry.
+    In the blackbox approach, cap-evolve deploys the capabilities to optimize (system prompts, tools, skills) into the Skillberry Store, and the Skillberry
+    Proxy-Agent reads them and injects them into the agent's LLM calls. The benchmark agent is left unchanged; it receives the optimized response from Skillberry.
   </p>
-  <p class="lead">There are two ways to use the optimized capabilities:</p>
+  <p class="lead">The optimized capabilities can be used in two ways:</p>
   <ol class="lead">
     <li><strong>Through the Skillberry service</strong> (a paid service): the client never changes its benchmark.
       The benchmark is optimized through the responses the Skillberry Proxy-Agent returns.</li>
     <li><strong>By exporting the optimized capabilities</strong> from the Skillberry Store and patching them back into
       the client's benchmark.</li>
   </ol>
-  <div class="with-toc">
+  <div>
     <div class="doc-main">
 
       <!-- ─────────────────────────── how ─────────────────────────── -->
@@ -167,13 +168,14 @@
         <p>
           A <em>capability</em> is <em>what</em> gets edited (<code>capabilities:</code>). An
           <em>intervention</em> is <em>how</em> the edited candidate reaches the model under test
-          (<code>intervention:</code>). Below is the worked τ²-bench example, which uses the blackbox approach to optimize the
-          airline agent's tools (<code>capabilities: [tools]</code>).
+          (<code>intervention:</code>).
+        </p>
+        <p>
+          Below is a worked example, which uses the blackbox approach to optimize Tau2 airline
+          customer-service agent's tools (<code>capabilities: [tools]</code>).
         </p>
         <p>Environment variables, in the repo-root <code>.env</code>:</p>
-<pre><code># the model the Skillberry Proxy-Agent calls
-SPA_MODEL_NAME=&lt;proxy-agent model&gt;
-# the gateway model of the agent under test
+<pre><code># the model of the agent under test
 TAU2_AGENT_MODEL=&lt;agent model&gt;
 # the user simulator's model
 TAU2_USER_MODEL=&lt;user model&gt;</code></pre>
@@ -198,40 +200,9 @@ num_trials: 1
 max_iterations: 1</code></pre>
       </section>
 
-      <!-- ─────────────────────────── further ─────────────────────────── -->
-      <section class="reveal">
-        <h2 id="further">Going further <span class="badge failure">Work in progress</span></h2>
-        <p>
-          To use the blackbox approach on your own benchmark, its runner must route only the agent to
-          the sentinel, send the context headers, expose its environment over HTTP, merge both
-          trajectories in the right windows, open and close a session per trial, and deploy the
-          candidate in <code>apply()</code>. The example was produced by an agent following an
-          onboarding prompt.
-        </p>
-        <div class="card-grid">
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/tree/main/docs/blackbox">
-            <div class="card-title">The blackbox docs</div>
-            <div class="card-desc">Concepts, architecture, quickstart, the candidate, results and troubleshooting, in full.</div>
-          </a>
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">
-            <div class="card-title">The onboarding prompt</div>
-            <div class="card-desc">The PROMPT.md a coding agent follows to onboard vanilla tau2, directly or through the blackbox approach.</div>
-          </a>
-          <a class="card" href="https://github.com/skillberry-ai/cap-evolve/blob/main/skills/interventions/llm-proxies/blackbox/SKILL.md">
-            <div class="card-title">The intervention skill</div>
-            <div class="card-desc">Provisioning, the store and proxy lifecycle, and the facts that cost someone a debugging session.</div>
-          </a>
-        </div>
-      </section>
 
     </div>
 
-    <nav class="toc" aria-label="On this page">
-      <div class="toc-title">On this page</div>
-      <a href="#how">How it works</a>
-      <a href="#what">Configure and run</a>
-      <a href="#further">Going further</a>
-    </nav>
   </div>
 </main>
 
