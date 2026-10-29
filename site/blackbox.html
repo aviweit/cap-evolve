@@ -77,7 +77,7 @@
             <desc id="bb-desc">
               The agent under test calls the sentinel model with context headers. The Skillberry
               Proxy-Agent on port 7000 reads the one skill from the Skillberry Store on port 8000,
-              whose tools reach the remote environment service on port 8004, one environment per rollout.
+              whose tools reach the remote environment service on port 8004, which hosts the benchmark's tool execution.
               The proxy calls the real model upstream. Dashed arrows are the responses: the
               environment result back to the tool, the tool result back to the Proxy-Agent, and
               the optimized response back to the agent. The user simulator calls the gateway
@@ -98,15 +98,16 @@
 
             <rect class="phase-box" x="550" y="40" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="625" y="64">the real model</text>
-            <text class="phase-sub" x="625" y="80">SPA_MODEL_NAME</text>
+            <text class="phase-sub" x="625" y="80">routes requests to the LLM</text>
 
             <rect class="phase-box-accent" x="285" y="150" width="150" height="56" rx="8" ry="8"/>
             <text class="phase-label" x="360" y="174">Store :8000</text>
             <text class="phase-sub" x="360" y="190">the skill's tools run here</text>
 
             <rect class="phase-box" x="550" y="150" width="150" height="56" rx="8" ry="8"/>
-            <text class="phase-label" x="625" y="174">remote env service :8004</text>
-            <text class="phase-sub" x="625" y="190">one env per rollout</text>
+            <text class="phase-label" x="625" y="170">remote env service :8004</text>
+            <text class="phase-sub" x="625" y="185">hosts benchmark</text>
+            <text class="phase-sub" x="625" y="197">tool execution</text>
 
             <rect class="phase-box" x="20" y="232" width="150" height="48" rx="8" ry="8"/>
             <text class="phase-label" x="95" y="261">user simulator</text>
@@ -142,18 +143,9 @@
             <text class="caption" x="170" y="17">response</text>
           </svg>
         </figure>
-        <p>One trial is one session:</p>
-        <ol>
-          <li>The trial opens a remote environment session: <code>POST :8004/start_environment</code> returns an <code>env_id</code>.</li>
-          <li>The agent calls the sentinel model with the <code>skillberry-context-plugin</code>, <code>-env_id</code> and <code>-task_id</code> headers. The model calls the skill's tools, which run in the store against that <code>env_id</code>.</li>
-          <li><strong>Before evaluation</strong>, the environment's trajectory is merged into tau2's, so the scorer replays the real database writes.</li>
-          <li><strong>After evaluation</strong>, the proxy's trajectory is merged, so the optimizer also sees the store skill's composite calls.</li>
-          <li>In a <code>finally</code>: <code>POST :7000/disconnect</code>, then <code>POST :8004/{env_id}/stop_environment</code>.</li>
-        </ol>
         <p>
-          tau2 is never edited. All of this is added from outside the benchmark by the example's
-          <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/blackbox/adapters/tau2_tailoring.py"><code>tau2_tailoring.py</code></a>,
-          built for the given tau2 commit.
+          The diagram above shows the flow between the benchmark agent and the real model it reaches. The agent
+          receives an optimized response without being modified.
         </p>
       </section>
 
