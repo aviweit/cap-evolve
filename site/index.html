@@ -197,11 +197,11 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <ul>
     <li><strong>τ²-bench</strong>, cloned at one pinned commit and installed as is.</li>
     <li><strong>The Skillberry Store and Proxy-Agent</strong>, each cloned at a pinned commit into its own
-    environment. A run only starts them; it never installs anything.</li>
+    Python venv. A run only starts them; it never installs anything.</li>
     <li><strong>The seed capability</strong>, built from τ²'s own airline tools. τ²'s real tool code
     becomes 14 frozen <em>primitives</em> in the Store, which the optimizer cannot touch. On top of them sits
-    <code>my_skill</code>, one script per tool, each just a signature, τ²'s docstring, and a call to its
-    primitive:</li>
+    <code>my_skill</code>, the skill as a unit described above: one script per tool, each just a signature,
+    τ²'s docstring, and a call to its primitive:</li>
   </ul>
 <pre><code>def get_user_details(user_id: str):
     """Get the details of a user, including their reservations. ..."""
@@ -234,11 +234,12 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     </div>
   </figure>
 
-  <p>Put together, the whole process looks like this. Onboarding runs once; each iteration deploys one
-  candidate; and inside each iteration, every trial goes through the Skillberry stack:</p>
+  <p>The diagram reads left to right: onboarding prepares τ²-bench and the Skillberry stack once, each
+  iteration edits <code>my_skill</code>, deploys it and lets the gate decide, and every trial of that
+  iteration sends the agent's calls through the Proxy-Agent and the Store to τ²'s environment.</p>
 
   <figure>
-    <img src="images/fig-e2e-tau2.png" alt="End to end on τ²-bench: onboarding from PROMPT.md, then each iteration deploying a candidate, then each trial going through the Proxy-Agent, the Store and τ²'s environment service">
+    <img src="images/fig-e2e-tau2.png?v=3" alt="End to end on τ²-bench: onboarding from PROMPT.md, then each iteration deploying a candidate, then each trial going through the Proxy-Agent, the Store and τ²'s environment service">
     <figcaption>From one prompt to a running loop. Highlighted boxes are where the Skillberry stack takes part.</figcaption>
   </figure>
 
