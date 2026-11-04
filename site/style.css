@@ -83,6 +83,16 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
            color: var(--muted); background: var(--soft); padding: 14px 18px; border-radius: 4px; }
 .footer-nav { font-family: var(--sans); font-size: 14px; color: var(--muted); border-top: 1px solid var(--line);
               margin-top: 48px; padding-top: 18px; }
+/* draft markers: "TODO: fill this up" and "needs to be fixed" notes (remove before publishing) */
+.todo { display: block; margin: 10px 0 18px; padding: 8px 12px; border: 1px dashed var(--amber);
+        background: var(--amber-soft); color: #7c4a03; font-family: var(--sans); font-size: 13px;
+        border-radius: 6px; }
+.todo::before { content: "TODO: "; font-weight: 700; }
+/* "fill in with honest numbers": red and smaller, so they read as a note, not as content */
+.todo.honest { border-color: var(--red); background: #fdecec; color: var(--red); font-size: 11.5px;
+               padding: 5px 10px; margin: 6px 0 14px; }
+.fixme { display: block; margin: 6px 0 14px; font-family: var(--sans); font-size: 12.5px; color: var(--red); }
+.fixme::before { content: "⚠ needs to be fixed: "; font-weight: 700; }
 @media (max-width: 640px) {
   h1 { font-size: 32px; } body { font-size: 18px; } .hero .nums { font-size: 40px; }
   .grid2 { grid-template-columns: 1fr; } .flow, .vrow { grid-template-columns: 1fr 22px 1fr 22px 1fr; }

@@ -2,7 +2,7 @@
 
 *How we made cap-evolve optimize an agent's tools through the Skillberry Store and Proxy-Agent, showed it climbs the same way as in-process delivery, and moved the winning skill back into plain τ²-bench: 0.314 → 0.886.*
 
-![The blackbox data flow](images/fig0-architecture.png)
+![The blackbox data flow](images/fig0-blackbox-flow.png)
 *Figure 1. In the blackbox approach, cap-evolve deploys each candidate to the Skillberry Store. The Proxy-Agent injects it into the agent's LLM calls, and the benchmark never sees a skill file.*
 
 ---
@@ -86,7 +86,7 @@ We ran the same experiment twice, once per approach, changing only the delivery:
 | Optimizer | Claude Code, `claude-opus-5-5`, hill-climb, 3 iterations |
 | Gate | paired, accept iff Δ > 0.2·SE |
 
-![Val reward per iteration, both approaches](images/fig1-climb-both-arms.png)
+![Val reward per iteration, both approaches](images/fig1-climb-both-approaches.png)
 *Figure 3. Val reward per hill-climb iteration, with ±1 standard error. Both approaches start from the same seed and accept every iteration.*
 
 | | Direct | Blackbox |
@@ -105,7 +105,7 @@ We ran the same experiment twice, once per approach, changing only the delivery:
 - **The same tasks moved** (Figure 4): 8, 10, 35 and 42 reach 1.0 on both approaches, 20 rises from 0.4 to 0.8–1.0, and 44 stays the hard one on both.
 - **The only visible difference is task 23** (1.0 vs 0.4). We trace it to two blackbox-specific effects below.
 
-![Per-task val reward, seed vs best, both approaches](images/fig2-per-task-both-arms.png)
+![Per-task val reward, seed vs best, both approaches](images/fig2-per-task-both-approaches.png)
 *Figure 4. Per-task val reward for the seed and the best candidate, on each approach. Both approaches fix the same tasks.*
 
 ![The two runs side by side](images/fig5-dashboards-overview.png)
