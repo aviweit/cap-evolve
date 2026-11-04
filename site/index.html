@@ -38,6 +38,21 @@
     <figcaption>The agent calls the Proxy-Agent instead of the model. The Proxy-Agent serves one skill from the Store, whose tools run against the benchmark's environment service.</figcaption>
   </figure>
 
+  <h2>Meet cap-evolve, in 30 seconds</h2>
+  <p>You give cap-evolve your agent and your own tests. It runs a loop: try the agent, look at what
+  failed, propose a fix, re-test, and keep the fix only if the gain beats the measurement noise. At the
+  end it scores a sealed test set it never optimized on, once. It can change the system prompt, the tool
+  code or a whole skill package, and it drives the coding-agent CLI you already use (Claude Code, Codex,
+  Cursor and others). It is free and Apache-2.0 licensed.</p>
+  <p>Two minutes, no API key:</p>
+<pre><code>git clone https://github.com/skillberry-ai/cap-evolve.git && cd cap-evolve
+python3 -m venv .venv && source .venv/bin/activate && pip install ./core
+bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt goes 0.0 → 1.0</span>
+</code></pre>
+  <p>If this sounds useful, ⭐ <a href="https://github.com/skillberry-ai/cap-evolve">star cap-evolve on GitHub</a> —
+  it takes five seconds, and it really does help other people discover the project. Now for the
+  interesting part: the blackbox approach on a real benchmark.</p>
+
   <h2>Does delivery through a proxy cost you anything? The τ²-bench numbers</h2>
   <p>The question that matters is not whether the blackbox approach improves an agent. It is whether
   it measures the <em>same</em> improvement as the direct approach. So we ran one optimization twice on
