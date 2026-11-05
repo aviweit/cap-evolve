@@ -132,26 +132,34 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     <figcaption>Per task: the starting tools and the best candidate, both approaches.</figcaption>
   </figure>
 
-  <h2>The skill is the unit</h2>
-  <p>What travels through the Store and the Proxy-Agent is a <strong>skill</strong>. A skill is a folder
+  <h2>The store skill - the skill where the capabilities go into</h2>
+  <p>What travels through the Store and the Proxy-Agent is a skill (termed as the <strong>store_skill</strong>). It is a folder
   that packages a capability for a model: a <code>SKILL.md</code> file, with a name, a description and
   instructions, and a <code>scripts/</code> folder, where each script is a tool the model can call. It is
   the open <a href="https://agentskills.io">Agent Skills</a> format, the same unit coding agents load from
   disk.</p>
 
-  <p>It is also the unit the Skillberry stack understands. The Store keeps skills and publishes their
-  scripts as tools; the Proxy-Agent picks one skill and, on every call, gives the model its instructions
-  and its tools. So in the blackbox approach, whatever cap-evolve optimizes is packaged as one skill:</p>
+  <p>It is also the unit the Skillberry stack is built around. The <strong>Skillberry Store</strong> is an
+  open-source service that manages everything your agents use — tools, skills and snippets — in one
+  place. You add, update, version and organize them in namespaces, find them by meaning with semantic
+  search, run them in a sandbox, and serve any subset of them as a virtual MCP server. Skills follow the
+  Anthropic skill format (<code>SKILL.md</code>, tools and docs), so you can import and export them as they
+  are. The <strong>Proxy-Agent</strong> sits on top: it picks one skill and, on every call, gives the model
+  that skill's instructions and its tools.</p>
+
+  <p>So in the blackbox approach, whatever cap-evolve optimizes is packaged as one skill — and it lands in a
+  store your team can already manage, search and share. To see everything the Store does with skills,
+  read its <a href="https://skillberry-ai.github.io/skillberry-store/features.html">features page</a>:</p>
 
   <figure>
     <div class="card">
-      <div class="eyebrow">One skill carries every capability</div>
+      <div class="eyebrow">ONE STORE SKILL CARRIES EVERY CAPABILITY</div>
       <h3>What lives where, and how it reaches the model</h3>
       <table>
         <thead><tr><th>What cap-evolve optimizes</th><th>Where it lives in the skill</th><th>How it reaches the model</th></tr></thead>
         <tbody>
           <tr><td>Instructions (the system prompt)</td><td><code>SKILL.md</code></td><td>the Proxy-Agent adds them to the model's prompt</td></tr>
-          <tr><td>Tools</td><td><code>scripts/*.py</code>, one tool per script</td><td>the Store publishes each script's schema; the model calls it; the script runs in the Store</td></tr>
+          <tr><td>Tools</td><td><code>scripts/*.py</code>, one tool per script</td><td>the Store publishes each script's schema for the Proxy-Agent to pass to the model; the script runs in the Store</td></tr>
           <tr><td>A whole skill package</td><td>both</td><td>both</td></tr>
         </tbody>
       </table>
@@ -185,23 +193,24 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   </figure>
 
   <h2>Full automation: onboarding τ²-bench and optimizing it — in one click</h2>
-  <p>Nothing here is hand-built for τ²-bench. Your coding agent (for example, Claude Code) onboards the
+  <p>Nothing here is hand-built for τ²-bench. You use your coding agent (for example, Claude Code) to onboard the
   benchmark by following one prompt, <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">PROMPT.md</a>.
-  When asked how a candidate should reach the model, answer <strong><code>blackbox</code></strong>.
+  When asked how a candidate should reach the model, you answer <strong><code>blackbox</code></strong>.
   From there, your coding agent installs the benchmark, seeds the capability from the benchmark's own
-  source, and adds the tailoring the approach needs. It then passes the
-  <code>cap-evolve check</code> gate and runs the optimization loop: it proposes edits, keeps only those
+  source, and adds the tailoring the approach needs. It then runs 
+  <code>cap-evolve check</code> and ensure it passes the gate and then kicksoff the optimization loop: proposes edits, keeps only those
   that clear the significance gate, scores the sealed test, and writes a report.</p>
 
-  <p>When onboarding is done, you have four things:</p>
+  <p>When onboarding is done, you have five things:</p>
   <ul>
-    <li><strong>τ²-bench</strong>, cloned and installed as it is. Nobody edits it.</li>
+    <li><strong>τ²-bench</strong>, cloned and installed as is. Nobody edits it.</li>
     <li><strong>The Skillberry Store and Proxy-Agent</strong>, each cloned into its own Python venv.
     A run just starts them; it never installs anything.</li>
-    <li><strong>A starting skill</strong>, built from τ²'s own airline tools. τ²'s real tool code goes into
-    the Store as 14 <em>primitives</em> that the optimizer can't change. On top of them sits
-    <code>store_skill</code>, the skill described above, with one script per tool. Each script starts out as
-    just a signature, τ²'s docstring, and a call to its primitive:</li>
+    <li><strong>14 frozen primitive tools</strong>: τ²'s real airline tool code, placed in the Store as is.
+    The optimizer can't change them, so every database read and write still runs τ²'s own code.</li>
+    <li><strong>The seed <code>store_skill</code></strong>: the skill described above, with one script per
+    tool, built on top of the primitives. This is what the optimizer edits. Each script starts out as just
+    a signature, τ²'s docstring, and a call to its primitive:</li>
   </ul>
 <pre><code>def get_user_details(user_id: str):
     """Get the details of a user, including their reservations. ..."""
