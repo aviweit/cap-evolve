@@ -70,7 +70,7 @@ user answers **`blackbox`**. The agent then:
 - installs τ²-bench unmodified, pinned to one commit;
 - provisions the Skillberry Store and Proxy-Agent (clones both, at pinned commits, own venvs);
 - seeds the capability from τ²'s own source: 14 frozen **primitives** (τ²'s real tool code,
-  tagged and protected) and `my_skill`, one script per tool;
+  tagged and protected) and `store_skill`, one script per tool;
 - writes the adapter and the tailoring module, from outside τ²;
 - passes the `cap-evolve check` gate, then runs the loop.
 
@@ -90,10 +90,10 @@ user answers **`blackbox`**. The agent then:
 
 ```
  ONBOARDING (once)                      ONE ITERATION                         ONE TRIAL (× tasks × trials)
- PROMPT.md ─→ answer "blackbox"         optimizer edits my_skill              τ² llm_agent ── sentinel model + headers ─→ Proxy-Agent :7000
+ PROMPT.md ─→ answer "blackbox"         optimizer edits store_skill              τ² llm_agent ── sentinel model + headers ─→ Proxy-Agent :7000
    ─→ install τ² @ pinned SHA             ─→ deploy: reset Store to            Proxy-Agent ─→ vMCP server for this env_id (Store)
-   ─→ provision Store + Proxy-Agent          my_skill, restart Proxy-Agent     Proxy-Agent ─→ real model (skill + tool schemas)
-   ─→ seed 14 primitives + my_skill      ─→ τ² runs tasks × trials             tool call ─→ Store runs script ─→ primitives ─→ env :8004
+   ─→ provision Store + Proxy-Agent          store_skill, restart Proxy-Agent     Proxy-Agent ─→ real model (skill + tool schemas)
+   ─→ seed 14 primitives + store_skill      ─→ τ² runs tasks × trials             tool call ─→ Store runs script ─→ primitives ─→ env :8004
    ─→ tailoring (hooks above)            ─→ score, gate keeps or drops         end: merge env traj → score → merge proxy traj
    ─→ cap-evolve check                   ─→ next edit                          finally: disconnect → vMCP server removed
 ```
@@ -110,9 +110,9 @@ The tool: **`book_split_reservations`**, new in the winner `cand_0003`. Only tas
 Shown as a visual sequence (a figure, plus short excerpts under it):
 1. **The failure.** Task 23 at the seed: the agent books several reservations and gets the
    order or the passengers wrong, so τ²'s database doesn't match.
-2. **The edit.** The optimizer adds `my_skill/scripts/book_split_reservations.py`: its one-line
+2. **The edit.** The optimizer adds `store_skill/scripts/book_split_reservations.py`: its one-line
    signature with Pydantic models, its docstring, its calls to `env_book_reservation`.
-3. **Into the singleton skill.** cap-evolve deploys `my_skill`; the Store registers the script
+3. **Into the singleton skill.** cap-evolve deploys `store_skill`; the Store registers the script
    as a tool and derives its JSON schema from the annotations.
 4. **What the model sees.** The Proxy-Agent sends the model the tool's schema: name,
    description, nested properties, required fields.
@@ -125,7 +125,7 @@ Shown as a visual sequence (a figure, plus short excerpts under it):
 ## ¶7 — Taking the winner home: patching vanilla τ²-bench
 
 A procedure for the agent owner, with commands:
-1. take the winner's skill: `run_…/candidates/cand_0003/my_skill/scripts/`;
+1. take the winner's skill: `run_…/candidates/cand_0003/store_skill/scripts/`;
 2. clone τ²-bench at the same commit;
 3. patch one file, `src/tau2/domains/airline/tools.py`, by four mechanical rules: τ²'s
    `AirlineTools` → `_AirlinePrimitives`, unchanged; each script → a method of a new

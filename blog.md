@@ -36,7 +36,7 @@ So we added a second **delivery approach**. The capability being optimized stays
 | How the candidate reaches the agent | the runner loads the candidate's tool code in its own process | the candidate becomes a store skill; the Proxy-Agent injects it |
 | What the agent calls | the gateway model | the sentinel model `ibm/skillberry-local`; the Proxy-Agent calls the real model |
 | Extra services | none | Skillberry Store `:8000`, Proxy-Agent `:7000`, τ²'s environment service `:8004` |
-| Spec | — | `intervention: blackbox`, `skill_name: my_skill` |
+| Spec | — | `intervention: blackbox`, `skill_name: store_skill` |
 
 **Capability** (*what* gets edited, `capabilities:`) and **intervention** (*how* it is delivered, `intervention:`) are independent axes in the spec. The same candidate can be measured either way.
 
@@ -55,7 +55,7 @@ So we added a second **delivery approach**. The capability being optimized stays
 
   Merge both after evaluation, and every trial scores 0. That looks like a bad candidate rather than a wiring bug.
 
-**What the optimizer edits** is one skill, `my_skill`, imported into the store. Each file under `my_skill/scripts/` is one tool, and the seed's 14 files are τ²'s 14 airline tools: just the signature and docstring, calling a primitive.
+**What the optimizer edits** is one skill, `store_skill`, imported into the store. Each file under `store_skill/scripts/` is one tool, and the seed's 14 files are τ²'s 14 airline tools: just the signature and docstring, calling a primitive.
 
 ```python
 def get_user_details(user_id: str):
@@ -69,7 +69,7 @@ The 14 `env_<tool>` **primitives** are frozen: they run τ²'s real tool in the 
 - Pydantic argument models go in the tool's own file, so the store publishes a rich schema.
 
 ![The dashboard's Config tab](images/fig4-config-tab.png)
-*Figure 2. The run's Config tab: `intervention: blackbox`, `skill_name: my_skill`, and the sealed `protected_paths` (the primitives, `SKILL.md`, the data model).*
+*Figure 2. The run's Config tab: `intervention: blackbox`, `skill_name: store_skill`, and the sealed `protected_paths` (the primitives, `SKILL.md`, the data model).*
 
 ---
 
