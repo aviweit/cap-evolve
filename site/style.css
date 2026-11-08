@@ -78,6 +78,16 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 /* a narrow label column plus three equal number columns, so no column drifts to the far right */
 table.cols4 { table-layout: fixed; }
 table.cols4 th:first-child, table.cols4 td:first-child { width: 22%; }
+/* "what is the same, what differs": shared rows muted, the one differing row highlighted */
+table.same-diff tr.group td { font-family: var(--sans); font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); padding-top: 14px; border-bottom: none; }
+table.same-diff tr.same td { color: #6b6b6b; }
+table.same-diff tr.same td:first-child { color: var(--ink); }
+table.same-diff tr.group.diff td { color: var(--accent); }
+table.same-diff tr.diff:not(.group) td { background: var(--accent-soft); color: var(--ink); font-weight: 600;
+  border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
+table.same-diff tr.diff:not(.group) td:first-child { border-left: 2px solid var(--accent); border-radius: 6px 0 0 6px; }
+table.same-diff tr.diff:not(.group) td:last-child { border-right: 2px solid var(--accent); border-radius: 0 6px 6px 0; }
 table.cols5 { table-layout: fixed; }
 table.cols5 th:first-child, table.cols5 td:first-child { width: 36%; }
 .good { color: var(--green); font-weight: 700; } .warn { color: var(--amber); font-weight: 700; }

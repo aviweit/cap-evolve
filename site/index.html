@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</title>
-  <link rel="stylesheet" href="style.css?v=20261108a">
+  <link rel="stylesheet" href="style.css?v=20261108b">
 </head>
 <body>
 <div class="topbar"><span>cap-evolve · blog (local preview)</span><a href="figures.html">All figures ↗</a></div>
@@ -64,33 +64,25 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     <div class="card">
       <div class="eyebrow">What is identical, and what is not</div>
       <h3>One variable: the delivery</h3>
-      <table>
+      <table class="same-diff">
         <thead><tr><th></th><th>Direct</th><th>Blackbox</th></tr></thead>
         <tbody>
-          <tr><td>Benchmark</td><td colspan="2">vanilla τ²-bench airline, pinned to one commit, never edited</td></tr>
-          <tr><td>Tasks and trials</td><td colspan="2">7 tasks (8, 10, 20, 23, 35, 42, 44) × 5 trials each</td></tr>
-          <tr><td>Models</td><td colspan="2">agent <code>claude-haiku-4-5</code>, simulated customer <code>claude-sonnet-5</code></td></tr>
-          <tr><td>Optimizer and loop</td><td colspan="2">Claude Code (<code>claude-opus-5-5</code>), hill-climb, 3 iterations, the same significance gate</td></tr>
-          <tr><td>What is optimized</td><td colspan="2">the agent's tools</td></tr>
-          <tr><td>How a candidate reaches the model</td><td>tool code loaded into the runner</td><td>a skill in the Skillberry Store, injected by the Proxy-Agent</td></tr>
+          <tr class="group"><td colspan="3">✓ The same on both approaches</td></tr>
+          <tr class="same"><td>Benchmark</td><td colspan="2">vanilla τ²-bench airline, pinned to one commit, never edited</td></tr>
+          <tr class="same"><td>Tasks and trials</td><td colspan="2">7 tasks (8, 10, 20, 23, 35, 42, 44) × 5 trials each</td></tr>
+          <tr class="same"><td>Models</td><td colspan="2">agent <code>claude-haiku-4-5</code>, simulated customer <code>claude-sonnet-5</code></td></tr>
+          <tr class="same"><td>Optimizer and loop</td><td colspan="2">Claude Code (<code>claude-opus-5-5</code>), hill-climb, 3 iterations, the same significance gate</td></tr>
+          <tr class="same"><td>What is optimized</td><td colspan="2">the agent's tools</td></tr>
+          <tr class="group diff"><td colspan="3">≠ The only difference</td></tr>
+          <tr class="diff"><td>How a candidate reaches the model</td><td>tool code loaded into the runner</td><td>a skill in the Skillberry Store, injected by the Proxy-Agent</td></tr>
         </tbody>
       </table>
     </div>
   </figure>
 
-  <p>The answer is no. Both runs were made on the same day, on the same 7 tasks with the same 5 trials, and
-  <strong>the two approaches come out very similar</strong>: the same starting score, the same climb up to
-  the second round, the same kinds of mistakes, and an optimizer bill within about a third.</p>
-
-  <figure>
-    <div class="card hero">
-      <div class="eyebrow">Gain over the starting tools · sealed test</div>
-      <div class="nums"><span class="to">+0.51</span><span class="arrow">≈</span><span class="to">+0.37</span></div>
-      <span class="pill">direct · blackbox — within one standard error of each other</span>
-      <p class="desc">Mean τ²-bench task reward, 7 tasks × 5 trials. Both start from the same 0.343; direct
-      reaches 0.857, blackbox 0.714.</p>
-    </div>
-  </figure>
+  <p>The answer is no. <strong>The two approaches come out very similar</strong>: the same starting score,
+  the same climb up to the second iteration, the same kinds of mistakes, and an optimizer bill within about
+  a third.</p>
 
   <figure>
     <div class="card">
