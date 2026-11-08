@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</title>
-  <link rel="stylesheet" href="style.css?v=20261108b">
+  <link rel="stylesheet" href="style.css?v=20261108e">
 </head>
 <body>
 <div class="topbar"><span>cap-evolve · blog (local preview)</span><a href="figures.html">All figures ↗</a></div>
@@ -14,6 +14,18 @@
   <h1>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</h1>
   <p class="subtitle">You have an agent you can't change, and you still want it to get better. Here is how to optimize it without touching it.</p>
   <div class="byline"><div class="avatar"></div><div><b>cap-evolve team</b> · 14 min read · Oct 2026</div></div>
+
+  <aside class="series">
+    <div class="series-title">Previous articles in this series</div>
+    <ul>
+      <li><a href="https://medium.com/@eran.raichstein/capevolve-optimize-agentic-capabilities-with-agents-6719d8d903ec">CapEvolve: Optimize agentic capabilities — with agents</a><br>
+      A coding agent improves prompts, tools, and skills through iterative optimization.</li>
+      <li><a href="https://medium.com/@eran.raichstein/the-state-of-ai-agent-optimization-in-2026-and-where-cap-evolve-fits-697022d3aeee">The State of AI Agent Optimization in 2026 (and Where cap-evolve Fits)</a><br>
+      Anyone can make a score go up. The hard part is proving it wasn't luck.</li>
+    </ul>
+    <p>Both assume the optimizer may open the agent and edit it. <b>This post drops that assumption.</b>
+    The agent stays closed, and the gains still arrive.</p>
+  </aside>
 
   <p>Most tools that make an AI agent better assume they can reach inside it, and so does
   <a href="https://github.com/skillberry-ai/cap-evolve">cap-evolve</a> in its <strong>direct approach</strong>:
