@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</title>
-  <link rel="stylesheet" href="style.css?v=20261104c">
+  <link rel="stylesheet" href="style.css?v=20261108a">
 </head>
 <body>
 <div class="topbar"><span>cap-evolve · blog (local preview)</span><a href="figures.html">All figures ↗</a></div>
@@ -13,7 +13,7 @@
   <div class="tags"><span>Optimization</span><span>AI</span><span>Agents</span><span>Skills</span></div>
   <h1>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</h1>
   <p class="subtitle">You have an agent you can't change, and you still want it to get better. Here is how to optimize it without touching it.</p>
-  <div class="byline"><div class="avatar"></div><div><b>cap-evolve team</b> · 8 min read · Oct 2026</div></div>
+  <div class="byline"><div class="avatar"></div><div><b>cap-evolve team</b> · 14 min read · Oct 2026</div></div>
 
   <p>Most tools that make an AI agent better assume they can reach inside it, and so does
   <a href="https://github.com/skillberry-ai/cap-evolve">cap-evolve</a> in its <strong>direct approach</strong>:
@@ -22,13 +22,13 @@
   process, such as an optimizer, that edits it for you.</p>
 
   <p>Real agents are often built differently. Some owners, enterprises in particular, cannot share
-  their agent's code, sources or behaviour with an external optimization process. For them,
+  their agent's code, sources or behavior with an external optimization process. For them,
   optimization has to work from the outside: it improves the agent without inspecting it or
   modifying it directly.</p>
 
-  <p>For that scenario, cap-evolve comes to the rescue, with the <strong>blackbox optimization approach</strong>. Here, cap-evolve deploys the capabilities it optimizes
+  <p>For that scenario, cap-evolve comes to the rescue with the <strong>blackbox optimization approach</strong>. Here, cap-evolve deploys the capabilities it optimizes
   (system prompts, tools, skills) to the
-  <a href="https://github.com/skillberry-ai/skillberry-store">Skillberry Store</a>, and the
+  <a href="https://skillberry-ai.github.io/skillberry-store/">Skillberry Store</a>, and the
   <a href="https://github.com/skillberry-ai/skillberry-agent">Skillberry Proxy-Agent</a> reads them from
   there and injects them into the agent's LLM calls. The benchmark agent itself is left unchanged: it
   simply receives the optimized response from Skillberry.</p>
@@ -77,20 +77,19 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     </div>
   </figure>
 
-  <p>The answer is no: <strong>the two approaches come out very similar, on every measure</strong>. They
-  reach the same score, climb the same way, improve the same tasks, and fail on the same kinds of
-  mistakes. And it costs about the same to get there: the optimizer's time, tokens and budget are close on
-  both approaches.</p>
+  <p>The answer is no. Both runs were made on the same day, on the same 7 tasks with the same 5 trials, and
+  <strong>the two approaches come out very similar</strong>: the same starting score, the same climb up to
+  the second round, the same kinds of mistakes, and an optimizer bill within about a third.</p>
 
   <figure>
     <div class="card hero">
       <div class="eyebrow">Gain over the starting tools · sealed test</div>
-      <div class="nums"><span class="to">direct</span><span class="arrow">≈</span><span class="to">blackbox</span></div>
-      <span class="pill">the same improvement, within the noise</span>
-      <p class="desc">Mean τ²-bench task reward, 7 tasks × 5 trials, starting tools → best candidate.</p>
+      <div class="nums"><span class="to">+0.51</span><span class="arrow">≈</span><span class="to">+0.37</span></div>
+      <span class="pill">direct · blackbox — within one standard error of each other</span>
+      <p class="desc">Mean τ²-bench task reward, 7 tasks × 5 trials. Both start from the same 0.343; direct
+      reaches 0.857, blackbox 0.714.</p>
     </div>
   </figure>
-  <span class="todo honest">fill in with honest numbers — the hero card: gain over the starting tools, direct vs blackbox.</span>
 
   <figure>
     <div class="card">
@@ -99,57 +98,79 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
       <table>
         <thead><tr><th></th><th class="num">Direct</th><th class="num">Blackbox</th></tr></thead>
         <tbody>
-          <tr><td>Sealed test: starting tools → best</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Gain over the starting tools</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>± one standard error</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>pass^2 (both trials of a pair succeed)</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Best candidate</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Wall clock</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Benchmark time (baseline, iterations, sealed test)</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Optimizer time</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Optimizer tokens</td><td class="num">TODO</td><td class="num">TODO</td></tr>
-          <tr><td>Optimizer spend</td><td class="num">TODO</td><td class="num">TODO</td></tr>
+          <tr><td>Sealed test: starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
+          <tr><td>Gain over the starting tools</td><td class="num">+0.514</td><td class="num">+0.371</td></tr>
+          <tr><td>± one standard error</td><td class="num">0.092</td><td class="num">0.143</td></tr>
+          <tr><td>pass^2 (both trials of a pair succeed)</td><td class="num">0.74</td><td class="num">0.59</td></tr>
+          <tr><td>Best candidate</td><td class="num"><code>cand_0003</code></td><td class="num"><code>cand_0002</code></td></tr>
+          <tr><td>Wall clock</td><td class="num">91 min</td><td class="num">148 min</td></tr>
+          <tr><td>Benchmark time (baseline, iterations, sealed test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
+          <tr><td>Optimizer time</td><td class="num">61 min</td><td class="num">91 min</td></tr>
+          <tr><td>Optimizer tokens</td><td class="num">14.5M</td><td class="num">17.8M</td></tr>
+          <tr><td>Optimizer spend</td><td class="num">$10.55</td><td class="num">$14.75</td></tr>
         </tbody>
       </table>
-      <p class="src">Source: the direct and blackbox run folders. Train, val and test are the same 7 tasks, so the test number is a fit, not a held-out result.</p>
+      <p class="src">Source: the two cap-evolve run folders, direct and blackbox, both from Nov 5. Train, val and test are the same 7 tasks, so the test number is a fit, not a held-out result.</p>
     </div>
   </figure>
-  <span class="todo honest">fill in with honest numbers — every cell of this table, from the paired direct and blackbox runs (same split, same trials).</span>
 
-  <p>The final scores differ by much less than the noise of 35 rollouts per side. The detail agrees as
-  well: most tasks land on exactly the same score on both approaches, and the rest differ by a single
-  trial. When the agent fails, it fails the same way on both: the same share of failing rollouts, with the
-  same top causes — a missing write, an extra write, or no write at all.</p>
-  <span class="todo honest">fill in with honest numbers — the score gap and the combined standard error; how many tasks land on the same score, and which; the failing-rollout counts per approach and their top causes.</span>
+  <p>The final scores differ by 0.14, less than one combined standard error (about 0.17) at 35 rollouts
+  per side. The agent also fails the same way: across the starting tools and every candidate, <strong>49
+  of 140</strong> validation rollouts fail on <em>each</em> approach, and the starting tools fail 23 of 35
+  sealed-test rollouts on both. The three top causes are the same on both: a required write that is
+  missing, an extra or wrong write, or no write at all. The optimizer's spend and tokens are close (1.4×
+  and 1.2×). The benchmark itself runs about twice as long through the proxy, because this example runs
+  only a few conversations at a time through it (5, against 125 for direct).</p>
 
   <figure>
-    <img src="images/fig1-climb-both-approaches.png" alt="Validation reward per round, both approaches">
-    <figcaption>Validation score per round, both approaches.</figcaption>
+    <div class="card">
+      <div class="eyebrow">τ²-bench airline · why each rollout failed</div>
+      <h3>The same failures on both approaches</h3>
+      <p class="lede">Every failing rollout, classified from its trajectory: the agent's database writes
+      against the task's expected actions in τ²-bench.</p>
+      <table class="cols5">
+        <thead>
+          <tr><th>Failure cause</th><th class="num">Val · direct</th><th class="num">Val · blackbox</th><th class="num">Test seed · direct</th><th class="num">Test seed · blackbox</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>A required write is missing</td><td class="num">17</td><td class="num">20</td><td class="num">5</td><td class="num">5</td></tr>
+          <tr><td>An extra or wrong-type write</td><td class="num">12</td><td class="num">10</td><td class="num">7</td><td class="num">7</td></tr>
+          <tr><td>No write at all</td><td class="num">11</td><td class="num">11</td><td class="num">5</td><td class="num">9</td></tr>
+          <tr><td>A wrong value (payment, flights, baggage, passengers)</td><td class="num">8</td><td class="num">7</td><td class="num">3</td><td class="num">1</td></tr>
+          <tr><td>Other (an unneeded write, a failed non-database check)</td><td class="num">1</td><td class="num">1</td><td class="num">3</td><td class="num">1</td></tr>
+          <tr><td><b>Failing rollouts</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>23 / 35</b></td><td class="num"><b>23 / 35</b></td></tr>
+        </tbody>
+      </table>
+      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the sealed test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the two Nov 5 run folders.</p>
+    </div>
   </figure>
 
   <figure>
-    <img src="images/fig2-per-task-both-approaches.png" alt="Per-task reward, starting tools vs best, both approaches">
-    <figcaption>Per task: the starting tools and the best candidate, both approaches.</figcaption>
+    <img src="images/fig1-climb-both-approaches-nov5.png?v=1" alt="Validation reward per round, both approaches">
+    <figcaption>Validation score per round, both approaches. Blackbox's third candidate scored lower and was not kept.</figcaption>
   </figure>
 
-  <h2>The store skill - the skill where the capabilities go into</h2>
-  <p>What travels through the Store and the Proxy-Agent is a skill (termed as the <strong>store_skill</strong>). It is a folder
+
+  <h2>The store skill: where the optimized capabilities live</h2>
+  <p>What travels through the Store and the Proxy-Agent is a skill, which this post calls the <strong>store_skill</strong>. It is a folder
   that packages a capability for a model: a <code>SKILL.md</code> file, with a name, a description and
   instructions, and a <code>scripts/</code> folder, where each script is a tool the model can call. It is
   the open <a href="https://agentskills.io">Agent Skills</a> format, the same unit coding agents load from
-  disk.</p>
+  disk. It is also the unit the Skillberry stack is built around.</p>
 
-  <p>It is also the unit the Skillberry stack is built around. The <strong>Skillberry Store</strong> is an
+  <p>The <strong><a href="https://skillberry-ai.github.io/skillberry-store/">Skillberry Store</a></strong> is an
   open-source service that manages everything your agents use — tools, skills and snippets — in one
   place. You add, update, version and organize them in namespaces, find them by meaning with semantic
   search, run them in a sandbox, and serve any subset of them as a virtual MCP server. Skills follow the
   Anthropic skill format (<code>SKILL.md</code>, tools and docs), so you can import and export them as they
-  are. The <strong>Proxy-Agent</strong> sits on top: it picks one skill and, on every call, gives the model
-  that skill's instructions and its tools.</p>
+  are.</p>
 
-  <p>So in the blackbox approach, whatever cap-evolve optimizes is packaged as one skill — and it lands in a
-  store your team can already manage, search and share. To see everything the Store does with skills,
-  read its <a href="https://skillberry-ai.github.io/skillberry-store/features.html">features page</a>:</p>
+  <p>The <strong><a href="https://github.com/skillberry-ai/skillberry-agent">Proxy-Agent</a></strong> sits on
+  top of it: it picks one skill and, on every call, gives the model that skill's instructions and its tools.</p>
+
+  <p>So in the blackbox approach, whatever cap-evolve optimizes is packaged as a skill — and it lands in a
+  store your team can already manage, search, share and export. To see everything the Store does with
+  skills, read its <a href="https://skillberry-ai.github.io/skillberry-store/features.html">features page</a>.</p>
 
   <figure>
     <div class="card">
@@ -168,15 +189,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 
   <p>In this post the skill is called <code>store_skill</code>. The name is just one line in the run's spec,
   <code>skill_name: store_skill</code>, and any name works. The Proxy-Agent serves exactly one skill, so there
-  is always exactly one:</p>
-
-<pre><code>store_skill/
-├── SKILL.md            <span class="c"># name, description, instructions</span>
-└── scripts/
-    ├── &lt;tool_1&gt;.py      <span class="c"># one file per tool the model can call</span>
-    ├── &lt;tool_2&gt;.py
-    └── …
-</code></pre>
+  is always exactly one.</p>
 
   <figure>
     <div class="card">
@@ -193,13 +206,13 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   </figure>
 
   <h2>Full automation: onboarding τ²-bench and optimizing it — in one click</h2>
-  <p>Nothing here is hand-built for τ²-bench. You use your coding agent (for example, Claude Code) to onboard the
+  <p>Nothing here is hand-built for τ²-bench. Your coding agent (for example, Claude Code) onboards the
   benchmark by following one prompt, <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">PROMPT.md</a>.
   When asked how a candidate should reach the model, you answer <strong><code>blackbox</code></strong>.
   From there, your coding agent installs the benchmark, seeds the capability from the benchmark's own
-  source, and adds the tailoring the approach needs. It then runs 
-  <code>cap-evolve check</code> and ensure it passes the gate and then kicksoff the optimization loop: proposes edits, keeps only those
-  that clear the significance gate, scores the sealed test, and writes a report.</p>
+  source, and adds the tailoring the approach needs. It then runs <code>cap-evolve check</code>, makes
+  sure it passes, and starts the optimization loop: it proposes edits, keeps only those that clear the
+  significance gate, scores the sealed test, and writes a report.</p>
 
   <p>When onboarding is done, you have five things:</p>
   <ul>
@@ -209,20 +222,25 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     <li><strong>14 frozen primitive tools</strong>: τ²'s real airline tool code, placed in the Store as is.
     The optimizer can't change them, so every database read and write still runs τ²'s own code.</li>
     <li><strong>The seed <code>store_skill</code></strong>: the skill described above, with one script per
-    tool, built on top of the primitives. This is what the optimizer edits. Each script starts out as just
-    a signature, τ²'s docstring, and a call to its primitive:</li>
-  </ul>
+    tool, built on top of the primitives. This is what the optimizer edits:
+<pre><code>store_skill/
+├── SKILL.md            <span class="c"># name, description, instructions</span>
+└── scripts/
+    ├── &lt;tool_1&gt;.py      <span class="c"># one file per tool the model can call</span>
+    ├── &lt;tool_2&gt;.py
+    └── …
+</code></pre>
+    Each script starts out as just a signature, τ²'s docstring, and a call to its primitive:
 <pre><code>def get_user_details(user_id: str):
     """Get the details of a user, including their reservations. ..."""
     return env_get_user_details(user_id=user_id)    <span class="c"># a frozen primitive</span>
-</code></pre>
-  <ul>
+</code></pre></li>
     <li><strong>The adapter and its tailoring module</strong>, which connect τ² to the Skillberry stack
     from the outside, without changing a line of τ².</li>
   </ul>
 
-  <p>The tailoring is where the blackbox approach meets the benchmark. Each hook is small, and each one
-  fails if it is missing:</p>
+  <p>The tailoring is where the blackbox approach meets the benchmark. Each hook is small, and the run
+  fails if any one of them is missing:</p>
 
   <figure>
     <div class="card">
@@ -243,9 +261,9 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     </div>
   </figure>
 
-  <p>The diagram reads left to right: onboarding prepares τ²-bench and the Skillberry stack once, each
-  iteration edits <code>store_skill</code>, deploys it and lets the gate decide, and every trial of that
-  iteration sends the agent's calls through the Proxy-Agent and the Store to τ²'s environment.</p>
+  <p>The diagram below reads left to right: onboarding prepares τ²-bench and the Skillberry stack once;
+  each iteration edits <code>store_skill</code>, deploys it and lets the gate decide; and every trial of
+  that iteration sends the agent's calls through the Proxy-Agent and the Store to τ²'s environment.</p>
 
   <figure>
     <img src="images/fig-e2e-tau2.png?v=4" alt="End to end on τ²-bench: onboarding from PROMPT.md, then each iteration deploying a candidate, then each trial going through the Proxy-Agent, the Store and τ²'s environment service">
@@ -329,6 +347,23 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   in all five trials. The agent's code, the benchmark and the scorer are exactly what they were before;
   only the skill in the Store changed.</p>
 
+  <p>Once the optimization is done, the owner has two ways to use what it produced:</p>
+  <figure>
+    <div class="card">
+      <div class="eyebrow">TWO WAYS TO USE THE OPTIMIZED SKILL</div>
+      <div class="grid2">
+        <div class="mini"><b>1 · Keep it in Skillberry</b><p>Leave the best skill in the Store and keep the agent
+        pointed at the Proxy-Agent. The agent and the benchmark never change; they simply get better answers.</p></div>
+        <div class="mini amber"><b>2 · Take it home</b><p>Export the best candidate's skill from the folder cap-evolve
+        writes for the run, and patch it into your own copy of the benchmark. From then on it runs there, with no
+        Skillberry stack at all.</p></div>
+      </div>
+    </div>
+  </figure>
+  <p><strong>The rest of this post takes the second way.</strong> We optimize a real benchmark, τ²-bench, through
+  Skillberry, then take the winning skill out of the run folder and patch it into a plain copy of τ²-bench,
+  step by step, with the numbers before and after.</p>
+
   <h2>Taking the winner home: patching your own τ²-bench</h2>
   <p>An optimized skill is only useful if its owner can run it where they need it. So the last step is the
   reverse trip: take the best candidate out of the Store, and put it into a plain, unmodified copy of
@@ -336,12 +371,11 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <code>tools.py</code>, and every step of it is mechanical.</p>
 
   <p><strong>1 · Take the winner's scripts</strong> from the run folder:</p>
-<pre><code>.capevolve-blackbox/run_20261101_125955/candidates/cand_0003/store_skill/scripts/   <span class="c"># 21 tools</span>
+<pre><code>.capevolve-blackbox/run/candidates/cand_0002/store_skill/scripts/   <span class="c"># 18 tools</span>
 </code></pre>
 
-  <p><strong>2 · Clone τ²-bench at the same commit</strong> the run used:</p>
+  <p><strong>2 · Clone τ²-bench:</strong></p>
 <pre><code>git clone https://github.com/sierra-research/tau2-bench.git
-git -C tau2-bench checkout --detach 4ce7c0397c1eb65c9bbe59aeacfe1ca44a1cd699
 </code></pre>
 
   <p><strong>3 · Patch <code>src/tau2/domains/airline/tools.py</code></strong> by four rules:</p>
@@ -402,23 +436,22 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
     <div class="card">
       <div class="eyebrow">Plain τ²-bench · before and after the patch</div>
       <h3>The winner, running with no proxy at all</h3>
-      <table>
-        <thead><tr><th>Task</th><th class="num">Unpatched</th><th class="num">Patched</th><th>Blackbox run (best)</th></tr></thead>
+      <table class="cols4">
+        <thead><tr><th>Task</th><th class="num">Unpatched</th><th class="num">Patched</th><th class="num">Blackbox run (best)</th></tr></thead>
         <tbody>
-          <tr><td>8</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">1.0</td></tr>
-          <tr><td>10</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">1.0</td></tr>
-          <tr><td>20</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">1.0</td></tr>
-          <tr><td>23</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">1.0</td></tr>
-          <tr><td>35</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">0.8</td></tr>
-          <tr><td>42</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">1.0</td></tr>
-          <tr><td>44</td><td class="num">TODO</td><td class="num">TODO</td><td class="num">0.4</td></tr>
-          <tr><td><b>Mean</b></td><td class="num">TODO</td><td class="num">TODO</td><td class="num">0.886</td></tr>
+          <tr><td>8</td><td class="num">0.4</td><td class="num good">1.0</td><td class="num">1.0</td></tr>
+          <tr><td>10</td><td class="num">0.6</td><td class="num good">1.0</td><td class="num">0.8</td></tr>
+          <tr><td>20</td><td class="num">0.0</td><td class="num good">1.0</td><td class="num">0.8</td></tr>
+          <tr><td>23</td><td class="num">0.0</td><td class="num good">0.6</td><td class="num">0.0</td></tr>
+          <tr><td>35</td><td class="num">0.0</td><td class="num good">0.8</td><td class="num">0.8</td></tr>
+          <tr><td>42</td><td class="num">0.2</td><td class="num good">0.8</td><td class="num">1.0</td></tr>
+          <tr><td>44</td><td class="num">0.0</td><td class="num good">0.4</td><td class="num">0.6</td></tr>
+          <tr><td><b>Mean</b></td><td class="num"><b>0.171</b></td><td class="num good">0.800</td><td class="num"><b>0.714</b></td></tr>
         </tbody>
       </table>
-      <p class="src">Same settings and the same 5 trial seeds in both τ² runs; the only difference is the patched <code>tools.py</code>.</p>
+      <p class="src">The blackbox run's best candidate, <code>cand_0002</code>, patched into plain τ²-bench. Same settings and the same 5 trial seeds in both τ² runs; the only difference is the patched <code>tools.py</code>. Database matches 6/35 → 28/35; 34 of the 35 patched conversations used a tool that exists only in the candidate. Two-proportion z = 5.26, one-sided p ≈ 7·10⁻⁸.</p>
     </div>
   </figure>
-  <span class="todo">fill this up — run the export with this winner (<code>cand_0003</code> of <code>run_20261101_125955</code>) and fill in the unpatched and patched columns, plus database matches and a significance test. Expect the patched score to be close to the blackbox run's 0.886.</span>
 
   <p>If the patched copy scores close to what the blackbox run measured, the loop is closed: a capability
   optimized through the Store and the Proxy-Agent, on an agent and a benchmark nobody edited, becomes plain

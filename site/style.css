@@ -75,6 +75,11 @@ th { text-align: left; font-family: var(--mono); font-size: 10px; letter-spacing
      color: var(--muted); border-bottom: 1px solid var(--line); padding: 7px 8px; font-weight: 600; }
 td { border-bottom: 1px solid #f0f0f0; padding: 8px; vertical-align: top; }
 td.num, th.num { text-align: right; font-family: var(--mono); }
+/* a narrow label column plus three equal number columns, so no column drifts to the far right */
+table.cols4 { table-layout: fixed; }
+table.cols4 th:first-child, table.cols4 td:first-child { width: 22%; }
+table.cols5 { table-layout: fixed; }
+table.cols5 th:first-child, table.cols5 td:first-child { width: 36%; }
 .good { color: var(--green); font-weight: 700; } .warn { color: var(--amber); font-weight: 700; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .mini { border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: 6px; padding: 12px 14px; }
