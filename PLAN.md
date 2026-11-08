@@ -129,7 +129,7 @@ A procedure for the agent owner, with commands:
 2. clone τ²-bench at the same commit;
 3. patch one file, `src/tau2/domains/airline/tools.py`, by four mechanical rules: τ²'s
    `AirlineTools` → `_AirlinePrimitives`, unchanged; each script → a method of a new
-   `AirlineTools`, word for word; `env_<tool>(…)` → `self._prim("<tool>", …)`; keep the
+   `AirlineTools`, word for word; `env_<tool>(…)` → `self._orig("<tool>", …)`; keep the
    candidate's argument models, so the agent sees the same schemas;
 4. check: the tools' schemas match the candidate's, and replaying each task's gold actions gives
    the same final database;

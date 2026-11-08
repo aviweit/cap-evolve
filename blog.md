@@ -142,7 +142,7 @@ class _AirlinePrimitives(ToolKitBase):     # τ²'s original AirlineTools, body 
     ...
 
 class AirlineTools(_AirlinePrimitives):    # what the airline environment serves to the agent
-    def _prim(self, tool: str, **kwargs):
+    def _orig(self, tool: str, **kwargs):
         """Run an original tool as the environment service would for env_<tool>:
         the JSON result parsed back, or an "Error: ..." string."""
         try:
@@ -158,13 +158,13 @@ class AirlineTools(_AirlinePrimitives):    # what the airline environment serves
     @is_tool(ToolType.READ)
     def find_same_day_reservations(self, user_id: str) -> Any:
         """...the candidate's docstring, verbatim..."""
-        user = self._prim("get_user_details", user_id=user_id)   # was: env_get_user_details(...)
+        user = self._orig("get_user_details", user_id=user_id)   # was: env_get_user_details(...)
         ...
 ```
 
 - **The original tools become primitives.** τ²'s `AirlineTools` is renamed `_AirlinePrimitives`, with its body unchanged, so every database read and write still runs τ²'s own code.
-- **The candidate's tools become the agent's tools.** Each skill script is copied **verbatim** as a method of the new `AirlineTools`, gaining `self` and a decorator. Each `env_<tool>(…)` call becomes `self._prim("<tool>", …)`.
-- **`_prim` returns what the store returned.** It gives the parsed JSON or an `"Error: …"` string, so the scripts' own checks behave as they did during optimization.
+- **The candidate's tools become the agent's tools.** Each skill script is copied **verbatim** as a method of the new `AirlineTools`, gaining `self` and a decorator. Each `env_<tool>(…)` call becomes `self._orig("<tool>", …)`.
+- **`_orig` returns what the store returned.** It gives the parsed JSON or an `"Error: …"` string, so the scripts' own checks behave as they did during optimization.
 - **Pydantic models stay the candidate's.** Where its models equal τ²'s, τ²'s are used. Where they differ (two `FlightInfo` variants with sharper descriptions), they're kept verbatim, so the schema the agent sees is identical to the store's.
 
 **Checked before running:**
