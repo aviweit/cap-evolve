@@ -282,29 +282,29 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <h2>Explaining how a candidate tool is being modified, end to end</h2>
   <p>To make this concrete, let's follow one tool from the moment the optimizer writes it to the moment it
   changes τ²'s database.</p>
-  <p>In one of our blackbox runs, the best candidate added a tool that the starting (seed) skill didn't
-  have: <code>book_split_reservations</code>. Only one task uses it, task 23 — and that task changed the
-  most: it passed <strong>0 of 5 trials</strong> with the starting tools, and <strong>5 of 5</strong> with
-  the best candidate, in both test sessions.</p>
+  <p>The best blackbox candidate added a tool that the starting (seed) skill didn't have:
+  <code>search_flights_by_price</code>. It changed task 35 the most: the task passed <strong>0 of 5
+  trials</strong> with the starting tools, and <strong>5 of 5</strong> with the best candidate during the
+  run (4 of 5 on its sealed test).</p>
 
-  <p><strong>1 · The failure.</strong> In task 23 the customer wants one round trip for three passengers, but
-  as three separate reservations, so that each can pay with its own travel certificate (τ²'s policy allows
-  one certificate per reservation). With the starting tools the agent has to book them one by one and work
-  out every payment split itself, and it gets the order or the amounts wrong. τ²'s final database doesn't
-  match the expected one, and the trial scores 0.</p>
+  <p><strong>1 · The failure.</strong> In task 35 the customer wants "the second cheapest flight in economy"
+  from JFK to SFO. The starting tools search direct and one-stop flights separately, so the agent has to
+  merge the two lists and rank the prices itself. It got it wrong in every trial: it booked a wrong flight,
+  booked the right one twice, or never booked at all. τ²'s final database didn't match the expected one,
+  and every trial scored 0.</p>
 
-  <p><strong>2 · The edit.</strong> The optimizer adds one script, <code>store_skill/scripts/book_split_reservations.py</code>.
-  Its docstring tells the model when to use it and how, in two steps: a dry run that computes every
-  reservation's amounts, then the real booking, guarded by the total the customer accepted:</p>
-<pre><code>def book_split_reservations(user_id: str, origin: str, destination: str, cabin: str,
-                            flights: list, bookings: list, dry_run: bool = True, ...):
-    """Book the SAME flights as several reservations, one per passenger.
-    Step 1: call with dry_run=true to get the plan and prices.
-    Step 2: after the user says "yes", call again with dry_run=false."""
-    user = env_get_user_details(user_id=user_id)            <span class="c"># frozen primitive</span>
-    ...                                                     <span class="c"># checks flights, computes each payment split</span>
-    for b in bookings:
-        env_book_reservation(user_id=user_id, origin=origin, ...)   <span class="c"># frozen primitive</span>
+  <p><strong>2 · The edit.</strong> The optimizer adds one script, <code>store_skill/scripts/search_flights_by_price.py</code>.
+  Its docstring tells the model when to use it: whenever the customer asks for the cheapest, or the second
+  cheapest, option.</p>
+<pre><code>def search_flights_by_price(origin: str, destination: str, date: str, cabin: str,
+                            depart_after: str = "", max_stops: int = 1):
+    """Search ALL itineraries (direct AND one-stop) on a date, for one cabin,
+    sorted from CHEAPEST to most expensive. Use this whenever the user asks for the
+    cheapest / second cheapest option. "rank" 1 = cheapest."""
+    direct = env_search_direct_flight(origin=origin, destination=destination, date=date)    <span class="c"># frozen primitive</span>
+    onestop = env_search_onestop_flight(origin=origin, destination=destination, date=date)  <span class="c"># frozen primitive</span>
+    ...                                          <span class="c"># keeps options with a free seat in the cabin</span>
+    out.sort(key=lambda o: (o["price_per_passenger"], o["stops"]))
 </code></pre>
 
   <p><strong>3 · Into the skill.</strong> cap-evolve deploys the candidate: it imports the
@@ -312,16 +312,17 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   registers the new script as a tool and derives its JSON schema from the signature. This is what the
   Store keeps for the new tool:</p>
 <pre><code>{
-  "name": "book_split_reservations",
+  "name": "search_flights_by_price",
   "params": {
     "type": "object",
     "properties": {
-      "user_id":  { "type": "string",  "description": "The account holder's user ID, such as 'sara_doe_496'." },
-      "bookings": { "type": "array",   "description": "One object per reservation (one passenger each): ..." },
-      "dry_run":  { "type": "boolean", "description": "Use true to only compute and return the plan (nothing booked); ..." },
-      "...":      "8 more parameters"
+      "origin":       { "type": "string",  "description": "The origin city airport in three letters, such as 'JFK'." },
+      "cabin":        { "type": "string",  "description": "One of 'basic_economy', 'economy', 'business'." },
+      "depart_after": { "type": "string",  "description": "Optional earliest departure time of the first flight, ..." },
+      "max_stops":    { "type": "integer", "description": "1 (default) = direct and one-stop options; ..." },
+      "...":          "2 more parameters"
     },
-    "required": ["user_id", "origin", "destination", "flight_type", "cabin", "flights", "bookings"]
+    "required": ["origin", "destination", "date", "cabin"]
   }
 }
 </code></pre>
@@ -329,24 +330,16 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p><strong>4 · What the model sees.</strong> In the next evaluation run, the Proxy-Agent's vMCP server
   lists the new tool next to the others, and the model receives its name, its docstring and its schema.</p>
 
-  <p><strong>5 · The call.</strong> The model now books all three reservations with one call, after a dry run
-  the customer approved. A real call from a task-23 trial:</p>
-<pre><code>book_split_reservations(
-    user_id="mohamed_silva_9265", origin="JFK", destination="SFO", cabin="business",
-    flights=[...],                                       <span class="c"># the same 3 flights for everyone</span>
-    bookings=[
-      {"first_name": "Mohamed", "payment_ids": [...]},   <span class="c"># certificate, 2 gift cards, credit card</span>
-      {"first_name": "Raj",     "payment_ids": [...]},   <span class="c"># certificate, credit card</span>
-      {"first_name": "Liam",    "payment_ids": [...]}],  <span class="c"># certificate, credit card</span>
-    dry_run=False, credit_card_total_told_to_user=1097)  <span class="c"># the total the customer accepted</span>
+  <p><strong>5 · The call.</strong> A real call from a task-35 trial:</p>
+<pre><code>search_flights_by_price(origin="JFK", destination="SFO", date="2024-05-24", cabin="economy")
 </code></pre>
-  <p>The script runs inside the Store. It reads the customer's profile, checks the flights, and calls the
-  <code>env_book_reservation</code> primitive once per reservation, in a fixed order, so the reservation
-  ids come out the same every time and τ²'s database is updated correctly.</p>
+  <p>The script runs inside the Store. It calls both search primitives, keeps only the options with a free
+  seat, and ranks them by price. The model then books the second cheapest option, the one-stop HAT069 + HAT258, with τ²'s own
+  <code>book_reservation</code>.</p>
 
-  <p><strong>6 · The effect.</strong> τ²'s final database matches the expected one, and the trial scores 1.0 —
-  in all five trials. The agent's code, the benchmark and the scorer are exactly what they were before;
-  only the skill in the Store changed.</p>
+  <p><strong>6 · The effect.</strong> τ²'s final database matches the expected one, and the trial scores 1.0.
+  The agent's code, the benchmark and the scorer are exactly what they were before; only the skill in the
+  Store changed.</p>
 
   <p>Once the optimization is done, the owner has two ways to use what it produced:</p>
   <ul>
@@ -405,20 +398,16 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
         except (TypeError, ValueError):
             return content
 
-    @is_tool(ToolType.WRITE)
-    def book_split_reservations(self, user_id: str, origin: str, ...) -> Any:
+    @is_tool(ToolType.READ)
+    def search_flights_by_price(self, origin: str, destination: str, date: str, cabin: str, ...) -> Any:
         """...the candidate's docstring, word for word..."""
-        dry = _bool(dry_run)
-        cabin = str(cabin or "").strip().lower().replace(" ", "_")
-        user = self._orig("get_user_details", user_id=user_id)   <span class="c"># was env_get_user_details(...)</span>
-        if _err(user) or not isinstance(user, dict):
-            return user
-        pms = user.get("payment_methods", {}) or {}
+        direct = self._orig("search_direct_flight", origin=origin,      <span class="c"># was env_search_direct_flight(...)</span>
+                            destination=destination, date=date)
+        onestop = self._orig("search_onestop_flight", origin=origin,    <span class="c"># was env_search_onestop_flight(...)</span>
+                             destination=destination, date=date)
         ...
-        for r in plan:                                            <span class="c"># one booking per passenger, in order</span>
-            res = self._orig("book_reservation", user_id=user_id,  <span class="c"># was env_book_reservation(...)</span>
-                             passengers=[r["passenger"]], payment_methods=r["payment_methods"], ...)
-            ...
+        out.sort(key=lambda o: (o["price_per_passenger"], o["stops"], str(o["departure_time_est"])))
+        ...
 </code></pre>
 
   <p><strong>4 · Run the same command on both copies,</strong> unpatched and patched, with the same models,
