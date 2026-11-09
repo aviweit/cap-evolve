@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>The Black-Box Approach: Optimizing Agent Capabilities with CapEvolve Without Modifying the Agent</title>
-  <link rel="stylesheet" href="style.css?v=20261108e">
+  <link rel="stylesheet" href="style.css?v=20261109a">
 </head>
 <body>
 <div class="topbar"><span>cap-evolve · blog (local preview)</span><a href="figures.html">All figures ↗</a></div>
@@ -13,19 +13,7 @@
   <div class="tags"><span>Optimization</span><span>AI</span><span>Agents</span><span>Skills</span></div>
   <h1>The Black-Box Approach: Optimizing Agent Capabilities with CapEvolve Without Modifying the Agent</h1>
   <p class="subtitle">What if you want to improve an agent but cannot modify it directly? Perhaps it's a packaged product, a production deployment, or an agent you don't own.</p>
-  <div class="byline"><div class="avatar"></div><div><b>cap-evolve team</b> · 14 min read · Oct 2026</div></div>
-
-  <aside class="series">
-    <div class="series-title">Previous articles in this series</div>
-    <ul>
-      <li><a href="https://medium.com/@eran.raichstein/capevolve-optimize-agentic-capabilities-with-agents-6719d8d903ec">CapEvolve: Optimize agentic capabilities — with agents</a><br>
-      A coding agent improves prompts, tools, and skills through iterative optimization.</li>
-      <li><a href="https://medium.com/@eran.raichstein/the-state-of-ai-agent-optimization-in-2026-and-where-cap-evolve-fits-697022d3aeee">The State of AI Agent Optimization in 2026 (and Where cap-evolve Fits)</a><br>
-      Anyone can make a score go up. The hard part is proving it wasn't luck.</li>
-    </ul>
-    <p>Both assume the optimizer may open the agent and edit it. <b>This post drops that assumption.</b>
-    The agent stays closed, and the gains still arrive.</p>
-  </aside>
+  <div class="byline"><div class="avatar"></div><div><b>Avi Weit</b> · 12 min read · Draft</div></div>
 
   <p>Most tools that make an AI agent better assume they can reach inside it, and so does
   <a href="https://github.com/skillberry-ai/cap-evolve">cap-evolve</a> in its <strong>direct approach</strong>:
@@ -63,6 +51,14 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 </code></pre>
   <p>If this sounds useful, ⭐ <a href="https://github.com/skillberry-ai/cap-evolve">star cap-evolve on GitHub</a> —
   it takes five seconds, and it really does help other people discover the project.</p>
+
+  <blockquote class="series">
+    <p>For further reading refer to these Cap-evolve blogs:</p>
+    <p><a href="https://medium.com/@eran.raichstein/capevolve-optimize-agentic-capabilities-with-agents-6719d8d903ec">CapEvolve: Optimize agentic capabilities — with agents</a><br>
+    A coding agent improves prompts, tools, and skills through iterative optimization.</p>
+    <p><a href="https://medium.com/@eran.raichstein/the-state-of-ai-agent-optimization-in-2026-and-where-cap-evolve-fits-697022d3aeee">The State of AI Agent Optimization in 2026 (and Where cap-evolve Fits)</a><br>
+    Anyone can make a score go up. The hard part is proving it wasn't luck.</p>
+  </blockquote>
 
   <p>Now for the interesting part: the blackbox approach on a real benchmark.</p>
 
@@ -334,7 +330,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   lists the new tool next to the others, and the model receives its name, its docstring and its schema.</p>
 
   <p><strong>5 · The call.</strong> The model now books all three reservations with one call, after a dry run
-  the customer approved. A real call from a task-23 trial, shortened:</p>
+  the customer approved. A real call from a task-23 trial:</p>
 <pre><code>book_split_reservations(
     user_id="mohamed_silva_9265", origin="JFK", destination="SFO", cabin="business",
     flights=[...],                                       <span class="c"># the same 3 flights for everyone</span>
@@ -461,7 +457,9 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
   <h2>What we learned</h2>
   <p>You don't need to open an agent to improve it: in our τ²-bench runs, capabilities optimized from the
   outside came close to the direct approach, and exported back into ordinary tool code that held up in
-  plain τ²-bench. The same route works for any agent whose LLM calls can pass through a proxy.</p>
+  plain τ²-bench. Nothing in the method is specific to τ²-bench: any benchmark whose agent sends its LLM
+  calls through a proxy can be optimized the same way. We have only tested τ²-bench so far, and other
+  benchmarks are the next step.</p>
 
   <h2>Limits, honestly</h2>
   <ul>
