@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</title>
+  <title>The Black-Box Approach: Optimizing Agent Capabilities with CapEvolve Without Modifying the Agent</title>
   <link rel="stylesheet" href="style.css?v=20261108e">
 </head>
 <body>
@@ -11,8 +11,8 @@
 <main class="wrap">
 
   <div class="tags"><span>Optimization</span><span>AI</span><span>Agents</span><span>Skills</span></div>
-  <h1>With cap-evolve: Optimizing Agent Capabilities Without Touching the Agent or the Benchmark - the blackbox approach</h1>
-  <p class="subtitle">You have an agent you can't change, and you still want it to get better. Here is how to optimize it without touching it.</p>
+  <h1>The Black-Box Approach: Optimizing Agent Capabilities with CapEvolve Without Modifying the Agent</h1>
+  <p class="subtitle">What if you want to improve an agent but cannot modify it directly? Perhaps it's a packaged product, a production deployment, or an agent you don't own.</p>
   <div class="byline"><div class="avatar"></div><div><b>cap-evolve team</b> · 14 min read · Oct 2026</div></div>
 
   <aside class="series">
@@ -33,12 +33,12 @@
   when the agent is yours: a project you know well, whose code you are willing to open to an outside
   process, such as an optimizer, that edits it for you.</p>
 
-  <p>Real agents are often built differently. Some owners, enterprises in particular, cannot share
-  their agent's code, sources or behavior with an external optimization process. For them,
+  <p>Real agents are often built differently. Some owners, enterprises in particular, cannot give an
+  optimizer access to their agent's internal code or modify its implementation. For them,
   optimization has to work from the outside: it improves the agent without inspecting it or
   modifying it directly.</p>
 
-  <p>For that scenario, cap-evolve comes to the rescue with the <strong>blackbox optimization approach</strong>. Here, cap-evolve deploys the capabilities it optimizes
+  <p>This is where cap-evolve's <strong>black-box approach</strong> comes in. Here, cap-evolve deploys the capabilities it optimizes
   (system prompts, tools, skills) to the
   <a href="https://skillberry-ai.github.io/skillberry-store/">Skillberry Store</a>, and the
   <a href="https://github.com/skillberry-ai/skillberry-agent">Skillberry Proxy-Agent</a> reads them from
@@ -210,9 +210,9 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     </div>
   </figure>
 
-  <h2>Full automation: onboarding τ²-bench and optimizing it — in one click</h2>
+  <h2>From one prompt to a complete optimization run</h2>
   <p>Nothing here is hand-built for τ²-bench. Your coding agent (for example, Claude Code) onboards the
-  benchmark by following one prompt, <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/examples/tau2_sierra_airline/PROMPT.md">PROMPT.md</a>.
+  benchmark by following one prompt, <a href="https://github.com/skillberry-ai/cap-evolve/blob/main/benchmarks/tau2/examples/sierra_airline/PROMPT.md">PROMPT.md</a>.
   When asked how a candidate should reach the model, you answer <strong><code>blackbox</code></strong>.
   From there, your coding agent installs the benchmark, seeds the capability from the benchmark's own
   source, and adds the tailoring the approach needs. It then runs <code>cap-evolve check</code>, makes
@@ -300,19 +300,15 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p><strong>2 · The edit.</strong> The optimizer adds one script, <code>store_skill/scripts/book_split_reservations.py</code>.
   Its docstring tells the model when to use it and how, in two steps: a dry run that computes every
   reservation's amounts, then the real booking, guarded by the total the customer accepted:</p>
-<pre><code>def book_split_reservations(user_id: str, origin: str, destination: str, flight_type: str,
-        cabin: str, flights: list, bookings: list, insurance: str = "no",
-        dry_run: bool = True, credit_card_total_told_to_user: int = -1, keep_existing: bool = False):
-    """Book the SAME flights as SEVERAL separate reservations, one per passenger, each with its
-    own payment methods. ...
-    - books the account holder's reservation FIRST, then the others in the order you list them;
-    - computes every amount: in each reservation the certificate pays first, then the gift
-      cards, then the credit card pays the rest;
-    Step 1: call with dry_run=true. Step 2: after the user says "yes", call again with
-    dry_run=false and the credit card total you told the user. ..."""
-    user = env_get_user_details(user_id=user_id)        <span class="c"># frozen primitives, as in every tool</span>
-    ...
-    res = env_book_reservation(user_id=user_id, origin=origin, ...)
+<pre><code>def book_split_reservations(user_id: str, origin: str, destination: str, cabin: str,
+                            flights: list, bookings: list, dry_run: bool = True, ...):
+    """Book the SAME flights as several reservations, one per passenger.
+    Step 1: call with dry_run=true to get the plan and prices.
+    Step 2: after the user says "yes", call again with dry_run=false."""
+    user = env_get_user_details(user_id=user_id)            <span class="c"># frozen primitive</span>
+    ...                                                     <span class="c"># checks flights, computes each payment split</span>
+    for b in bookings:
+        env_book_reservation(user_id=user_id, origin=origin, ...)   <span class="c"># frozen primitive</span>
 </code></pre>
 
   <p><strong>3 · Into the skill.</strong> cap-evolve deploys the candidate: it imports the
@@ -324,17 +320,10 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   "params": {
     "type": "object",
     "properties": {
-      "user_id":     { "type": "string",  "description": "The account holder's user ID, such as 'sara_doe_496'." },
-      "origin":      { "type": "string",  "description": "The IATA code of the trip origin, such as 'JFK'." },
-      "destination": { "type": "string",  "description": "The IATA code of the trip destination, such as 'SFO'." },
-      "flight_type": { "type": "string",  "description": "The trip type, either 'one_way' or 'round_trip'." },
-      "cabin":       { "type": "string",  "description": "The cabin for all reservations, one of 'basic_economy', 'economy' or 'business'." },
-      "flights":     { "type": "array",   "description": "The flights of EVERY reservation (outbound then return), ..." },
-      "bookings":    { "type": "array",   "description": "One object per reservation (one passenger each): {\"first_name\": ..., \"last_name\": ..., \"payment_ids\": [...]}. ..." },
-      "insurance":   { "type": "string",  "description": "Travel insurance for every reservation, 'yes' or 'no' (default 'no')." },
-      "dry_run":     { "type": "boolean", "description": "Use true to only compute and return the plan (nothing booked); use false to book all reservations." },
-      "credit_card_total_told_to_user": { "type": "integer", "description": "Required when dry_run=false. The credit card total (whole dollars) that you told the user and the user accepted, ..." },
-      "keep_existing": { "type": "boolean", "description": "Default false. Use true ONLY if the user explicitly wants to keep an existing reservation ..." }
+      "user_id":  { "type": "string",  "description": "The account holder's user ID, such as 'sara_doe_496'." },
+      "bookings": { "type": "array",   "description": "One object per reservation (one passenger each): ..." },
+      "dry_run":  { "type": "boolean", "description": "Use true to only compute and return the plan (nothing booked); ..." },
+      "...":      "8 more parameters"
     },
     "required": ["user_id", "origin", "destination", "flight_type", "cabin", "flights", "bookings"]
   }
@@ -345,21 +334,15 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   lists the new tool next to the others, and the model receives its name, its docstring and its schema.</p>
 
   <p><strong>5 · The call.</strong> The model now books all three reservations with one call, after a dry run
-  the customer approved. A real call from a task-23 trial:</p>
+  the customer approved. A real call from a task-23 trial, shortened:</p>
 <pre><code>book_split_reservations(
-    user_id="mohamed_silva_9265", origin="JFK", destination="SFO",
-    flight_type="round_trip", cabin="business",
-    flights=[{"flight_number": "HAT023", "date": "2024-05-26"},
-             {"flight_number": "HAT204", "date": "2024-05-28"},
-             {"flight_number": "HAT100", "date": "2024-05-28"}],
+    user_id="mohamed_silva_9265", origin="JFK", destination="SFO", cabin="business",
+    flights=[...],                                       <span class="c"># the same 3 flights for everyone</span>
     bookings=[
-      {"first_name": "Mohamed", "last_name": "Silva",
-       "payment_ids": ["certificate_3765853", "gift_card_8020792", "gift_card_6136092", "credit_card_2198526"]},
-      {"first_name": "Raj", "last_name": "Sanchez",
-       "payment_ids": ["certificate_9984806", "credit_card_2198526"]},
-      {"first_name": "Liam", "last_name": "Wilson",
-       "payment_ids": ["certificate_2765295", "credit_card_2198526"]}],
-    insurance="no", dry_run=False, credit_card_total_told_to_user=1097)
+      {"first_name": "Mohamed", "payment_ids": [...]},   <span class="c"># certificate, 2 gift cards, credit card</span>
+      {"first_name": "Raj",     "payment_ids": [...]},   <span class="c"># certificate, credit card</span>
+      {"first_name": "Liam",    "payment_ids": [...]}],  <span class="c"># certificate, credit card</span>
+    dry_run=False, credit_card_total_told_to_user=1097)  <span class="c"># the total the customer accepted</span>
 </code></pre>
   <p>The script runs inside the Store. It reads the customer's profile, checks the flights, and calls the
   <code>env_book_reservation</code> primitive once per reservation, in a fixed order, so the reservation
@@ -408,7 +391,6 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
         <div class="mini amber"><b>4 · The same schemas</b><p>The candidate's argument models are kept, so the agent sees the same tool schemas as through the proxy.</p></div>
       </div>
     </div>
-    <figcaption>One file changed, nothing rewritten by hand.</figcaption>
   </figure>
 
 <pre><code><span class="c"># src/tau2/domains/airline/tools.py, patched</span>
@@ -475,6 +457,11 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
   <p>If the patched copy scores close to what the blackbox run measured, the loop is closed: a capability
   optimized through the Store and the Proxy-Agent, on an agent and a benchmark nobody edited, becomes plain
   code its owner can run anywhere.</p>
+
+  <h2>What we learned</h2>
+  <p>You don't need to open an agent to improve it: in our τ²-bench runs, capabilities optimized from the
+  outside came close to the direct approach, and exported back into ordinary tool code that held up in
+  plain τ²-bench. The same route works for any agent whose LLM calls can pass through a proxy.</p>
 
   <h2>Limits, honestly</h2>
   <ul>
