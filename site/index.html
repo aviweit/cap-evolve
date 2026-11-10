@@ -60,13 +60,20 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     Anyone can make a score go up. The hard part is proving it wasn't luck.</p>
   </blockquote>
 
-  <p>Now for the interesting part: the blackbox approach on a real benchmark.</p>
+  <p>Now, back to what brought us here: the black-box approach on a real benchmark.</p>
 
   <h2>Does delivery through a proxy cost you anything? The τ²-bench numbers</h2>
   <p>The question that matters is not whether the blackbox approach improves an agent. It is whether
   it measures the <em>same</em> improvement as the direct approach. So we ran one optimization twice on
-  <a href="https://github.com/sierra-research/tau2-bench">τ²-bench</a>'s airline domain, changing only how
-  each candidate reaches the model, and kept everything else identical:</p>
+  <a href="https://github.com/sierra-research/tau2-bench">τ²-bench</a>'s airline domain.
+  τ²-bench is a public benchmark for customer-service agents: a simulated customer talks to the agent,
+  which handles the request through tools such as searching flights or booking a reservation, and a task
+  passes only if the domain's database ends up exactly as expected. Each task runs 5 times, because the
+  same agent can pass a task once and fail it the next time. Besides the mean score, τ²-bench reports
+  <strong>pass^k</strong>, the chance that the agent solves a task on all k separate runs of it; we show
+  <strong>pass^2</strong>, which asks whether it solves the task on both of two runs, not just once.
+  We changed only how each candidate
+  reaches the model, and kept everything else identical:</p>
 
   <figure>
     <div class="card">
@@ -102,7 +109,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><td>Sealed test: starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
           <tr><td>Gain over the starting tools</td><td class="num">+0.514</td><td class="num">+0.371</td></tr>
           <tr><td>± one standard error</td><td class="num">0.092</td><td class="num">0.143</td></tr>
-          <tr><td>pass^2 (both trials of a pair succeed)</td><td class="num">0.74</td><td class="num">0.59</td></tr>
+          <tr><td>pass^2 (solves the task on both of two runs)</td><td class="num">0.74</td><td class="num">0.59</td></tr>
           <tr><td>Best candidate</td><td class="num"><code>cand_0003</code></td><td class="num"><code>cand_0002</code></td></tr>
           <tr><td>Wall clock</td><td class="num">91 min</td><td class="num">148 min</td></tr>
           <tr><td>Benchmark time (baseline, iterations, sealed test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
@@ -153,10 +160,11 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 
 
   <h2>The store skill: where the optimized capabilities live</h2>
-  <p>What travels through the Store and the Proxy-Agent is a skill, which this post calls the <strong>store_skill</strong>. It is a folder
-  that packages a capability for a model: a <code>SKILL.md</code> file, with a name, a description and
-  instructions, and a <code>scripts/</code> folder, where each script is a tool the model can call. It is
-  the open <a href="https://agentskills.io">Agent Skills</a> format, the same unit coding agents load from
+  <p>As mentioned earlier, the blackbox approach deploys the capability it optimizes to the Store and the
+  Proxy-Agent. That capability is deployed as a skill, which this post calls the <strong>store_skill</strong>. It is a folder
+  that contains a <code>SKILL.md</code> file, with a name, a description and
+  instructions to be sent to the model, and a <code>scripts/</code> folder, where each script is a tool the model can call. It is
+  the open <a href="https://agentskills.io">Agent Skills</a> format, the same unit AI agents load from
   disk. It is also the unit the Skillberry stack is built around.</p>
 
   <p>The <strong><a href="https://skillberry-ai.github.io/skillberry-store/">Skillberry Store</a></strong> is an
@@ -169,9 +177,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p>The <strong><a href="https://github.com/skillberry-ai/skillberry-agent">Proxy-Agent</a></strong> sits on
   top of it: it picks one skill and, on every call, gives the model that skill's instructions and its tools.</p>
 
-  <p>So in the blackbox approach, whatever cap-evolve optimizes is packaged as a skill — and it lands in a
-  store your team can already manage, search, share and export. To see everything the Store does with
-  skills, read its <a href="https://skillberry-ai.github.io/skillberry-store/features.html">features page</a>.</p>
+  <p>For further reading on how the Store manages skills, see its <a href="https://skillberry-ai.github.io/skillberry-store/features.html">features page</a>.</p>
 
   <figure>
     <div class="card">
@@ -189,8 +195,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   </figure>
 
   <p>In this post the skill is called <code>store_skill</code>. The name is just one line in the run's spec,
-  <code>skill_name: store_skill</code>, and any name works. The Proxy-Agent serves exactly one skill, so there
-  is always exactly one.</p>
+  <code>skill_name: store_skill</code>, and any name works.</p>
 
   <figure>
     <div class="card">
