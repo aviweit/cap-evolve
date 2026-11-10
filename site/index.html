@@ -460,9 +460,10 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
   <h2>What we learned</h2>
   <p>You don't need to open an agent to improve it: in our τ²-bench runs, capabilities optimized from the
   outside came close to the direct approach, and exported back into ordinary tool code that held up in
-  plain τ²-bench. Nothing in the method is specific to τ²-bench: any benchmark whose agent sends its LLM
-  calls through a proxy can be optimized the same way. We have only tested τ²-bench so far, and other
-  benchmarks are the next step.</p>
+  plain τ²-bench.</p>
+  <p>We expect the approach to carry over to other benchmarks: it needs only an agent whose LLM endpoint can
+  be pointed at the Proxy-Agent, and tools the Store can call. We have only tested τ²-bench so far; other
+  benchmarks are the next step, so stay tuned.</p>
 
   <h2>Limits, honestly</h2>
   <ul>
