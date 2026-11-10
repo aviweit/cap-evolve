@@ -292,15 +292,24 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   trials</strong> with the starting tools, and <strong>5 of 5</strong> with the best candidate during the
   run (4 of 5 on its sealed test).</p>
 
-  <p><strong>1 · The failure.</strong> In task 35 the customer wants "the second cheapest flight in economy"
-  from JFK to SFO. The starting tools search direct and one-stop flights separately, so the agent has to
+  <p><strong>A few words on task 35.</strong> It simulates a customer who calls with two requests. First, they insist on
+  cancelling an upcoming flight with a full refund, which the airline's policy doesn't allow, so the agent
+  must refuse. Then they want to book a new flight from JFK to SFO, which should be "the second cheapest
+  flight in economy". The cheapest option is a direct flight, HAT023, for $163. The right answer is the
+  next one, a one-stop trip via Seattle (HAT069, then HAT258), for $290. The second request must be
+  handled correctly for the task to succeed (receive a reward of 1.0).</p>
+
+  <p><strong>1 · The failure.</strong> The customer wants "the second cheapest flight in economy".
+  The starting tools search direct and one-stop flights separately, so the agent has to
   merge the two lists and rank the prices itself. It got it wrong in every trial: it booked a wrong flight,
   booked the right one twice, or never booked at all. τ²'s final database didn't match the expected one,
   and every trial scored 0.</p>
 
-  <p><strong>2 · The edit.</strong> The optimizer adds one script, <code>store_skill/scripts/search_flights_by_price.py</code>.
-  Its docstring tells the model when to use it: whenever the customer asks for the cheapest, or the second
-  cheapest, option.</p>
+  <p><strong>2 · The edit.</strong> The optimizer adds one script, <code>store_skill/scripts/search_flights_by_price.py</code>:
+  a tool that searches direct and one-stop flights together and returns every option with a free seat,
+  ranked from cheapest to most expensive, each with the exact flight list to book. Its docstring tells the
+  model to use it whenever the customer chooses a flight by price, or doesn't mind direct or one-stop, and
+  to book the chosen option exactly as returned.</p>
 <pre><code>def search_flights_by_price(origin: str, destination: str, date: str, cabin: str,
                             depart_after: str = "", max_stops: int = 1):
     """Search ALL itineraries (direct AND one-stop) on a date, for one cabin,
@@ -314,7 +323,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 
   <p><strong>3 · Into the skill.</strong> cap-evolve deploys the candidate: it imports the
   <code>store_skill</code> into the Skillberry Store, and restarts the Proxy-Agent bound to it. The Store
-  registers the new script as a tool and derives its JSON schema from the signature. This is what the
+  registers the new script as a tool and derives its JSON schema from the signature and docstring. This is what the
   Store keeps for the new tool:</p>
 <pre><code>{
   "name": "search_flights_by_price",
@@ -332,8 +341,8 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 }
 </code></pre>
 
-  <p><strong>4 · What the model sees.</strong> In the next evaluation run, the Proxy-Agent's vMCP server
-  lists the new tool next to the others, and the model receives its name, its docstring and its schema.</p>
+  <p><strong>4 · What the model sees.</strong> In the next evaluation run, the Proxy-Agent
+  lists the new tool next to the others, and the model receives the tool's JSON schema mentioned above.</p>
 
   <p><strong>5 · The call.</strong> A real call from a task-35 trial:</p>
 <pre><code>search_flights_by_price(origin="JFK", destination="SFO", date="2024-05-24", cabin="economy")
@@ -381,7 +390,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
       <div class="grid2">
         <div class="mini"><b>1 · Originals become primitives</b><p>τ²'s <code>AirlineTools</code> is renamed <code>_AirlinePrimitives</code>, body unchanged. Every database read and write still runs τ²'s own code.</p></div>
         <div class="mini"><b>2 · The skill's tools become the agent's</b><p>Each script becomes a method of a new <code>AirlineTools</code>, word for word, plus <code>self</code> and a decorator.</p></div>
-        <div class="mini amber"><b>3 · <code>env_&lt;tool&gt;(…)</code> → <code>self._orig("&lt;tool&gt;", …)</code></b><p><code>_orig</code> (original) returns exactly what the Store returned: parsed JSON, or an <code>"Error: …"</code> string.</p></div>
+        <div class="mini amber"><b>3 · <code>_orig</code> forwards to the originals</b><p><code>AirlineTools</code> gets an <code>_orig</code> method that forwards a call to τ²'s original tool on <code>_AirlinePrimitives</code>. Every method of the new <code>AirlineTools</code> reaches the originals through it.</p></div>
         <div class="mini amber"><b>4 · The same schemas</b><p>The candidate's argument models are kept, so the agent sees the same tool schemas as through the proxy.</p></div>
       </div>
     </div>
