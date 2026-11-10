@@ -106,13 +106,13 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
       <table>
         <thead><tr><th></th><th class="num">Direct</th><th class="num">Blackbox</th></tr></thead>
         <tbody>
-          <tr><td>Sealed test: starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
+          <tr><td>Final test (same 7 tasks): starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
           <tr><td>Gain over the starting tools</td><td class="num">+0.514</td><td class="num">+0.371</td></tr>
           <tr><td>± one standard error</td><td class="num">0.092</td><td class="num">0.143</td></tr>
           <tr><td>pass^2 (solves the task on both of two runs)</td><td class="num">0.74</td><td class="num">0.59</td></tr>
           <tr><td>Best candidate</td><td class="num"><code>cand_0003</code></td><td class="num"><code>cand_0002</code></td></tr>
           <tr><td>Wall clock</td><td class="num">91 min</td><td class="num">148 min</td></tr>
-          <tr><td>Benchmark time (baseline, iterations, sealed test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
+          <tr><td>Benchmark time (baseline, iterations, final test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
           <tr><td>Optimizer time</td><td class="num">61 min</td><td class="num">91 min</td></tr>
           <tr><td>Optimizer tokens</td><td class="num">14.5M</td><td class="num">17.8M</td></tr>
           <tr><td>Optimizer spend</td><td class="num">$10.55</td><td class="num">$14.75</td></tr>
@@ -125,7 +125,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p>The final scores differ by 0.14, less than one combined standard error (about 0.17) at 35 rollouts
   per side. The agent also fails the same way: across the starting tools and every candidate, <strong>49
   of 140</strong> validation rollouts fail on <em>each</em> approach, and the starting tools fail 23 of 35
-  sealed-test rollouts on both. The three top causes are the same on both: a required write that is
+  final-test rollouts on both. The three top causes are the same on both: a required write that is
   missing, an extra or wrong write, or no write at all. The optimizer's spend and tokens are close (1.4×
   and 1.2×). The benchmark itself runs about twice as long through the proxy, because this example sets a
   blackbox concurrency limit of 5 conversations at a time (direct runs up to 125).</p>
@@ -149,7 +149,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><td><b>Failing rollouts</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>23 / 35</b></td><td class="num"><b>23 / 35</b></td></tr>
         </tbody>
       </table>
-      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the sealed test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the two Nov 5 run folders.</p>
+      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the final test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the two Nov 5 run folders.</p>
     </div>
   </figure>
 
@@ -290,7 +290,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p>The best blackbox candidate added a tool that the starting (seed) skill didn't have:
   <code>search_flights_by_price</code>. It changed task 35 the most: the task passed <strong>0 of 5
   trials</strong> with the starting tools, and <strong>5 of 5</strong> with the best candidate during the
-  run (4 of 5 on its sealed test).</p>
+  run (4 of 5 on its final test).</p>
 
   <p><strong>A few words on task 35.</strong> It simulates a customer who calls with two requests. First, they insist on
   cancelling an upcoming flight with a full refund, which the airline's policy doesn't allow, so the agent
