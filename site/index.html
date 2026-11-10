@@ -388,9 +388,9 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
       <div class="eyebrow">The patch · four mechanical rules</div>
       <h3>How a store skill becomes τ² tools</h3>
       <div class="grid2">
-        <div class="mini"><b>1 · Originals become primitives</b><p>τ²'s <code>AirlineTools</code> is renamed <code>_AirlinePrimitives</code>, body unchanged. Every database read and write still runs τ²'s own code.</p></div>
+        <div class="mini"><b>1 · Original tools become primitives</b><p>τ²'s <code>AirlineTools</code> is renamed <code>_AirlinePrimitives</code>, body unchanged. Every database read and write still runs τ²'s own code.</p></div>
         <div class="mini"><b>2 · The skill's tools become the agent's</b><p>Each script becomes a method of a new <code>AirlineTools</code>, word for word, plus <code>self</code> and a decorator.</p></div>
-        <div class="mini amber"><b>3 · <code>_orig</code> forwards to the originals</b><p><code>AirlineTools</code> gets an <code>_orig</code> method that forwards a call to τ²'s original tool on <code>_AirlinePrimitives</code>. Every method of the new <code>AirlineTools</code> reaches the originals through it.</p></div>
+        <div class="mini amber"><b>3 · <code>_orig</code> forwards to the primitives</b><p><code>AirlineTools</code> gets an <code>_orig</code> method that forwards a call to τ²'s original/primitive tool on <code>_AirlinePrimitives</code>. Every method of the new <code>AirlineTools</code> reaches the primitives through it.</p></div>
         <div class="mini amber"><b>4 · The same schemas</b><p>The candidate's argument models are kept, so the agent sees the same tool schemas as through the proxy.</p></div>
       </div>
     </div>
