@@ -64,14 +64,17 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
 
   <h2>Does delivery through a proxy cost you anything? The τ²-bench numbers</h2>
   <p>The question that matters is not whether the blackbox approach improves an agent. It is whether
-  it measures the <em>same</em> improvement as the direct approach. So we ran one optimization twice on
-  <a href="https://github.com/sierra-research/tau2-bench">τ²-bench</a>'s airline domain.
+  it measures the <em>same</em> improvement as the direct approach.</p>
+
+  <p><strong>What τ²-bench is?</strong><br>
   τ²-bench is a public benchmark for customer-service agents: a simulated customer talks to the agent,
   which handles the request through tools such as searching flights or booking a reservation, and a task
-  passes only if the domain's database ends up exactly as expected. Each task runs 5 times, because the
-  same agent can pass a task once and fail it the next time. Besides the mean score, τ²-bench reports
-  <strong>pass^k</strong>, the chance that the agent solves a task on all k separate runs of it; we show
-  <strong>pass^2</strong>, which asks whether it solves the task on both of two runs, not just once.
+  passes only if the domain's database ends up exactly as expected.</p>
+
+  <p>So we ran one optimization twice on
+  <a href="https://github.com/sierra-research/tau2-bench">τ²-bench</a>'s airline domain.
+  Each task runs 5 times, because the
+  same agent can pass a task once and fail it the next time.
   We changed only how each candidate
   reaches the model, and kept everything else identical:</p>
 
@@ -109,7 +112,6 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><td>Final test (same 7 tasks): starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
           <tr><td>Gain over the starting tools</td><td class="num">+0.514</td><td class="num">+0.371</td></tr>
           <tr><td>± one standard error</td><td class="num">0.092</td><td class="num">0.143</td></tr>
-          <tr><td>pass^2 (solves the task on both of two runs)</td><td class="num">0.74</td><td class="num">0.59</td></tr>
           <tr><td>Best candidate</td><td class="num"><code>cand_0003</code></td><td class="num"><code>cand_0002</code></td></tr>
           <tr><td>Wall clock</td><td class="num">91 min</td><td class="num">148 min</td></tr>
           <tr><td>Benchmark time (baseline, iterations, final test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
