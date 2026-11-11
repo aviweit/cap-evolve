@@ -66,12 +66,13 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
   <p>The question that matters is not whether the blackbox approach improves an agent. It is whether
   it measures the <em>same</em> improvement as the direct approach.</p>
 
-  <p><strong>What τ²-bench is?</strong><br>
-  τ²-bench is a public benchmark for customer-service agents: a simulated customer talks to the agent,
-  which handles the request through tools such as searching flights or booking a reservation, and a task
-  passes only if the domain's database ends up exactly as expected.</p>
+  <p><strong>What is τ²-bench?</strong><br>
+  τ²-bench is a public benchmark for customer-service agents. Each benchmark task represents a customer
+  request, such as changing a flight or making a reservation. A simulated customer interacts with the
+  agent, which must complete the request using tools such as flight search and booking systems. A task
+  passes only if the final state of the underlying database exactly matches the expected outcome.</p>
 
-  <p>So we ran one optimization twice on
+  <p>To answer that question, we ran one optimization twice on
   <a href="https://github.com/sierra-research/tau2-bench">τ²-bench</a>'s airline domain.
   Each task runs 5 times, because the
   same agent can pass a task once and fail it the next time.
