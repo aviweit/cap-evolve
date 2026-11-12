@@ -15,6 +15,22 @@
   <p class="subtitle">What if you want to improve an agent but cannot modify it directly? Perhaps it's a packaged product, a production deployment, or an agent you don't own.</p>
   <div class="byline"><div class="avatar"></div><div><b>Avi Weit</b> · 12 min read · Draft</div></div>
 
+  <p>In this post, we will show you how to optimize a benchmark agent's tools (τ²-bench) without modifying the
+  agent, and how to take the best candidate from cap-evolve back into a vanilla benchmark (τ²-bench), where it
+  lifts the score from 17% to 80%.</p>
+
+  <figure>
+    <div class="card hero">
+      <div class="eyebrow">Plain τ²-bench · before and after applying the best candidate</div>
+      <div class="nums"><span class="from">17.1%</span><span class="arrow">→</span><span class="to">80.0%</span></div>
+      <span class="pill">▲ +62.9 points (4.7× the unpatched score) · no proxy, no Skillberry</span>
+      <p class="desc">Task success rate on τ²-bench's airline domain, 7 tasks × 5 trials: unpatched, then patched with
+      the blackbox run's best candidate. Same agent (<code>claude-haiku-4-5</code>), simulated customer and settings;
+      the only change is the patched <code>tools.py</code>.</p>
+      <p class="src">Source: τ²-bench results.json of the unpatched and the patched copy; best candidate cand_0002 of the Nov 5 blackbox run.</p>
+    </div>
+  </figure>
+
   <p>Most tools that make an AI agent better assume they can reach inside it, and so does
   <a href="https://github.com/skillberry-ai/cap-evolve">cap-evolve</a> in its <strong>direct approach</strong>:
   it edits the agent's prompt file, rewrites its tool code, then runs it again and checks the score. That works
