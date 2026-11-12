@@ -118,14 +118,14 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><td>Benchmark time (baseline, iterations, final test)</td><td class="num">28 min</td><td class="num">57 min</td></tr>
         </tbody>
       </table>
-      <p class="src">Source: the two cap-evolve run folders: direct measured on Nov 4, blackbox on Nov 5. Train, val and test are the same 7 tasks, so the test number is a fit, not a held-out result.</p>
+      <p class="src">Source: the two cap-evolve run folders: direct measured on Nov 4, blackbox on Nov 5. Train, val and test are the same 7 tasks.</p>
     </div>
   </figure>
 
   <p>The final scores differ by 0.086, well under one combined standard error (about 0.20) at 35 rollouts
   per side. The agent also fails in much the same way: across the starting tools and every candidate,
   <strong>44 of 140</strong> validation rollouts fail on the direct approach and <strong>49 of 140</strong>
-  on the blackbox approach, and the starting tools fail 21 and 23 of 35 final-test rollouts. The three top
+  on the blackbox approach, and the starting tools fail <strong>21 of 35</strong> and <strong>23 of 35</strong> final-test rollouts (direct and blackbox). The three top
   causes are the same on both: a required write that is missing, no write at all, or an extra or wrong
   write. The optimizer's spend and tokens are close (1.2× and 1.04×). The benchmark itself runs about twice as long through the proxy, because this example sets a
   blackbox concurrency limit of 5 conversations at a time (direct runs up to 125).</p>
@@ -149,13 +149,13 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><td><b>Failing rollouts</b></td><td class="num"><b>44 / 140</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>21 / 35</b></td><td class="num"><b>23 / 35</b></td></tr>
         </tbody>
       </table>
-      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the final test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the direct run folder from Nov 4 and the blackbox run folder from Nov 5.</p>
+      <p class="src">Val: the starting tools plus the optimizer's three candidates (one per iteration), each scored on 35 rollouts during the run, 140 per approach.<br>Test seed: the unchanged starting tools, scored on the final test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the direct run folder from Nov 4 and the blackbox run folder from Nov 5.</p>
     </div>
   </figure>
 
   <figure>
     <img src="images/fig1-climb-direct1104-blackbox1105.png?v=1" alt="Validation reward per iteration, both approaches: direct from Nov 4, blackbox from Nov 5">
-    <figcaption>Validation score per iteration, both approaches (direct from Nov 4, blackbox from Nov 5). Direct's second and third candidates, and blackbox's third, scored no higher and were not kept.</figcaption>
+    <figcaption>Validation score per iteration, both approaches (direct from Nov 4, blackbox from Nov 5). A candidate that scored no higher was not kept.</figcaption>
   </figure>
 
 
@@ -206,7 +206,7 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
         <li><strong>Edited</strong> by the optimizer: each candidate is a new version of <code>store_skill</code>.</li>
         <li><strong>Deployed</strong>: the new version replaces the old one in the Store.</li>
         <li><strong>Served</strong> by the Proxy-Agent to the model, on every call, while the agent stays unchanged.</li>
-        <li><strong>Exported</strong> at the end: the winning version is what the owner takes home.</li>
+        <li><strong>Exported</strong> at the end: the winning version either stays in the Store, or goes home into the owner's benchmark.</li>
       </ol>
     </div>
   </figure>
@@ -276,13 +276,9 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     <figcaption>From one prompt to a running loop. Highlighted boxes are where the Skillberry stack takes part.</figcaption>
   </figure>
 
-  <p>Inside a trial, the agent calls a sentinel model with its Skillberry context. The Proxy-Agent opens a
-  session for that context: it creates a virtual MCP (vMCP) server in the Store that exposes the skill's
-  tools, and sends the real model the skill together with those tools, as JSON schemas derived from each
-  script's type annotations. When the model calls a tool, its script runs inside the Store and calls the
-  primitives, which reach τ²'s environment service over HTTP. When the trial ends, the tailoring merges the
-  two records, τ² scores the trial, and the session is closed and its vMCP server removed. The simulated
-  customer never goes through the proxy.</p>
+  <p>Inside a trial, every call the agent makes to its model goes through the Proxy-Agent, which adds the
+  skill's instructions and tools; when the model calls a tool, its script runs in the Store against τ²'s
+  environment. τ² then scores the trial as usual. The simulated customer never goes through the proxy.</p>
 
   <h2>Explaining how a candidate tool is being modified, end to end</h2>
   <p>To make this concrete, let's follow one tool from the moment the optimizer writes it to the moment it
