@@ -99,9 +99,8 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
     </div>
   </figure>
 
-  <p>The answer is no. <strong>The two approaches come out very similar</strong>: the same starting score,
-  the same climb up to the second iteration, the same kinds of mistakes, and an optimizer bill within about
-  a third.</p>
+  <p>In our experiment, the answer is no: <strong>the two approaches came out similar</strong>, with close
+  final scores, the same kinds of mistakes, and an optimizer bill within about a fifth.</p>
 
   <figure>
     <div class="card">
@@ -110,33 +109,31 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
       <table>
         <thead><tr><th></th><th class="num">Direct</th><th class="num">Blackbox</th></tr></thead>
         <tbody>
-          <tr><td>Final test (same 7 tasks): starting tools → best</td><td class="num">0.343 → 0.857</td><td class="num">0.343 → 0.714</td></tr>
-          <tr><td>Gain over the starting tools</td><td class="num">+0.514</td><td class="num">+0.371</td></tr>
-          <tr><td>± one standard error</td><td class="num">0.092</td><td class="num">0.143</td></tr>
-          <tr><td>Best candidate</td><td class="num"><code>cand_0003</code></td><td class="num"><code>cand_0002</code></td></tr>
-          <tr><td>Wall clock</td><td class="num">91 min</td><td class="num">148 min</td></tr>
-          <tr><td>Benchmark time (baseline, iterations, final test)</td><td class="num">30 min</td><td class="num">57 min</td></tr>
-          <tr><td>Optimizer time</td><td class="num">61 min</td><td class="num">91 min</td></tr>
-          <tr><td>Optimizer tokens</td><td class="num">14.5M</td><td class="num">17.8M</td></tr>
-          <tr><td>Optimizer spend</td><td class="num">$10.55</td><td class="num">$14.75</td></tr>
+          <tr><td>Gain over the starting tools</td><td class="num">+0.400</td><td class="num">+0.371</td></tr>
+          <tr><td>± one standard error</td><td class="num">0.144</td><td class="num">0.143</td></tr>
+          <tr><td>Final test (same 7 tasks): starting tools → best</td><td class="num">0.400 → 0.800</td><td class="num">0.343 → 0.714</td></tr>
+          <tr><td>Optimizer tokens</td><td class="num">17.1M</td><td class="num">17.8M</td></tr>
+          <tr><td>Optimizer spend</td><td class="num">$12.24</td><td class="num">$14.75</td></tr>
+          <tr><td>Optimizer time</td><td class="num">71 min</td><td class="num">91 min</td></tr>
+          <tr><td>Benchmark time (baseline, iterations, final test)</td><td class="num">28 min</td><td class="num">57 min</td></tr>
         </tbody>
       </table>
-      <p class="src">Source: the two cap-evolve run folders, direct and blackbox, both from Nov 5. Train, val and test are the same 7 tasks, so the test number is a fit, not a held-out result.</p>
+      <p class="src">Source: the two cap-evolve run folders: direct measured on Nov 4, blackbox on Nov 5. Train, val and test are the same 7 tasks, so the test number is a fit, not a held-out result.</p>
     </div>
   </figure>
 
-  <p>The final scores differ by 0.14, less than one combined standard error (about 0.17) at 35 rollouts
-  per side. The agent also fails the same way: across the starting tools and every candidate, <strong>49
-  of 140</strong> validation rollouts fail on <em>each</em> approach, and the starting tools fail 23 of 35
-  final-test rollouts on both. The three top causes are the same on both: a required write that is
-  missing, an extra or wrong write, or no write at all. The optimizer's spend and tokens are close (1.4×
-  and 1.2×). The benchmark itself runs about twice as long through the proxy, because this example sets a
+  <p>The final scores differ by 0.086, well under one combined standard error (about 0.20) at 35 rollouts
+  per side. The agent also fails in much the same way: across the starting tools and every candidate,
+  <strong>44 of 140</strong> validation rollouts fail on the direct approach and <strong>49 of 140</strong>
+  on the blackbox approach, and the starting tools fail 21 and 23 of 35 final-test rollouts. The three top
+  causes are the same on both: a required write that is missing, no write at all, or an extra or wrong
+  write. The optimizer's spend and tokens are close (1.2× and 1.04×). The benchmark itself runs about twice as long through the proxy, because this example sets a
   blackbox concurrency limit of 5 conversations at a time (direct runs up to 125).</p>
 
   <figure>
     <div class="card">
       <div class="eyebrow">τ²-bench airline · why each rollout failed</div>
-      <h3>The same failures on both approaches</h3>
+      <h3>The same kinds of failures on both approaches</h3>
       <p class="lede">Every failing rollout, classified from its trajectory: the agent's database writes
       against the task's expected actions in τ²-bench.</p>
       <table class="cols5">
@@ -144,21 +141,21 @@ bash examples/toy_calc/run.sh      <span class="c"># zero-API demo: the prompt g
           <tr><th>Failure cause</th><th class="num">Val · direct</th><th class="num">Val · blackbox</th><th class="num">Test seed · direct</th><th class="num">Test seed · blackbox</th></tr>
         </thead>
         <tbody>
-          <tr><td>A required write is missing</td><td class="num">17</td><td class="num">20</td><td class="num">5</td><td class="num">5</td></tr>
-          <tr><td>An extra or wrong-type write</td><td class="num">12</td><td class="num">10</td><td class="num">7</td><td class="num">7</td></tr>
-          <tr><td>No write at all</td><td class="num">11</td><td class="num">11</td><td class="num">5</td><td class="num">9</td></tr>
-          <tr><td>A wrong value (payment, flights, baggage, passengers)</td><td class="num">8</td><td class="num">7</td><td class="num">3</td><td class="num">1</td></tr>
-          <tr><td>Other (an unneeded write, a failed non-database check)</td><td class="num">1</td><td class="num">1</td><td class="num">3</td><td class="num">1</td></tr>
-          <tr><td><b>Failing rollouts</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>23 / 35</b></td><td class="num"><b>23 / 35</b></td></tr>
+          <tr><td>A required write is missing</td><td class="num">16</td><td class="num">20</td><td class="num">4</td><td class="num">5</td></tr>
+          <tr><td>An extra or wrong-type write</td><td class="num">8</td><td class="num">10</td><td class="num">7</td><td class="num">7</td></tr>
+          <tr><td>No write at all</td><td class="num">12</td><td class="num">11</td><td class="num">6</td><td class="num">9</td></tr>
+          <tr><td>A wrong value (payment, flights, baggage, passengers)</td><td class="num">4</td><td class="num">7</td><td class="num">3</td><td class="num">1</td></tr>
+          <tr><td>Other (an unneeded write, a failed non-database check)</td><td class="num">4</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+          <tr><td><b>Failing rollouts</b></td><td class="num"><b>44 / 140</b></td><td class="num"><b>49 / 140</b></td><td class="num"><b>21 / 35</b></td><td class="num"><b>23 / 35</b></td></tr>
         </tbody>
       </table>
-      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the final test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the two Nov 5 run folders.</p>
+      <p class="src">Val: every version scored during the run, the starting tools and the three candidates, 35 rollouts each (140 per approach). Test seed: the unchanged starting tools, scored on the final test at the end of the run. A conversation handed to a human agent counts as "no write at all". Source: the direct run folder from Nov 4 and the blackbox run folder from Nov 5.</p>
     </div>
   </figure>
 
   <figure>
-    <img src="images/fig1-climb-both-approaches-nov5.png?v=1" alt="Validation reward per iteration, both approaches">
-    <figcaption>Validation score per iteration, both approaches. Blackbox's third candidate scored lower and was not kept.</figcaption>
+    <img src="images/fig1-climb-direct1104-blackbox1105.png?v=1" alt="Validation reward per iteration, both approaches: direct from Nov 4, blackbox from Nov 5">
+    <figcaption>Validation score per iteration, both approaches (direct from Nov 4, blackbox from Nov 5). Direct's second and third candidates, and blackbox's third, scored no higher and were not kept.</figcaption>
   </figure>
 
 
