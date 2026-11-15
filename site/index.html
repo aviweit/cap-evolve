@@ -477,14 +477,6 @@ class AirlineTools(_AirlinePrimitives):      <span class="c"># what τ² now ser
   be pointed at the Proxy-Agent, and tools the Store can call. We have only tested τ²-bench so far; other
   benchmarks are the next step, so stay tuned.</p>
 
-  <h2>Limits, honestly</h2>
-  <ul>
-    <li><strong>No held-out split.</strong> Train, val and test are the same 7 tasks, so every number here is a
-    fit. The next run needs tasks the optimizer never saw.</li>
-    <li><strong>The agent's own cost is not counted.</strong> The Proxy-Agent doesn't report token usage, so the
-    agent's cost reads as 0 on the blackbox approach — not measured, not free.</li>
-  </ul>
-
   <h2>Try it</h2>
   <p>cap-evolve is open source, Apache-2.0: <a href="https://github.com/skillberry-ai/cap-evolve">github.com/skillberry-ai/cap-evolve</a>.
   The two runs above come from <a href="https://github.com/skillberry-ai/cap-evolve/tree/main/benchmarks/tau2/examples/sierra_airline"><code>benchmarks/tau2/examples/sierra_airline</code></a>,
