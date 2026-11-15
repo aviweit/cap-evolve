@@ -142,8 +142,8 @@ bash benchmarks/toy/examples/calc/run.sh      <span class="c"># zero-API demo: t
   per side. The agent also fails in much the same way: across the starting tools and every candidate,
   <strong>44 of 140</strong> validation rollouts fail on the direct approach and <strong>49 of 140</strong>
   on the blackbox approach, and the starting tools fail <strong>21 of 35</strong> and <strong>23 of 35</strong> final-test rollouts (direct and blackbox). The three top
-  causes are the same on both: a required write that is missing, no write at all, or an extra or wrong
-  write. The optimizer's spend and tokens are close (1.2× and 1.04×). The benchmark itself runs about twice as long through the proxy, because this example sets a
+  causes are the same on both: a required database write that is missing, no write at all, or an extra or wrong
+  write (i.e. an unneeded tool call, or a tool call with wrongly filled arguments). The optimizer's spend and tokens are close (1.2× and 1.04×). The benchmark itself runs about twice as long through the proxy, because this example sets a
   blackbox concurrency limit of 5 conversations at a time (direct runs up to 125).</p>
 
   <figure>
