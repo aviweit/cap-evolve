@@ -3,8 +3,8 @@
     python make_reference.py OUT_DIR
 
 Writes api_index.md (every app and API: method, required/optional parameters, one-line
-description, generated from data/api_docs/standard) and react_agent_notes.md (how the agent
-under test runs a candidate).
+description, generated from data/api_docs/standard), react_agent_notes.md (how the agent
+under test runs a candidate) and react_agent_notes_blackbox.md (the same, for the blackbox approach).
 """
 
 from __future__ import annotations
@@ -50,6 +50,47 @@ NOTES = """# How the agent under test runs a candidate (AppWorld simplified ReAc
   `"ok": true`, or the candidate is rejected without being run.
 """
 
+# The same notes for the blackbox approach (blackbox/README.md): the agent and its REPL are the same,
+# what differs is how the candidate reaches them. Built from NOTES, so the shared facts stay identical.
+_BLACKBOX_SECTIONS = {
+    """- `policy/instructions.txt` is a Jinja template rendered with `instruction`, `main_user`
+  (first_name, last_name, email, phone_number) and `app_descriptions`, then split into chat
+  messages on lines `USER:` / `ASSISTANT:` / `SYSTEM:` followed by a newline. The worked
+  demo is a sequence of such messages. The final USER message must end with
+  `My name is: … Task: {{ instruction }}`.
+""": """- The agent keeps AppWorld's stock prompt; every LLM call goes through the Skillberry
+  Proxy-Agent, which drops that prompt up to the real task turn ("Using these APIs, now generate
+  code to solve the actual task: … Task: …") and sends the store skill's `SKILL.md` instead, as
+  ONE system message, rendered with `main_user` (first_name, last_name, email, phone_number).
+  Its worked demo therefore arrives as text inside that message, not as real chat turns.
+""",
+    """- `tools/helpers.py` is executed once in the REPL before step 1, so its functions are
+  callable from the agent's code. The prompt then gets one line listing them. Helpers must
+  take `apis` and app/API names as parameters (no hardcoded `apis.<app>.` chains, no app or
+  API name string literals) and may import only re, json, math, datetime, itertools,
+  collections, functools.
+- `tools/api_notes.json` maps""": """- `repl/helpers.py` and `repl/api_notes.json` reach the REPL through the store's one tool,
+  `init_repl`, which the model calls (it is offered to the model next to `SKILL.md`). It loads
+  the helpers into the task's REPL and installs the notes; calling it again changes nothing (the
+  model cannot see its own earlier tool calls, so it may call it more than once). The deployed
+  `SKILL.md` (the system prompt) then ends with one generated line listing the helpers and
+  saying to call `init_repl` before the first code block. Helpers are then callable from the
+  agent's code. Helpers must take `apis` and app/API names as
+  parameters (no hardcoded `apis.<app>.` chains, no app or API name string literals) and may
+  import only re, json, math, datetime, itertools, collections, functools.
+- `repl/api_notes.json` maps""",
+    """- Lint before you stop: `python lints.py .` (path given in INSTRUCTIONS.md) must print""":
+    """- Lint before you stop: `python bb_lints.py .` (path given in INSTRUCTIONS.md) must print""",
+}
+
+
+def blackbox_notes(notes: str = NOTES) -> str:
+    for old, new in _BLACKBOX_SECTIONS.items():
+        if notes.count(old) != 1:
+            raise ValueError(f"NOTES changed: update _BLACKBOX_SECTIONS ({old[:40]!r}...)")
+        notes = notes.replace(old, new)
+    return notes
+
 
 def main(argv: list[str]) -> int:
     out = Path(argv[1])
@@ -68,7 +109,8 @@ def main(argv: list[str]) -> int:
         lines.append("")
     (out / "api_index.md").write_text("\n".join(lines))
     (out / "react_agent_notes.md").write_text(NOTES)
-    print(f"wrote {out}/api_index.md ({len(lines)} lines) and react_agent_notes.md")
+    (out / "react_agent_notes_blackbox.md").write_text(blackbox_notes())
+    print(f"wrote {out}/api_index.md ({len(lines)} lines), react_agent_notes.md and react_agent_notes_blackbox.md")
     return 0
 
 

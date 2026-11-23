@@ -1,4 +1,6 @@
-"""Candidate lints for the blackbox approach: the candidate is one store skill, ``SKILL.md``.
+"""Candidate lints for the blackbox approach: the candidate is one store skill, ``SKILL.md`` plus the
+tools capability in ``repl/helpers.py`` and ``repl/api_notes.json``, and the frozen
+``scripts/init_repl.py``.
 
     python bb_lints.py CANDIDATE_DIR    # prints {"ok": bool, "violations": [...]}; exit 1 on violation,
                                         # exit 2 when the lint data is unavailable
@@ -8,11 +10,20 @@ feedback), as in the direct approach. Reused from the direct approach's ``lints.
 project by scripts/setup_project.sh): the lint cache, the 8-gram / supervisor-contact leak check
 (AppWorld's rule against task-specific hints) and the token counter.
 
-SKILL.md rules (README: Lints):
-- No skill-package additions (``scripts/``, ``references/``, ``assets/``): a script would become a
-  tool, and this approach optimizes the system prompt only. Other files in the candidate folder are
-  the harness's own (INSTRUCTIONS.md, guidance/, JOURNAL.md, ...) and are never deployed: the
-  tailoring stages SKILL.md alone for the store.
+Skill-folder rules (README: Lints):
+- No skill-package additions (``scripts/``, ``references/``, ``assets/``) besides the frozen
+  ``scripts/init_repl.py``, and nothing in ``repl/`` but ``helpers.py`` and ``api_notes.json``: the
+  store would import any other file as a tool or an injected text.
+- ``scripts/init_repl.py`` is FROZEN (``protected_paths`` in capevolve.yaml): present and
+  byte-identical to the benchmark's copy. It is the template of the one store tool; the deployed tool
+  is generated from the benchmark's copy, never from the candidate's. Other files in the candidate
+  folder are the harness's own (INSTRUCTIONS.md, guidance/, JOURNAL.md, ...) and are never deployed.
+- ``repl/helpers.py`` and ``repl/api_notes.json`` follow the direct approach's rules for
+  ``tools/helpers.py`` and ``tools/api_notes.json`` (``lints.lint_helpers`` / ``lint_notes``).
+- Nothing is required of SKILL.md about ``repl/``: as in the direct approach, the sentence listing the
+  helpers is generated (the tailoring appends it to the deployed SKILL.md, the system prompt).
+
+SKILL.md rules:
 - Frontmatter ``name: my_skill``.
 - The body is a Jinja template whose ONLY variable is ``main_user``, with only the fields
   first_name, last_name, email and phone_number. Every placeholder of the seed stays (each field
@@ -36,6 +47,9 @@ import lints as direct_lints  # noqa: E402
 
 SKILL_NAME = "my_skill"
 PACKAGE_DIRS = ("scripts", "references", "assets")  # skill-package parts the store would import
+REPL_DIR = "repl"
+REPL_FILES = ("helpers.py", "api_notes.json")
+INIT_REPL_REL = "scripts/init_repl.py"  # frozen: protected_paths in capevolve.yaml
 SKILL_MAX_TOKENS = 8500  # the direct prompt's 8,000 plus the rendered app list (~350 tokens)
 MAIN_USER_FIELDS = {"first_name", "last_name", "email", "phone_number"}
 PLACEHOLDER_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
@@ -105,17 +119,68 @@ def lint_skill_md(text: str) -> list[str]:
     return out + direct_lints._leaks(body, WHAT)
 
 
+def _relabel(violations: list[str]) -> list[str]:
+    """The direct lints name their files tools/...; here they live in repl/."""
+    return [v.replace("tools/helpers.py", f"{REPL_DIR}/helpers.py")
+             .replace("tools/api_notes.json", f"{REPL_DIR}/api_notes.json") for v in violations]
+
+
+def lint_repl(cdir: Path) -> list[str]:
+    """The tools capability: the two repl/ files, under the direct approach's rules."""
+    d = Path(cdir) / REPL_DIR
+    out = []
+    helpers = (d / "helpers.py").read_text(encoding="utf-8") if (d / "helpers.py").is_file() else ""
+    notes_raw = (d / "api_notes.json").read_text(encoding="utf-8") if (d / "api_notes.json").is_file() else ""
+    if helpers:
+        out += _relabel(direct_lints.lint_helpers(helpers))
+    if notes_raw.strip():
+        out += _relabel(direct_lints.lint_notes(notes_raw))
+    return out
+
+
+def frozen_init_repl() -> Path:
+    """The benchmark's own copy of the frozen scripts/init_repl.py: the project's (next to this file),
+    else the committed seed's (in the repo)."""
+    here = Path(__file__).resolve().parent
+    project = here / "init_repl_template.py"
+    return project if project.is_file() else here.parent / "seed_capability" / SKILL_NAME / INIT_REPL_REL
+
+
+def lint_init_repl(cdir: Path) -> list[str]:
+    """scripts/init_repl.py is frozen: present and byte-identical to the benchmark's copy."""
+    mine = Path(cdir) / INIT_REPL_REL
+    if not mine.is_file():
+        return [f"{INIT_REPL_REL}: missing; it is frozen (protected_paths): restore it, do not delete it"]
+    if mine.read_bytes() != frozen_init_repl().read_bytes():
+        return [f"{INIT_REPL_REL}: changed; it is frozen (protected_paths): restore the original"]
+    return []
+
+
+def skill_dir(path: Path) -> Path:
+    """The skill folder of a candidate: ``<candidate>/my_skill`` (capability_path: seed_capability,
+    as in tau2), or ``path`` itself when it already is the skill folder."""
+    path = Path(path)
+    return path / SKILL_NAME if (path / SKILL_NAME / "SKILL.md").is_file() else path
+
+
 def lint_candidate(cdir: Path) -> list[str]:
-    cdir = Path(cdir)
+    cdir = skill_dir(cdir)
     skill = cdir / "SKILL.md"
     if not skill.is_file():
         return [f"{WHAT}: missing"]
     out = []
     others = sorted(str(p.relative_to(cdir)) for sub in PACKAGE_DIRS for p in (cdir / sub).rglob("*")
-                    if p.is_file() and "__pycache__" not in p.parts)
+                    if p.is_file() and "__pycache__" not in p.parts
+                    and p.relative_to(cdir).as_posix() != INIT_REPL_REL)
+    others += sorted(str(p.relative_to(cdir)) for p in (cdir / REPL_DIR).rglob("*")
+                     if p.is_file() and "__pycache__" not in p.parts
+                     and p.relative_to(cdir / REPL_DIR).as_posix() not in REPL_FILES)
     if others:
-        out.append(f"the skill must be SKILL.md only (system-prompt capability); found {others}")
-    return out + lint_skill_md(skill.read_text(encoding="utf-8"))
+        out.append(f"the skill holds SKILL.md, {INIT_REPL_REL} (frozen) and "
+                   f"{REPL_DIR}/{{{','.join(REPL_FILES)}}} only; found {others}")
+    out += lint_init_repl(cdir)
+    text = skill.read_text(encoding="utf-8")
+    return out + lint_skill_md(text) + lint_repl(cdir)
 
 
 if __name__ == "__main__":

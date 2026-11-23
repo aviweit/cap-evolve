@@ -100,7 +100,11 @@ def run_episode(spec: dict[str, Any]) -> dict[str, Any]:
     try:
         with AppWorld.initializer(update_defaults=True, experiment_name=spec["experiment_name"],
                                   random_seed=int(spec["random_seed"]), raise_on_extra_parameters=True):
-            with AppWorld(task_id=task_id, experiment_name=spec["experiment_name"]) as world:
+            # The remote REPL: with remote_environment_url (a constructor argument of the WORLD, not the
+            # agent) the world, its databases and its REPL live in this trial's own environment server,
+            # and world.execute / evaluate / task_completed go to it over HTTP. The agent stays stock.
+            remote = {"remote_environment_url": spec["remote_environment_url"]} if spec.get("remote_environment_url") else {}
+            with AppWorld(task_id=task_id, experiment_name=spec["experiment_name"], **remote) as world:
                 core.set_phase("episode")
                 agent.usage_tracker.reset(task_id)
                 agent.initialize(world)

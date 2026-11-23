@@ -4,13 +4,16 @@ Wires cap-evolve to AppWorld for benchmarks/appworld/examples/react_agent/blackb
 the seal and scoring are the direct approach's (direct/adapters/adapter.py); what differs is how a
 candidate reaches the agent:
 
-  * the candidate is ONE store skill: ``SKILL.md`` (capability system-prompt). ``run_trials``
-    lints it (``bb_lints``), deploys it to the Skillberry Store and restarts the Proxy-Agent bound
-    to it (``appworld_tailoring.deploy``, once per candidate), then runs the episodes;
+  * the candidate is ONE store skill: ``SKILL.md`` (capability system-prompt) and
+    ``repl/helpers.py`` + ``repl/api_notes.json`` (capability tools). ``run_trials`` lints it
+    (``bb_lints``), deploys it to the Skillberry Store and restarts the Proxy-Agent bound to it
+    (``appworld_tailoring.deploy``, once per candidate), then runs the episodes. The ``repl/`` files
+    reach the store packaged into the one store tool ``init_repl``, never into the world from here;
   * every episode runs AppWorld's STOCK ReAct agent with AppWorld's own prompt file
-    (``aw_bb_agent.py``, one subprocess per episode, ``AW_WORKERS`` at a time). Its LLM calls go to
-    the proxy with skillberry-context headers: a per-episode ``env_id``, the history-start marker
-    and the task's supervisor (the proxy renders SKILL.md with it);
+    (``aw_bb_agent.py``, one subprocess per episode, ``AW_WORKERS`` at a time), its world on the
+    trial's own environment server. Its LLM calls go to the proxy with skillberry-context headers:
+    a per-episode ``env_id``, the history-start marker, the task's supervisor (the proxy renders
+    SKILL.md with it) and that server's port (``init_repl`` loads ``repl/`` there);
   * ``score`` is the direct approach's: 1.0 iff AppWorld's evaluation passes every requirement,
     feedback tier F1, never the gold answer or the failure ``trace``.
 
@@ -210,6 +213,18 @@ class Adapter(CapabilityAdapter):
         last_err = ""
         for attempt in range(retries + 1):
             ep = f"{task.id}__s{seed}__a{attempt}__{uuid.uuid4().hex[:8]}"
+            env = aw_agent.worker_env(dict(os.environ), str(root))
+            # The worker needs no model key (the proxy holds it). The allowlist passes OPENAI_API_KEY
+            # through, and blackbox_env.load_env() may have put the repo's real key in this process.
+            env["OPENAI_API_KEY"] = "unused"
+            # The remote REPL: this trial's own AppWorld environment server (one world per server).
+            port = None
+            if tailoring.remote_repl_enabled():
+                try:
+                    port = tailoring.start_env_server(str(root), env)
+                except Exception as e:  # noqa: BLE001 — infrastructure, retried like a crashed worker
+                    last_err = f"remote REPL did not start: {type(e).__name__}: {e}"[:1500]
+                    continue
             spec = {
                 "task_id": task.id,
                 "experiment_name": f"{os.environ.get('AW_EXPERIMENT', 'capevolve-blackbox')}/{ep}",
@@ -217,15 +232,14 @@ class Adapter(CapabilityAdapter):
                 "random_seed": 100 + int(seed),
                 "client_prompt": str(_client_prompt()),
                 "spa_url": tailoring.spa_base_url(),
-                "headers": tailoring.context_headers(env_id=f"aw-{ep}", task_id=task.id, supervisor=supervisor),
+                # repl_port: the REPL the store's init_repl tool loads the candidate's repl/ into
+                "headers": tailoring.context_headers(env_id=f"aw-{ep}", task_id=task.id,
+                                                     supervisor=supervisor, repl_port=port),
                 "log_lm_calls": False,  # unpatched AppWorld logs request arguments; never enable here
+                "remote_environment_url": tailoring.env_server_url(port) if port else None,
             }
             spec_path, out_path = workdir / f"{ep}.spec.json", workdir / f"{ep}.out.json"
             spec_path.write_text(json.dumps(spec))
-            env = aw_agent.worker_env(dict(os.environ), str(root))
-            # The worker needs no model key (the proxy holds it). The allowlist passes OPENAI_API_KEY
-            # through, and blackbox_env.load_env() may have put the repo's real key in this process.
-            env["OPENAI_API_KEY"] = "unused"
             t0 = time.time()
             try:
                 proc = subprocess.run([sys.executable, str(HERE / "aw_bb_agent.py"), str(spec_path), str(out_path)],
@@ -240,6 +254,9 @@ class Adapter(CapabilityAdapter):
             finally:
                 spec_path.unlink(missing_ok=True)
                 out_path.unlink(missing_ok=True)
+                # Trial end, whatever ended it: stop the remote REPL and free its memory and port.
+                if port is not None:
+                    tailoring.stop_env_server(port)
                 if os.environ.get("AW_KEEP_OUTPUTS") != "1":
                     shutil.rmtree(root / "experiments" / "outputs" / spec["experiment_name"], ignore_errors=True)
             # Disconnect upon trial end, whatever ended it: the worker does it in its own finally, but a
@@ -264,7 +281,8 @@ class Adapter(CapabilityAdapter):
                        metadata={"seed": seed, "cost_source": "unpriced", "infra_error": last_err})
 
     def run_trials(self, tasks, ctx, *, n_trials: int, base_seed: int):
-        cdir = Path(ctx).resolve()  # the candidate skill folder (SKILL.md)
+        # The candidate is the seed dir (capability_path: seed_capability); the skill is its my_skill/.
+        cdir = bb_lints.skill_dir(Path(ctx).resolve())
         tasks = list(tasks)
         self._check_seal([t.id for t in tasks])
         root = _appworld_root()
@@ -274,6 +292,12 @@ class Adapter(CapabilityAdapter):
             # Rejected before any rollout: no episode runs, every task scores 0 with the reason.
             meta = {"lint_reject": violations, "success": False, "cost_source": "unpriced"}
             return {t.id: [Rollout(task_id=t.id, output="lint_reject", trace=[], metadata=dict(meta))
+                           for _ in range(n_trials)] for t in tasks}
+        if tailoring.build_init_repl(cdir) and not tailoring.remote_repl_enabled():
+            # The repl/ code can only reach a world through the trial's environment server.
+            err = ("infrastructure: the candidate's repl/ needs the remote REPL, but AW_REMOTE_REPL=0; "
+                   "unset it to run this candidate")
+            return {t.id: [Rollout(task_id=t.id, error=err, metadata={"cost_source": "unpriced", "infra_error": err})
                            for _ in range(n_trials)] for t in tasks}
         try:
             tailoring.deploy(cdir)
@@ -289,7 +313,7 @@ class Adapter(CapabilityAdapter):
         progress = _Progress(len(jobs))
         out: dict[str, list] = {t.id: [None] * n_trials for t in tasks}
 
-        native = _native_dir(cdir, [t.id for t in tasks])
+        native = _native_dir(Path(ctx).resolve(), [t.id for t in tasks])  # the candidate dir, not my_skill/
 
         def one(job):
             t, k = job
@@ -298,9 +322,13 @@ class Adapter(CapabilityAdapter):
             progress.bump(r)
             return t.id, k, r
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for tid, k, r in pool.map(one, jobs):
-                out[tid][k] = r
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for tid, k, r in pool.map(one, jobs):
+                    out[tid][k] = r
+        finally:
+            # The batch-end sweep: no remote REPL outlives its batch, even if a trial's own stop failed.
+            tailoring.stop_all_env_servers()
         try:
             workdir.rmdir()
         except OSError:

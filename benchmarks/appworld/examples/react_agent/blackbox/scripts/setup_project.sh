@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Set up the AppWorld BLACKBOX approach: one cap-evolve project whose only capability is the system
-# prompt, kept as a Skillberry Store skill (my_skill/SKILL.md) that the Skillberry Proxy-Agent injects
-# into every LLM call of AppWorld's stock ReAct agent.
+# Set up the AppWorld BLACKBOX approach: one cap-evolve project whose capability is a Skillberry
+# Store skill: my_skill/SKILL.md (the system prompt, which the Skillberry Proxy-Agent injects into
+# every LLM call of AppWorld's stock ReAct agent) and my_skill/repl/ (the tools: REPL helpers and API
+# notes, which the store's init_repl tool loads into the trial's REPL).
 #
 # It builds on the direct approach (..): AppWorld itself, its data roots, the lint cache, the
 # reference docs and the optimizer isolation are set up once there (../README.md, Setup steps 1-2)
@@ -14,9 +15,11 @@
 # the project in BASE/project, and one run folder BASE/run_<YYYYMMDD_HHMMSS> per launch beside it.
 # BASE must be under $AW_EVAL: the optimizer's isolation only binds a working dir inside it.
 #
-# The seed SKILL.md is generated from AppWorld's own prompt and never committed (AppWorld's
-# README_BEFORE_SHARING). The store and proxy are the shared clones in the repo's vendor/; nothing
-# here deletes or re-clones them.
+# The seed is committed (seed_capability/my_skill/), like the direct seed, with AppWorld's app list
+# left as a {{ app_descriptions }} placeholder: the rendered list comes from AppWorld's installed app
+# code and is never committed (AppWorld's README_BEFORE_SHARING), so it is filled in here, in the
+# project's copy. The store and proxy are the shared clones in the repo's vendor/; nothing here deletes
+# or re-clones them.
 set -euo pipefail
 
 EX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"       # this approach (blackbox/)
@@ -53,6 +56,8 @@ say "1/5  Preconditions: the direct approach's AppWorld setup"
 [ -f "$CLIENT_PROMPT" ]          || die "missing AppWorld's stock prompt $CLIENT_PROMPT (../README.md, Setup step 1)"
 [ -f "$LINT_CACHE" ]             || die "missing $LINT_CACHE: run ../scripts/make_roots.py"
 [ -f "$REFERENCE/api_index.md" ] || die "missing $REFERENCE: run ../scripts/make_reference.py"
+[ -f "$REFERENCE/react_agent_notes_blackbox.md" ] \
+                                 || die "missing $REFERENCE/react_agent_notes_blackbox.md: run ../scripts/make_reference.py again"
 echo "  AppWorld, lint cache and reference docs found in $AW_EVAL"
 
 say "2/5  Scaffold the project"
@@ -61,18 +66,32 @@ say "2/5  Scaffold the project"
 mkdir -p "$PROJECT/adapters" "$PROJECT/optimizer" "$PROJECT/reference" "$PROJECT/sandbox"
 # This approach's adapter, episode worker, proxy tailoring and SKILL.md lints ...
 cp "$EX/adapters/adapter.py" "$EX/adapters/aw_bb_agent.py" \
-   "$EX/adapters/appworld_tailoring.py" "$EX/adapters/bb_lints.py" "$PROJECT/adapters/"
+   "$EX/adapters/appworld_tailoring.py" "$EX/adapters/bb_lints.py" \
+   "$EX/adapters/aw_env_server.py" "$PROJECT/adapters/"
+# ... the benchmark's own copy of the frozen store tool, outside the candidate: deploy builds the
+# deployed tool from it and the lint compares the candidate's copy with it ...
+cp "$EX/seed_capability/my_skill/scripts/init_repl.py" "$PROJECT/adapters/init_repl_template.py"
 # ... plus the direct approach's episode harness and leak checks, which they reuse unchanged.
 cp "$DIRECT/adapters/aw_agent.py" "$DIRECT/adapters/lints.py" "$PROJECT/adapters/"
-cp "$REFERENCE/api_index.md" "$REFERENCE/react_agent_notes.md" "$PROJECT/reference/"
+cp "$REFERENCE/api_index.md" "$PROJECT/reference/"
+# The agent notes as they hold for THIS approach (repl/ + init_repl, not tools/ + a prompt line).
+cp "$REFERENCE/react_agent_notes_blackbox.md" "$PROJECT/reference/react_agent_notes.md"
 cp "$EX/smoke_split.json" "$EX/fix10_split.json" "$PROJECT/"
 # train = val = AppWorld's official train + dev; test stays empty (the final window scores test_normal).
 "$PY" "$DIRECT/scripts/make_splits.py" "$PROJECT/split_ids.json" >/dev/null || die "make_splits.py failed"
 echo "  project at $PROJECT"
 
-say "3/5  Seed SKILL.md: AppWorld's stock prompt up to the real task turn"
+say "3/5  Seed skill: the committed seed_capability/my_skill, AppWorld's app list rendered in"
+# The committed SKILL.md must still match AppWorld's stock prompt (it is built from it).
+"$PY" - "$EX/scripts" "$EX/seed_capability/my_skill/SKILL.md" "$CLIENT_PROMPT" <<'PYCHECK' || die "seed_capability/my_skill/SKILL.md no longer matches AppWorld's stock prompt: run make_seed_skill.py --build"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import make_seed_skill
+raise SystemExit(Path(sys.argv[2]).read_text() != make_seed_skill.build(Path(sys.argv[3]).read_text()))
+PYCHECK
 rm -rf "$PROJECT/seed_capability"
-"$PY" "$EX/scripts/make_seed_skill.py" "$CLIENT_PROMPT" "$PROJECT/seed_capability/my_skill" "$APP_DESCRIPTIONS" \
+"$PY" "$EX/scripts/make_seed_skill.py" "$EX/seed_capability/my_skill" "$PROJECT/seed_capability/my_skill" "$APP_DESCRIPTIONS" \
   | sed 's/^/  /' || die "make_seed_skill.py failed"
 
 say "4/5  Render the optimizer instructions, the run specs and the isolation settings"
